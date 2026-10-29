@@ -313,12 +313,16 @@ export default function App() {
         );
 
         if (deliveryMode === 'zip') {
+          // Unified artist and album from subpage resolution (e.g. Othaliël for Eternal Life)
+          const effectiveArtist = resolveData.artist || rel.artist;
+          const effectiveAlbum = resolveData.title || rel.title;
+
           // Determine formatted audio filename and unified release directory (no duplicate %album% nesting!)
           const formattedAudioName = formatFilenameBySchema(
             settings.namingSchema,
             {
-              artist: rel.artist,
-              album: rel.title,
+              artist: effectiveArtist,
+              album: effectiveAlbum,
               title: rel.title,
               trackNum: 1,
               totalTracks: rel.trackCount || 1,
@@ -336,11 +340,11 @@ export default function App() {
             releaseDir = formattedAudioName.substring(0, lastSlash);
           } else {
             const sanitize = (s: string) => String(s || '').replace(/[:*?"<>|]/g, '_').trim();
-            releaseDir = `${sanitize(rel.artist)}/${sanitize(rel.title)}`;
+            releaseDir = `${sanitize(effectiveArtist)}/${sanitize(effectiveAlbum)}`;
           }
 
           // 1. Write comprehensive info.txt directly in the release directory
-          const infoContent = resolveData.infoText || rel.infoText || `Title: ${rel.title}\nArtist: ${rel.artist}\nURL: ${rel.url}\n`;
+          const infoContent = resolveData.infoText || rel.infoText || `Title: ${effectiveAlbum}\nArtist: ${effectiveArtist}\nURL: ${rel.url}\n`;
           zip.file(`${releaseDir}/info.txt`, infoContent);
 
           // 2. Fetch and store hi-res cover artwork "cover.jpg" via backend proxy (avoids CORS)
@@ -379,8 +383,8 @@ export default function App() {
                 const streamFormattedName = formatFilenameBySchema(
                   settings.namingSchema,
                   {
-                    artist: rel.artist,
-                    album: rel.title,
+                    artist: effectiveArtist,
+                    album: effectiveAlbum,
                     title: stream.title,
                     trackNum: stream.trackNum,
                     totalTracks: streamsToUse.length,
@@ -392,7 +396,7 @@ export default function App() {
                   { allowSubfolders: true }
                 );
                 const lrcPath = streamFormattedName.replace(/\.[^/.]+$/, '') + '.lrc';
-                const lrcContent = `[ti:${stream.title}]\n[ar:${rel.artist}]\n[al:${rel.title}]\n\n${stream.lyrics}\n`;
+                const lrcContent = `[ti:${stream.title}]\n[ar:${effectiveArtist}]\n[al:${effectiveAlbum}]\n\n${stream.lyrics}\n`;
                 zip.file(lrcPath, lrcContent);
               }
             }
@@ -454,8 +458,8 @@ export default function App() {
               const streamUrl = stream.streamUrl || (stream as any).url;
               if (streamUrl) {
                 try {
-                  const streamArtist = resolveData.artist || rel.artist;
-                  const streamAlbum = resolveData.title || rel.title;
+                  const streamArtist = effectiveArtist;
+                  const streamAlbum = effectiveAlbum;
                   const streamFormattedName = formatFilenameBySchema(
                     settings.namingSchema,
                     {
@@ -474,11 +478,13 @@ export default function App() {
 
                   const trackFilename = streamFormattedName.split('/').pop() || `${stream.title}.${selectedFormat}`;
                   const audioRes = await fetch(
-                    `/api/bandcamp/proxy-audio?url=${encodeURIComponent(streamUrl)}&filename=${encodeURIComponent(trackFilename)}&title=${encodeURIComponent(stream.title)}&artist=${encodeURIComponent(streamArtist)}&album=${encodeURIComponent(streamAlbum)}&year=${encodeURIComponent(rel.isoDate?.slice(0, 4) || '')}&trackNum=${encodeURIComponent(String(stream.trackNum))}&format=${selectedFormat}`
+                    `/api/bandcamp/proxy-audio?url=${encodeURIComponent(streamUrl)}&albumUrl=${encodeURIComponent(rel.url)}&filename=${encodeURIComponent(trackFilename)}&title=${encodeURIComponent(stream.title)}&artist=${encodeURIComponent(streamArtist)}&album=${encodeURIComponent(streamAlbum)}&year=${encodeURIComponent(rel.isoDate?.slice(0, 4) || '')}&trackNum=${encodeURIComponent(String(stream.trackNum))}&format=${selectedFormat}`
                   );
                   if (audioRes.ok) {
                     const trackBuf = await audioRes.arrayBuffer();
                     zip.file(streamFormattedName, trackBuf);
+                  } else {
+                    console.warn(`Failed to fetch audio for ${stream.title}: HTTP ${audioRes.status}`);
                   }
                 } catch (trackErr) {
                   console.warn('Track audio fetch error:', trackErr);
@@ -568,7 +574,7 @@ export default function App() {
                 );
 
                 const a = document.createElement('a');
-                a.href = `/api/bandcamp/proxy-audio?url=${encodeURIComponent(streamUrl)}&filename=${encodeURIComponent(streamFormattedName)}&title=${encodeURIComponent(stream.title)}&artist=${encodeURIComponent(streamArtist)}&album=${encodeURIComponent(streamAlbum)}&year=${encodeURIComponent(rel.isoDate?.slice(0, 4) || '')}&trackNum=${encodeURIComponent(String(stream.trackNum))}&format=${selectedFormat}`;
+                a.href = `/api/bandcamp/proxy-audio?url=${encodeURIComponent(streamUrl)}&albumUrl=${encodeURIComponent(rel.url)}&filename=${encodeURIComponent(streamFormattedName)}&title=${encodeURIComponent(stream.title)}&artist=${encodeURIComponent(streamArtist)}&album=${encodeURIComponent(streamAlbum)}&year=${encodeURIComponent(rel.isoDate?.slice(0, 4) || '')}&trackNum=${encodeURIComponent(String(stream.trackNum))}&format=${selectedFormat}`;
                 a.download = streamFormattedName;
                 a.click();
                 await new Promise((r) => setTimeout(r, 800));

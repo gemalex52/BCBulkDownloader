@@ -1,10 +1,18 @@
 import JSZip from 'jszip';
+import jszipMinSource from 'jszip/dist/jszip.min.js?raw';
 import { ExtensionFileItem } from '../types/bandcamp';
 import { getExtensionIconBuffers } from './iconGenerator';
 
 const icons = getExtensionIconBuffers();
 
 export const EXTENSION_FILES: ExtensionFileItem[] = [
+  {
+    name: 'jszip.min.js',
+    path: 'jszip.min.js',
+    language: 'javascript',
+    description: 'JSZip library for client-side ZIP packaging.',
+    content: jszipMinSource,
+  },
   {
     name: 'manifest.json',
     path: 'manifest.json',
@@ -382,6 +390,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     <button id="btnDownload" class="dl-btn">Download Audio Data (0)</button>
   </div>
 
+  <script src="jszip.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
@@ -1123,149 +1132,263 @@ document.addEventListener('DOMContentLoaded', () => {
     const sel = releases.filter(r => r.selected);
     const chosenFormat = formatSelect.value || 'flac';
     const delivery = deliverySelect.value || 'zip';
-    const schema = schemaInput.value || '%artist% - %date% - %album% - %track_num% - %title%.%format%';
+    const schema = schemaInput.value || '%artist% - %date% - %album%/[%track_num%. ]%title%.%format%';
     btnDownload.disabled = true;
 
-    for (let i = 0; i < sel.length; i++) {
-      const r = sel[i];
-      btnDownload.textContent = 'Downloading ' + (i + 1) + '/' + sel.length + ': ' + r.title + '...';
+    if (delivery === 'zip') {
+      try {
+        const zip = new JSZip();
 
-      let downloadTriggered = false;
+        for (let i = 0; i < sel.length; i++) {
+          const r = sel[i];
+          btnDownload.textContent = 'Packaging ' + (i + 1) + '/' + sel.length + ': ' + r.title + '...';
 
-      // 1. Resolve genuine download via freeDownloadPage
-      if (r.freeDownloadPage) {
-        try {
-          const dlRes = await new Promise(resolve => {
-            chrome.runtime.sendMessage({
-              action: 'RESOLVE_DOWNLOAD_PAGE',
-              url: r.freeDownloadPage,
-              format: chosenFormat
-            }, resolve);
-          });
+          // 1. Determine release directory from schema (no redundant nested folders)
+          const baseFormatted = formatFilename(schema, {
+            artist: r.artist,
+            album: r.title,
+            title: r.title,
+            trackNum: 1,
+            totalTracks: r.totalTracks || 1,
+            date: r.releaseDate || '',
+            format: chosenFormat,
+            type: r.type
+          }, true);
+          const slashIdx = baseFormatted.lastIndexOf('/');
+          const releaseDir = slashIdx !== -1 ? baseFormatted.substring(0, slashIdx) : (r.artist + ' - ' + r.title).replace(/[:*?"<>|]/g, '_');
 
-          if (dlRes?.success && dlRes.downloadUrl) {
-            const isZipArchive = dlRes.isArchive || chosenFormat === 'zip' || (dlRes.downloadUrl.includes('/album/'));
-            const filename = formatFilename(schema, {
-              artist: r.artist,
-              album: r.title,
-              title: r.title,
-              trackNum: 1,
-              totalTracks: r.totalTracks || 1,
-              date: r.releaseDate || '',
-              format: isZipArchive ? 'zip' : chosenFormat,
-              type: r.type
-            }, false);
+          // 2. Add comprehensive info.txt
+          const NL = String.fromCharCode(10);
+          const infoText = r.infoText || ('Title: ' + r.title + NL + 'Artist: ' + r.artist + NL + 'URL: ' + (r.href || ''));
+          zip.file(releaseDir + '/info.txt', infoText);
 
-            await new Promise(res => {
-              chrome.runtime.sendMessage({
-                action: 'START_DOWNLOAD',
-                url: dlRes.downloadUrl,
-                filename: 'Bandcamp/' + filename
-              }, res);
-              setTimeout(res, 1200);
-            });
-            downloadTriggered = true;
+          // 3. Add cover.jpg
+          if (r.artUrl) {
+            try {
+              const artRes = await fetch(r.artUrl);
+              if (artRes.ok) {
+                const artBuf = await artRes.arrayBuffer();
+                zip.file(releaseDir + '/cover.jpg', artBuf);
+              }
+            } catch (e) {}
           }
-        } catch (e) {}
-      }
 
-      // 2. Email download resolution for NYP
-      if (!downloadTriggered && savedEmail && r.tralbumId) {
-        try {
-          const origin = new URL(r.href).origin;
-          const emailRes = await new Promise(res => {
-            chrome.runtime.sendMessage({
-              action: 'SUBMIT_EMAIL_DOWNLOAD',
-              artistUrl: origin,
-              itemId: r.tralbumId,
-              itemType: r.type,
-              email: savedEmail,
-              format: chosenFormat
-            }, res);
-          });
-
-          if (emailRes?.data?.download_url) {
-            const dlRes = await new Promise(res => {
-              chrome.runtime.sendMessage({
-                action: 'RESOLVE_DOWNLOAD_PAGE',
-                url: emailRes.data.download_url,
-                format: chosenFormat
-              }, res);
-            });
-            if (dlRes?.success && dlRes.downloadUrl) {
-              const filename = formatFilename(schema, {
-                artist: r.artist,
-                album: r.title,
-                title: r.title,
-                trackNum: 1,
-                totalTracks: r.totalTracks || 1,
-                date: r.releaseDate || '',
-                format: chosenFormat === 'flac' ? 'flac' : 'zip',
-                type: r.type
-              }, false);
-              await new Promise(res => {
-                chrome.runtime.sendMessage({
-                  action: 'START_DOWNLOAD',
-                  url: dlRes.downloadUrl,
-                  filename: 'Bandcamp/' + filename
-                }, res);
-                setTimeout(res, 1200);
-              });
-              downloadTriggered = true;
+          // 4. Add additional packaging photos if available
+          if (r.allImages && r.allImages.length > 0) {
+            for (let pIdx = 0; pIdx < r.allImages.length; pIdx++) {
+              try {
+                const pRes = await fetch(r.allImages[pIdx]);
+                if (pRes.ok) {
+                  const pBuf = await pRes.arrayBuffer();
+                  zip.file(releaseDir + '/photos/photo_' + (pIdx + 1) + '.jpg', pBuf);
+                }
+              } catch (e) {}
             }
           }
-        } catch (e) {}
-      }
 
-      // 3. Fallback for releases with track streams (e.g. albums with individual audio tracks)
-      if (!downloadTriggered && r.audioStreams && r.audioStreams.length > 0) {
-        for (const stream of r.audioStreams) {
-          if (stream.url) {
-            const filename = formatFilename(schema, {
-              artist: r.artist,
-              album: r.title,
-              title: stream.title,
-              trackNum: stream.trackNum,
-              totalTracks: r.audioStreams.length,
-              date: r.releaseDate || '',
-              format: chosenFormat,
-              type: 'track'
-            }, false);
+          // 5. If paid and unpurchased, skip audio per prompt policy
+          if (r.isPaid && !r.isPurchased && !r.isFree && !r.isNyp) {
+            continue;
+          }
 
-            await new Promise(res => {
-              chrome.runtime.sendMessage({
-                action: 'START_DOWNLOAD',
-                url: stream.url,
-                filename: 'Bandcamp/' + filename
-              }, res);
-              setTimeout(res, 800);
-            });
+          let audioAdded = false;
+
+          // 6. Direct free download resolution
+          if (r.freeDownloadPage) {
+            try {
+              const dlRes = await new Promise(resolve => {
+                chrome.runtime.sendMessage({
+                  action: 'RESOLVE_DOWNLOAD_PAGE',
+                  url: r.freeDownloadPage,
+                  format: chosenFormat
+                }, resolve);
+              });
+
+              if (dlRes?.success && dlRes.downloadUrl) {
+                const audioRes = await fetch(dlRes.downloadUrl);
+                if (audioRes.ok) {
+                  const audioBuf = await audioRes.arrayBuffer();
+                  const bytes = new Uint8Array(audioBuf);
+                  // Check if archive (starts with PK)
+                  if (bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4B) {
+                    try {
+                      const innerZip = await JSZip.loadAsync(audioBuf);
+                      for (const [entryName, entryFile] of Object.entries(innerZip.files)) {
+                        if (!entryFile.dir) {
+                          const innerBuf = await entryFile.async('arraybuffer');
+                          const simpleName = entryName.split('/').pop() || entryName;
+                          zip.file(releaseDir + '/' + simpleName, innerBuf);
+                        }
+                      }
+                      audioAdded = true;
+                    } catch(e) {}
+                  }
+                  if (!audioAdded) {
+                    zip.file(baseFormatted, audioBuf);
+                    audioAdded = true;
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+
+          // 7. Track streams fallback for multitrack releases
+          if (!audioAdded && r.audioStreams && r.audioStreams.length > 0) {
+            for (const stream of r.audioStreams) {
+              const sUrl = stream.url || stream.streamUrl;
+              if (sUrl) {
+                try {
+                  const streamFormattedName = formatFilename(schema, {
+                    artist: r.artist,
+                    album: r.title,
+                    title: stream.title,
+                    trackNum: stream.trackNum,
+                    totalTracks: r.audioStreams.length,
+                    date: r.releaseDate || '',
+                    format: chosenFormat,
+                    type: 'track'
+                  }, true);
+
+                  const aRes = await fetch(sUrl);
+                  if (aRes.ok) {
+                    const aBuf = await aRes.arrayBuffer();
+                    zip.file(streamFormattedName, aBuf);
+                  }
+
+                  if (stream.lyrics && stream.lyrics.trim().length > 0) {
+                    const lrcPath = streamFormattedName.replace(/\.[^/.]+$/, '') + '.lrc';
+                    const lrcContent = '[ti:' + stream.title + ']' + NL + '[ar:' + r.artist + ']' + NL + '[al:' + r.title + ']' + NL + NL + stream.lyrics + NL;
+                    zip.file(lrcPath, lrcContent);
+                  }
+                } catch (e) {}
+              }
+            }
+            audioAdded = true;
           }
         }
-        downloadTriggered = true;
-      }
 
-      // 4. Download cover.jpg and comprehensive info.txt
-      if (r.artUrl) {
-        const coverFilename = 'Bandcamp/' + (r.artist + ' - ' + r.title + ' - cover.jpg').replace(/[:*?"<>|]/g, '_');
-        chrome.runtime.sendMessage({
-          action: 'START_DOWNLOAD',
-          url: r.artUrl,
-          filename: coverFilename
+        btnDownload.textContent = 'Compressing ZIP archive...';
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const zipUrl = URL.createObjectURL(zipBlob);
+        const artistPart = (sel[0]?.artist || 'bandcamp').replace(/[:*?"<>|]/g, '_').toLowerCase();
+        const zipName = artistPart + '_bulk_discography_' + chosenFormat + '.zip';
+
+        chrome.downloads.download({
+          url: zipUrl,
+          filename: zipName,
+          saveAs: true
         });
+
+        btnDownload.textContent = 'ZIP Archive Downloaded!';
+      } catch (err) {
+        btnDownload.textContent = 'Packaging Failed';
       }
-      if (r.infoText) {
-        const infoBlobUrl = 'data:text/plain;charset=utf-8,' + encodeURIComponent(r.infoText);
-        const infoFilename = 'Bandcamp/' + (r.artist + ' - ' + r.title + ' - info.txt').replace(/[:*?"<>|]/g, '_');
-        chrome.runtime.sendMessage({
-          action: 'START_DOWNLOAD',
-          url: infoBlobUrl,
-          filename: infoFilename
-        });
+    } else {
+      // Individual mode: fetch blobs so chrome downloads with proper formatted names
+      for (let i = 0; i < sel.length; i++) {
+        const r = sel[i];
+        btnDownload.textContent = 'Downloading ' + (i + 1) + '/' + sel.length + '...';
+
+        if (r.artUrl) {
+          try {
+            const artRes = await fetch(r.artUrl);
+            if (artRes.ok) {
+              const blob = await artRes.blob();
+              const coverName = 'Bandcamp/' + (r.artist + ' - ' + r.title + ' - cover.jpg').replace(/[:*?"<>|]/g, '_');
+              chrome.downloads.download({
+                url: URL.createObjectURL(blob),
+                filename: coverName,
+                conflictAction: 'uniquify'
+              });
+            }
+          } catch(e) {}
+        }
+
+        if (r.infoText) {
+          const infoBlob = new Blob([r.infoText], { type: 'text/plain;charset=utf-8' });
+          const infoName = 'Bandcamp/' + (r.artist + ' - ' + r.title + ' - info.txt').replace(/[:*?"<>|]/g, '_');
+          chrome.downloads.download({
+            url: URL.createObjectURL(infoBlob),
+            filename: infoName,
+            conflictAction: 'uniquify'
+          });
+        }
+
+        if (r.isPaid && !r.isPurchased && !r.isFree && !r.isNyp) {
+          continue;
+        }
+
+        let audioTriggered = false;
+
+        if (r.freeDownloadPage) {
+          try {
+            const dlRes = await new Promise(resolve => {
+              chrome.runtime.sendMessage({
+                action: 'RESOLVE_DOWNLOAD_PAGE',
+                url: r.freeDownloadPage,
+                format: chosenFormat
+              }, resolve);
+            });
+            if (dlRes?.success && dlRes.downloadUrl) {
+              const aRes = await fetch(dlRes.downloadUrl);
+              if (aRes.ok) {
+                const blob = await aRes.blob();
+                const isZip = dlRes.isArchive || chosenFormat === 'zip';
+                const filename = formatFilename(schema, {
+                  artist: r.artist,
+                  album: r.title,
+                  title: r.title,
+                  trackNum: 1,
+                  totalTracks: r.totalTracks || 1,
+                  date: r.releaseDate || '',
+                  format: isZip ? 'zip' : chosenFormat,
+                  type: r.type
+                }, false);
+                chrome.downloads.download({
+                  url: URL.createObjectURL(blob),
+                  filename: 'Bandcamp/' + filename,
+                  conflictAction: 'uniquify'
+                });
+                audioTriggered = true;
+              }
+            }
+          } catch(e) {}
+        }
+
+        if (!audioTriggered && r.audioStreams && r.audioStreams.length > 0) {
+          for (const stream of r.audioStreams) {
+            const sUrl = stream.url || stream.streamUrl;
+            if (sUrl) {
+              try {
+                const trackName = formatFilename(schema, {
+                  artist: r.artist,
+                  album: r.title,
+                  title: stream.title,
+                  trackNum: stream.trackNum,
+                  totalTracks: r.audioStreams.length,
+                  date: r.releaseDate || '',
+                  format: chosenFormat,
+                  type: 'track'
+                }, false);
+
+                const streamRes = await fetch(sUrl);
+                if (streamRes.ok) {
+                  const blob = await streamRes.blob();
+                  chrome.downloads.download({
+                    url: URL.createObjectURL(blob),
+                    filename: 'Bandcamp/' + trackName,
+                    conflictAction: 'uniquify'
+                  });
+                  await new Promise(r => setTimeout(r, 600));
+                }
+              } catch(e) {}
+            }
+          }
+        }
       }
+      btnDownload.textContent = 'Downloads Queued!';
     }
 
-    btnDownload.textContent = 'Downloads Queued!';
     setTimeout(updateBadge, 2500);
   });
 });
@@ -1335,6 +1458,12 @@ document.addEventListener('DOMContentLoaded', () => {
             <option value="alac">ALAC</option>
           </select>
 
+          <label>Delivery:</label>
+          <select id="dashDeliverySelect">
+            <option value="zip" selected>ZIP Bundle (Single Archive)</option>
+            <option value="individual">Individual Files</option>
+          </select>
+
           <button id="btnBulkDownload" class="btn download">Download Selected (0)</button>
         </div>
       </div>
@@ -1345,6 +1474,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div id="discographyGrid" class="discography-grid"></div>
   </main>
 
+  <script src="jszip.min.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>
@@ -1711,15 +1841,24 @@ document.addEventListener('DOMContentLoaded', () => {
   const schemaInput = document.getElementById('dashSchemaInput');
   const dashPreview = document.getElementById('dashPreview');
   const formatSelect = document.getElementById('dashFormatSelect');
+  const deliverySelect = document.getElementById('dashDeliverySelect');
   const btnBulkDownload = document.getElementById('btnBulkDownload');
   const grid = document.getElementById('discographyGrid');
   const statusNotice = document.getElementById('statusNotice');
 
-  chrome.storage.sync.get(['defaultFormat', 'namingSchema'], (d) => {
+  chrome.storage.sync.get(['defaultFormat', 'deliveryMode', 'namingSchema'], (d) => {
     if (d.defaultFormat) formatSelect.value = d.defaultFormat;
+    if (d.deliveryMode && deliverySelect) deliverySelect.value = d.deliveryMode;
     if (d.namingSchema) schemaInput.value = d.namingSchema;
     updatePreview();
   });
+
+  if (deliverySelect) {
+    deliverySelect.addEventListener('change', () => {
+      chrome.storage.sync.set({ deliveryMode: deliverySelect.value });
+      updatePreview();
+    });
+  }
 
   function updatePreview() {
     const fmt = formatSelect.value || 'flac';
@@ -2023,84 +2162,256 @@ document.addEventListener('DOMContentLoaded', () => {
   btnBulkDownload.addEventListener('click', async () => {
     const sel = dashReleases.filter(r => r.selected);
     const chosenFormat = formatSelect.value || 'flac';
-    const schema = schemaInput.value;
+    const delivery = deliverySelect ? deliverySelect.value : 'zip';
+    const schema = schemaInput.value || '%artist% - %date% - %album%/[%track_num%. ]%title%.%format%';
     btnBulkDownload.disabled = true;
 
-    for (let i = 0; i < sel.length; i++) {
-      const r = sel[i];
-      btnBulkDownload.textContent = 'Downloading ' + (i + 1) + '/' + sel.length + '...';
+    if (delivery === 'zip') {
+      try {
+        const zip = new JSZip();
 
-      if (r.freeDownloadPage) {
-        try {
-          const res = await new Promise(resolve => {
-            chrome.runtime.sendMessage({
-              action: 'RESOLVE_DOWNLOAD_PAGE',
-              url: r.freeDownloadPage,
-              format: chosenFormat
-            }, resolve);
-          });
+        for (let i = 0; i < sel.length; i++) {
+          const r = sel[i];
+          btnBulkDownload.textContent = 'Packaging (' + (i + 1) + '/' + sel.length + '): ' + r.title + '...';
 
-          if (res?.success && res.downloadUrl) {
-            const isZip = res.isArchive || chosenFormat === 'zip';
-            const filename = formatFilename(schema, {
-              artist: 'Esoctrilihum',
-              album: r.title,
-              title: r.title,
-              trackNum: 1,
-              totalTracks: r.totalTracks || 1,
-              date: r.releaseDate || '',
-              format: isZip ? 'zip' : chosenFormat
-            }, false);
+          const baseFormatted = formatFilename(schema, {
+            artist: r.artist || 'Bandcamp',
+            album: r.title,
+            title: r.title,
+            trackNum: 1,
+            totalTracks: r.totalTracks || 1,
+            date: r.releaseDate || '',
+            format: chosenFormat,
+            type: r.type
+          }, true);
+          const slashIdx = baseFormatted.lastIndexOf('/');
+          const releaseDir = slashIdx !== -1 ? baseFormatted.substring(0, slashIdx) : ((r.artist || 'Bandcamp') + ' - ' + r.title).replace(/[:*?"<>|]/g, '_');
 
-            chrome.downloads.download({
-              url: res.downloadUrl,
-              filename: 'Bandcamp/' + filename,
-              conflictAction: 'uniquify'
-            });
-            await new Promise(r => setTimeout(r, 1200));
+          const NL = String.fromCharCode(10);
+          const infoText = r.infoText || ('Title: ' + r.title + NL + 'Artist: ' + (r.artist || 'Bandcamp') + NL + 'URL: ' + (r.href || ''));
+          zip.file(releaseDir + '/info.txt', infoText);
+
+          if (r.artUrl) {
+            try {
+              const artRes = await fetch(r.artUrl);
+              if (artRes.ok) {
+                const artBuf = await artRes.arrayBuffer();
+                zip.file(releaseDir + '/cover.jpg', artBuf);
+              }
+            } catch (e) {}
           }
-        } catch(e) {}
-      } else if (r.audioStreams && r.audioStreams.length > 0) {
-        for (const stream of r.audioStreams) {
-          if (stream.url) {
-            const filename = formatFilename(schema, {
-              artist: 'Esoctrilihum',
-              album: r.title,
-              title: stream.title,
-              trackNum: stream.trackNum,
-              totalTracks: r.audioStreams.length,
-              date: r.releaseDate || '',
-              format: chosenFormat,
-              type: 'track'
-            }, false);
 
-            chrome.downloads.download({
-              url: stream.url,
-              filename: 'Bandcamp/' + filename,
-              conflictAction: 'uniquify'
+          if (r.allImages && r.allImages.length > 0) {
+            for (let pIdx = 0; pIdx < r.allImages.length; pIdx++) {
+              try {
+                const pRes = await fetch(r.allImages[pIdx]);
+                if (pRes.ok) {
+                  const pBuf = await pRes.arrayBuffer();
+                  zip.file(releaseDir + '/photos/photo_' + (pIdx + 1) + '.jpg', pBuf);
+                }
+              } catch (e) {}
+            }
+          }
+
+          if (r.isPaid && !r.isPurchased && !r.isFree && !r.isNyp) {
+            continue;
+          }
+
+          let audioAdded = false;
+
+          if (r.freeDownloadPage) {
+            try {
+              const dlRes = await new Promise(resolve => {
+                chrome.runtime.sendMessage({
+                  action: 'RESOLVE_DOWNLOAD_PAGE',
+                  url: r.freeDownloadPage,
+                  format: chosenFormat
+                }, resolve);
+              });
+
+              if (dlRes?.success && dlRes.downloadUrl) {
+                const audioRes = await fetch(dlRes.downloadUrl);
+                if (audioRes.ok) {
+                  const audioBuf = await audioRes.arrayBuffer();
+                  const bytes = new Uint8Array(audioBuf);
+                  if (bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4B) {
+                    try {
+                      const innerZip = await JSZip.loadAsync(audioBuf);
+                      for (const [entryName, entryFile] of Object.entries(innerZip.files)) {
+                        if (!entryFile.dir) {
+                          const innerBuf = await entryFile.async('arraybuffer');
+                          const simpleName = entryName.split('/').pop() || entryName;
+                          zip.file(releaseDir + '/' + simpleName, innerBuf);
+                        }
+                      }
+                      audioAdded = true;
+                    } catch(e) {}
+                  }
+                  if (!audioAdded) {
+                    zip.file(baseFormatted, audioBuf);
+                    audioAdded = true;
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+
+          if (!audioAdded && r.audioStreams && r.audioStreams.length > 0) {
+            for (const stream of r.audioStreams) {
+              const sUrl = stream.url || stream.streamUrl;
+              if (sUrl) {
+                try {
+                  const streamFormattedName = formatFilename(schema, {
+                    artist: r.artist || 'Bandcamp',
+                    album: r.title,
+                    title: stream.title,
+                    trackNum: stream.trackNum,
+                    totalTracks: r.audioStreams.length,
+                    date: r.releaseDate || '',
+                    format: chosenFormat,
+                    type: 'track'
+                  }, true);
+
+                  const aRes = await fetch(sUrl);
+                  if (aRes.ok) {
+                    const aBuf = await aRes.arrayBuffer();
+                    zip.file(streamFormattedName, aBuf);
+                  }
+
+                  if (stream.lyrics && stream.lyrics.trim().length > 0) {
+                    const lrcPath = streamFormattedName.replace(/\.[^/.]+$/, '') + '.lrc';
+                    const lrcContent = '[ti:' + stream.title + ']' + NL + '[ar:' + (r.artist || 'Bandcamp') + ']' + NL + '[al:' + r.title + ']' + NL + NL + stream.lyrics + NL;
+                    zip.file(lrcPath, lrcContent);
+                  }
+                } catch (e) {}
+              }
+            }
+            audioAdded = true;
+          }
+        }
+
+        btnBulkDownload.textContent = 'Compressing ZIP archive...';
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const zipUrl = URL.createObjectURL(zipBlob);
+        const artistPart = (sel[0]?.artist || 'bandcamp').replace(/[:*?"<>|]/g, '_').toLowerCase();
+        const zipName = artistPart + '_bulk_discography_' + chosenFormat + '.zip';
+
+        chrome.downloads.download({
+          url: zipUrl,
+          filename: zipName,
+          saveAs: true
+        });
+
+        btnBulkDownload.textContent = 'ZIP Archive Downloaded!';
+      } catch (err) {
+        btnBulkDownload.textContent = 'Packaging Failed';
+      }
+    } else {
+      // Individual files mode
+      for (let i = 0; i < sel.length; i++) {
+        const r = sel[i];
+        btnBulkDownload.textContent = 'Downloading ' + (i + 1) + '/' + sel.length + '...';
+
+        if (r.artUrl) {
+          try {
+            const artRes = await fetch(r.artUrl);
+            if (artRes.ok) {
+              const blob = await artRes.blob();
+              const coverName = 'Bandcamp/' + ((r.artist || 'Bandcamp') + ' - ' + r.title + ' - cover.jpg').replace(/[:*?"<>|]/g, '_');
+              chrome.downloads.download({
+                url: URL.createObjectURL(blob),
+                filename: coverName,
+                conflictAction: 'uniquify'
+              });
+            }
+          } catch(e) {}
+        }
+
+        if (r.infoText) {
+          const infoBlob = new Blob([r.infoText], { type: 'text/plain;charset=utf-8' });
+          const infoName = 'Bandcamp/' + ((r.artist || 'Bandcamp') + ' - ' + r.title + ' - info.txt').replace(/[:*?"<>|]/g, '_');
+          chrome.downloads.download({
+            url: URL.createObjectURL(infoBlob),
+            filename: infoName,
+            conflictAction: 'uniquify'
+          });
+        }
+
+        if (r.isPaid && !r.isPurchased && !r.isFree && !r.isNyp) {
+          continue;
+        }
+
+        let audioTriggered = false;
+
+        if (r.freeDownloadPage) {
+          try {
+            const dlRes = await new Promise(resolve => {
+              chrome.runtime.sendMessage({
+                action: 'RESOLVE_DOWNLOAD_PAGE',
+                url: r.freeDownloadPage,
+                format: chosenFormat
+              }, resolve);
             });
-            await new Promise(res => setTimeout(res, 800));
+            if (dlRes?.success && dlRes.downloadUrl) {
+              const aRes = await fetch(dlRes.downloadUrl);
+              if (aRes.ok) {
+                const blob = await aRes.blob();
+                const isZip = dlRes.isArchive || chosenFormat === 'zip';
+                const filename = formatFilename(schema, {
+                  artist: r.artist || 'Bandcamp',
+                  album: r.title,
+                  title: r.title,
+                  trackNum: 1,
+                  totalTracks: r.totalTracks || 1,
+                  date: r.releaseDate || '',
+                  format: isZip ? 'zip' : chosenFormat,
+                  type: r.type
+                }, false);
+                chrome.downloads.download({
+                  url: URL.createObjectURL(blob),
+                  filename: 'Bandcamp/' + filename,
+                  conflictAction: 'uniquify'
+                });
+                audioTriggered = true;
+              }
+            }
+          } catch(e) {}
+        }
+
+        if (!audioTriggered && r.audioStreams && r.audioStreams.length > 0) {
+          for (const stream of r.audioStreams) {
+            const sUrl = stream.url || stream.streamUrl;
+            if (sUrl) {
+              try {
+                const trackName = formatFilename(schema, {
+                  artist: r.artist || 'Bandcamp',
+                  album: r.title,
+                  title: stream.title,
+                  trackNum: stream.trackNum,
+                  totalTracks: r.audioStreams.length,
+                  date: r.releaseDate || '',
+                  format: chosenFormat,
+                  type: 'track'
+                }, false);
+
+                const streamRes = await fetch(sUrl);
+                if (streamRes.ok) {
+                  const blob = await streamRes.blob();
+                  chrome.downloads.download({
+                    url: URL.createObjectURL(blob),
+                    filename: 'Bandcamp/' + trackName,
+                    conflictAction: 'uniquify'
+                  });
+                  await new Promise(r => setTimeout(r, 600));
+                }
+              } catch(e) {}
+            }
           }
         }
       }
-
-      if (r.artUrl) {
-        chrome.downloads.download({
-          url: r.artUrl,
-          filename: 'Bandcamp/' + (r.title + ' - cover.jpg').replace(/[:*?"<>|]/g, '_'),
-          conflictAction: 'uniquify'
-        });
-      }
-      if (r.infoText) {
-        chrome.downloads.download({
-          url: 'data:text/plain;charset=utf-8,' + encodeURIComponent(r.infoText),
-          filename: 'Bandcamp/' + (r.title + ' - info.txt').replace(/[:*?"<>|]/g, '_'),
-          conflictAction: 'uniquify'
-        });
-      }
+      btnBulkDownload.textContent = 'Downloads Queued!';
     }
 
-    btnBulkDownload.textContent = 'Downloads Queued!';
     setTimeout(updateCount, 2500);
   });
 });

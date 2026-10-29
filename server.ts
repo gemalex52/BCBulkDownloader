@@ -847,6 +847,7 @@ app.get('/api/bandcamp/proxy-image', async (req: Request, res: Response) => {
 // Audio proxy endpoint: streams genuine audio with metadata tags, transcoding with ffmpeg if needed
 app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
   const audioUrl = req.query.url as string;
+  const albumUrl = req.query.albumUrl as string;
   const filename = (req.query.filename as string) || 'track.flac';
   const targetFormat = ((req.query.format as string) || (filename.endsWith('.flac') ? 'flac' : 'mp3')).toLowerCase();
   const title = (req.query.title as string) || '';
@@ -855,24 +856,56 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
   const year = (req.query.year as string) || '';
   const trackNum = (req.query.trackNum as string) || '';
 
-  if (!audioUrl) {
+  if (!audioUrl && !albumUrl) {
     return res.status(400).send('Missing audio URL');
   }
 
   try {
-    const audioRes = await fetch(audioUrl, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      },
-    });
+    let audioRes: any = null;
+    if (audioUrl) {
+      audioRes = await fetch(audioUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        },
+      });
+    }
 
-    if (!audioRes.ok) {
-      return res.status(audioRes.status).send('Failed to fetch audio stream');
+    // Auto-refresh expired stream URL from Bandcamp album page if 403 or missing
+    if ((!audioRes || !audioRes.ok) && albumUrl) {
+      try {
+        const pageRes = await fetch(albumUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          },
+        });
+        if (pageRes.ok) {
+          const pageHtml = await pageRes.text();
+          const tralbum = extractBandcampTralbum(pageHtml);
+          const tNum = parseInt(String(trackNum || '1'), 10);
+          const tInfo = tralbum?.trackinfo?.find((t: any) => t.track_num === tNum) || tralbum?.trackinfo?.[tNum - 1] || tralbum?.trackinfo?.[0];
+          const freshStreamUrl = tInfo?.file?.['mp3-128'];
+          if (freshStreamUrl) {
+            audioRes = await fetch(freshStreamUrl, {
+              headers: {
+                'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              },
+            });
+          }
+        }
+      } catch (refreshErr) {
+        console.warn('Error refreshing fresh stream URL:', refreshErr);
+      }
+    }
+
+    if (!audioRes || !audioRes.ok) {
+      return res.status(audioRes ? audioRes.status : 500).send('Failed to fetch audio stream');
     }
 
     const contentType = audioRes.headers.get('content-type') || '';
-    const isSourceNativeFlac = contentType.includes('flac') || audioUrl.includes('.flac');
+    const isSourceNativeFlac = contentType.includes('flac') || (audioUrl && audioUrl.includes('.flac'));
 
     // If source is already native FLAC and target is FLAC, stream directly
     if (isSourceNativeFlac && targetFormat === 'flac') {
@@ -885,7 +918,7 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
 
     const inputBuffer = Buffer.from(await audioRes.arrayBuffer());
 
-    // Transcode using ffmpeg to guarantee valid FLAC/MP3 format and embedded metadata tags
+    // Transcode using ffmpeg to guarantee valid standard CD-quality FLAC/MP3 format and embedded metadata tags
     const tempId = crypto.randomBytes(8).toString('hex');
     const tempDir = os.tmpdir();
     const tempIn = path.join(tempDir, `bc_in_${tempId}.bin`);
@@ -901,7 +934,7 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
       if (trackNum) metaArgs.push(`-metadata`, `track=${trackNum}`);
 
       const codecArgs = targetFormat === 'flac'
-        ? ['-c:a', 'flac', '-compression_level', '5']
+        ? ['-c:a', 'flac', '-sample_fmt', 's16', '-compression_level', '5']
         : ['-c:a', 'libmp3lame', '-b:a', '320k'];
 
       await execPromise(`ffmpeg -y -i "${tempIn}" ${metaArgs.map(a => `"${a}"`).join(' ')} ${codecArgs.join(' ')} "${tempOut}"`, {
