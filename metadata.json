@@ -1,0 +1,6 @@
+{
+  "name": "Bandcamp Free Bulk Downloader",
+  "description": "Chrome extension and discography crawler to scan, select, and batch-download free and name-your-price albums from Bandcamp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

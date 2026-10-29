@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for Bandcamp Free & Name-Your-Price Discography Bulk Downloader Chrome Extension and Live Web Simulator. Includes crawler architecture, Bandcamp download resolution, format conversion options, ZIP bundling, and extension exporter.",
+  "updatedAt":  "2026-10-28T11:44:07.068910257Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
