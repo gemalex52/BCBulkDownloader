@@ -120,11 +120,12 @@ export function initSiteSession(
       isFree: rel.isFree,
       isNameYourPrice: rel.isNameYourPrice,
       isPurchased: rel.isPurchased,
-      isPaid: rel.minPrice > 0 && !rel.isPurchased && !rel.isFree && !rel.isNameYourPrice,
+      isPaid: Boolean((rel as any).isPaid || (rel.minPrice > 0 && !rel.isPurchased && !rel.freeDownloadPageUrl)),
+      minPrice: rel.minPrice,
       requiresEmail: rel.requiresEmail,
       stage: prev ? prev.stage : 'pending',
       stageProgress: prev ? prev.stageProgress : 0,
-      statusText: prev ? prev.statusText : (rel.isFree ? 'Free' : (rel.isNameYourPrice ? 'NYP ($0+)' : 'Paid')),
+      statusText: prev ? prev.statusText : (Boolean((rel as any).isPaid || (rel.minPrice > 0 && !rel.isPurchased)) ? 'Paid' : (rel.isFree ? 'Free' : (rel.isNameYourPrice ? 'NYP ($0+)' : 'Paid'))),
       audioDownloaded: prev ? prev.audioDownloaded : false,
       infoZipDownloaded: prev ? prev.infoZipDownloaded : false,
       audioFilename: prev?.audioFilename,
@@ -200,7 +201,11 @@ export function appendItemLog(
   return session;
 }
 
-export function resetItemForRetry(hostname: string, itemId: string): SiteQueueSession | null {
+export function resetItemForRetry(
+  hostname: string,
+  itemId: string,
+  updates?: Partial<QueueItem>
+): SiteQueueSession | null {
   const session = loadSiteSession(hostname);
   if (!session || !session.items[itemId]) return null;
 
@@ -210,6 +215,9 @@ export function resetItemForRetry(hostname: string, itemId: string): SiteQueueSe
   item.statusText = 'Ready for retry';
   item.error = undefined;
   item.retryCount = (item.retryCount || 0) + 1;
+  if (updates) {
+    Object.assign(item, updates);
+  }
   item.logs.push({
     timestamp: new Date().toLocaleTimeString(),
     stage: 'pending',

@@ -228,6 +228,7 @@ async function inspectReleaseSubpage(
       isFree: parsed.isFree,
       isNameYourPrice: parsed.isNyp,
       isPurchased: parsed.isPurchased,
+      isPaid: parsed.isPaid,
       minPrice: parsed.minPrice,
       currency: tralbum?.current?.currency || 'EUR',
       priceFormatted: parsed.priceFormatted,
@@ -430,6 +431,26 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
     }
 
     if (parsed) {
+      // 0. Paid release not purchased: skip audio and return full companion metadata immediately
+      if (parsed.isPaid && !parsed.isPurchased) {
+        return res.json({
+          success: false,
+          isPaid: true,
+          skipAudio: true,
+          releaseId,
+          format: formatInfo.id,
+          infoText: parsed.infoText,
+          artUrl: parsed.artUrl,
+          artistBioPicUrl: parsed.artistBioPicUrl,
+          extraImages: parsed.allImages,
+          audioStreams: parsed.audioStreams,
+          title: parsed.releaseTitle,
+          artist: parsed.artist,
+          minPrice: parsed.minPrice,
+          message: `Paid release (€${parsed.minPrice} EUR): audio skipped per policy. Packaging artwork, photos, info.txt, and lyrics into companion info ZIP.`,
+        });
+      }
+
       // If triggerEmailOnly is requested (used before polling watchdog)
       if (triggerEmailOnly && email && tralbum?.current?.id) {
         try {
@@ -531,26 +552,6 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
           } catch (emailErr) {
             console.warn('email_download error:', emailErr);
           }
-        }
-
-        // 3. Paid album not purchased: skip audio and package companion info ZIP
-        if (parsed.isPaid && !parsed.isPurchased) {
-          return res.json({
-            success: false,
-            isPaid: true,
-            skipAudio: true,
-            releaseId,
-            format: formatInfo.id,
-            infoText: parsed.infoText,
-            artUrl: parsed.artUrl,
-            artistBioPicUrl: parsed.artistBioPicUrl,
-            extraImages: parsed.allImages,
-            audioStreams: parsed.audioStreams,
-            title: parsed.releaseTitle,
-            artist: parsed.artist,
-            minPrice: parsed.minPrice,
-            message: `Paid release (€${parsed.minPrice} EUR): audio skipped per policy. Packaging artwork, photos, info.txt, and lyrics into companion info ZIP.`,
-          });
         }
 
         // 4. Fallback streams only if explicitly requested mp3-128 format

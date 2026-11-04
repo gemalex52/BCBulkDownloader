@@ -341,7 +341,11 @@ export default function App() {
 
   // 1-Click Retry an individual item
   const handleRetryItem = (releaseId: string) => {
-    const updated = resetItemForRetry(currentHostname, releaseId);
+    const rel = releases.find((r) => r.id === releaseId);
+    const updated = resetItemForRetry(currentHostname, releaseId, {
+      isPaid: Boolean((rel as any)?.isPaid || (rel && rel.minPrice > 0 && !rel.isPurchased && !rel.freeDownloadPageUrl)),
+      minPrice: rel?.minPrice,
+    });
     if (updated) {
       setCurrentSession({ ...updated });
     }
@@ -371,105 +375,120 @@ export default function App() {
 
       try {
         let downloadPageUrl = qItem.freeDownloadPageUrl || rel.freeDownloadPageUrl;
+        const isPaidRelease = Boolean(
+          qItem.isPaid ||
+          rel.isPaid ||
+          (!qItem.isFree && !qItem.isNameYourPrice && (qItem.minPrice || 0) > 0) ||
+          (qItem.minPrice != null && qItem.minPrice > 0)
+        );
 
-        // Stage 1: Checking Mailbox via GAS watchdog if configured
-        if (!downloadPageUrl && settings.gasWebhookUrl.trim()) {
-          logAndSync('checking_mail', 'Searching Gmail via GAS watchdog for existing download link...');
+        if (!isPaidRelease) {
+          // Stage 1: Checking Mailbox via GAS watchdog if configured
+          if (!downloadPageUrl && settings.gasWebhookUrl.trim()) {
+            logAndSync('checking_mail', 'Searching Gmail via GAS watchdog for existing download link...');
 
-          let searchSinceEpoch = 0;
-          if (settings.gasSearchFilterType === 'start_date' && settings.gasSearchStartDate) {
-            const d = new Date(settings.gasSearchStartDate);
-            if (!isNaN(d.getTime())) searchSinceEpoch = Math.floor(d.getTime() / 1000);
-          }
-          if (!searchSinceEpoch) {
-            const offsetHours = settings.gasSearchOffsetHours || 72;
-            searchSinceEpoch = Math.floor(Date.now() / 1000) - (offsetHours * 3600);
-          }
-
-          try {
-            const checkRes = await fetch('/api/bandcamp/check-gas-webhook', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                webhookUrl: settings.gasWebhookUrl.trim(),
-                gasUrl: settings.gasWebhookUrl.trim(),
-                secret: settings.gasSecret.trim(),
-                releaseId: qItem.itemId,
-                title: qItem.title,
-                since: searchSinceEpoch,
-              }),
-            });
-
-            const checkData = await checkRes.json();
-            if (checkData.found && checkData.downloadPageUrl) {
-              downloadPageUrl = checkData.downloadPageUrl;
-              logAndSync('checking_mail', `Found existing signed download link in Gmail! Skipping new email dispatch.`);
+            let searchSinceEpoch = 0;
+            if (settings.gasSearchFilterType === 'start_date' && settings.gasSearchStartDate) {
+              const d = new Date(settings.gasSearchStartDate);
+              if (!isNaN(d.getTime())) searchSinceEpoch = Math.floor(d.getTime() / 1000);
             }
-          } catch (gasErr: any) {
-            console.warn('GAS check warning:', gasErr);
-          }
-        }
-
-        // Stage 2: Trigger Email on Bandcamp if still needed
-        const isEmailWalled = qItem.requiresEmail || qItem.isNameYourPrice;
-        if (!downloadPageUrl && isEmailWalled) {
-          logAndSync('triggering_email', `Triggering Bandcamp email dispatch to ${settings.fallbackEmail || 'listener'}...`);
-
-          const triggerTime = Math.floor(Date.now() / 1000);
-          try {
-            await fetch('/api/bandcamp/resolve-download', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                albumUrl: qItem.url,
-                releaseId: qItem.id,
-                format: selectedFormat,
-                email: settings.fallbackEmail || 'listener@example.com',
-                triggerEmailOnly: true,
-              }),
-            });
-          } catch (trigErr) {
-            console.warn('Email trigger warning:', trigErr);
-          }
-
-          // Stage 3: Polling GAS watchdog every 5s up to 3 min
-          if (settings.gasWebhookUrl.trim()) {
-            logAndSync('polling_gas', 'Polling Gmail watchdog every 5s for incoming signed download link...');
-
-            let foundFromPoll = false;
-            // Poll for up to 36 cycles (180s = 3 minutes)
-            for (let cycle = 0; cycle < 36; cycle++) {
-              if (isCancelledRef.current) break;
-
-              await sleep(5000);
-              logAndSync('polling_gas', `Polling mailbox for download link (attempt ${cycle + 1}/36)...`);
-
-              try {
-                const pollRes = await fetch('/api/bandcamp/check-gas-webhook', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    webhookUrl: settings.gasWebhookUrl.trim(),
-                    gasUrl: settings.gasWebhookUrl.trim(),
-                    secret: settings.gasSecret.trim(),
-                    releaseId: qItem.itemId,
-                    title: qItem.title,
-                    since: triggerTime - 15,
-                  }),
-                });
-
-                const pollData = await pollRes.json();
-                if (pollData.found && pollData.downloadPageUrl) {
-                  downloadPageUrl = pollData.downloadPageUrl;
-                  foundFromPoll = true;
-                  logAndSync('polling_gas', 'Received signed download link from Bandcamp email!');
-                  break;
-                }
-              } catch (e) {}
+            if (!searchSinceEpoch) {
+              const offsetHours = settings.gasSearchOffsetHours || 72;
+              searchSinceEpoch = Math.floor(Date.now() / 1000) - (offsetHours * 3600);
             }
 
-            if (!foundFromPoll && !downloadPageUrl) {
-              throw new Error('Watchdog timeout: Bandcamp email not detected within 3 minutes. Please verify Gmail or retry.');
+            try {
+              const checkRes = await fetch('/api/bandcamp/check-gas-webhook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  webhookUrl: settings.gasWebhookUrl.trim(),
+                  gasUrl: settings.gasWebhookUrl.trim(),
+                  secret: settings.gasSecret.trim(),
+                  releaseId: qItem.itemId,
+                  title: qItem.title,
+                  since: searchSinceEpoch,
+                }),
+              });
+
+              const checkData = await checkRes.json();
+              if (checkData.found && checkData.downloadPageUrl) {
+                downloadPageUrl = checkData.downloadPageUrl;
+                logAndSync('checking_mail', `Found existing signed download link in Gmail! Skipping new email dispatch.`);
+              }
+            } catch (gasErr: any) {
+              console.warn('GAS check warning:', gasErr);
+            }
+          }
+
+          // Stage 2: Trigger Email on Bandcamp if still needed
+          const isEmailWalled = (qItem.requiresEmail || qItem.isNameYourPrice) && !downloadPageUrl;
+          if (!downloadPageUrl && isEmailWalled) {
+            logAndSync('triggering_email', `Triggering Bandcamp email dispatch to ${settings.fallbackEmail || 'listener'}...`);
+
+            const triggerTime = Math.floor(Date.now() / 1000);
+            let emailTriggerOk = false;
+            try {
+              const trigRes = await fetch('/api/bandcamp/resolve-download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  albumUrl: qItem.url,
+                  releaseId: qItem.id,
+                  format: selectedFormat,
+                  email: settings.fallbackEmail || 'listener@example.com',
+                  triggerEmailOnly: true,
+                }),
+              });
+              const trigData = await trigRes.json();
+              if (trigData.isPaid) {
+                emailTriggerOk = false;
+              } else {
+                emailTriggerOk = true;
+              }
+            } catch (trigErr) {
+              console.warn('Email trigger warning:', trigErr);
+            }
+
+            // Stage 3: Polling GAS watchdog every 5s up to 3 min
+            if (emailTriggerOk && settings.gasWebhookUrl.trim()) {
+              logAndSync('polling_gas', 'Polling Gmail watchdog every 5s for incoming signed download link...');
+
+              let foundFromPoll = false;
+              // Poll for up to 36 cycles (180s = 3 minutes)
+              for (let cycle = 0; cycle < 36; cycle++) {
+                if (isCancelledRef.current) break;
+
+                await sleep(5000);
+                logAndSync('polling_gas', `Polling mailbox for download link (attempt ${cycle + 1}/36)...`);
+
+                try {
+                  const pollRes = await fetch('/api/bandcamp/check-gas-webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      webhookUrl: settings.gasWebhookUrl.trim(),
+                      gasUrl: settings.gasWebhookUrl.trim(),
+                      secret: settings.gasSecret.trim(),
+                      releaseId: qItem.itemId,
+                      title: qItem.title,
+                      since: triggerTime - 15,
+                    }),
+                  });
+
+                  const pollData = await pollRes.json();
+                  if (pollData.found && pollData.downloadPageUrl) {
+                    downloadPageUrl = pollData.downloadPageUrl;
+                    foundFromPoll = true;
+                    logAndSync('polling_gas', 'Received signed download link from Bandcamp email!');
+                    break;
+                  }
+                } catch (e) {}
+              }
+
+              if (!foundFromPoll && !downloadPageUrl) {
+                throw new Error('Watchdog timeout: Bandcamp email not detected within 3 minutes. Please verify Gmail or retry.');
+              }
             }
           }
         }
@@ -659,7 +678,10 @@ export default function App() {
 
     // Reset selected items to pending
     selectedReleases.forEach((r) => {
-      resetItemForRetry(currentHostname, r.id);
+      resetItemForRetry(currentHostname, r.id, {
+        isPaid: Boolean((r as any).isPaid || (r.minPrice > 0 && !r.isPurchased && !r.freeDownloadPageUrl)),
+        minPrice: r.minPrice,
+      });
     });
 
     const refreshed = syncSessionFromStorage(currentHostname);
@@ -679,7 +701,11 @@ export default function App() {
     // Auto-retry failed items
     itemsToResume.forEach((item) => {
       if (item.stage === 'failed') {
-        resetItemForRetry(currentHostname, item.id);
+        const rel = releases.find((r) => r.id === item.id);
+        resetItemForRetry(currentHostname, item.id, {
+          isPaid: Boolean((rel as any)?.isPaid || (rel && rel.minPrice > 0 && !rel.isPurchased && !rel.freeDownloadPageUrl)),
+          minPrice: rel?.minPrice,
+        });
       }
     });
 
@@ -702,8 +728,12 @@ export default function App() {
       setCurrentSession(sess);
     }
 
-    resetItemForRetry(currentHostname, release.id);
-    const item = sess.items[release.id];
+    resetItemForRetry(currentHostname, release.id, {
+      isPaid: Boolean((release as any).isPaid || (release.minPrice > 0 && !release.isPurchased && !release.freeDownloadPageUrl)),
+      minPrice: release.minPrice,
+    });
+    const refreshed = syncSessionFromStorage(currentHostname);
+    const item = refreshed?.items[release.id] || sess.items[release.id];
     if (item) {
       await runQueuePipeline([item]);
     }

@@ -22,6 +22,7 @@ export interface ScannedRelease {
   isFree: boolean;
   isNameYourPrice: boolean;
   isPurchased?: boolean;
+  isPaid?: boolean;
   minPrice: number;
   currency: string;
   priceFormatted: string;
@@ -108,6 +109,7 @@ export interface QueueItem {
   isNameYourPrice: boolean;
   isPurchased?: boolean;
   isPaid?: boolean;
+  minPrice?: number;
   requiresEmail: boolean;
   stage: QueueItemStage;
   stageProgress: number; // 0 to 100
