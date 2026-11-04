@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ScannedRelease } from '../types/bandcamp';
+import { QueueItem, ScannedRelease } from '../types/bandcamp';
 import {
   CheckSquare,
   Square,
@@ -9,41 +9,54 @@ import {
   ChevronUp,
   LayoutGrid,
   List,
-  Sparkles,
-  Download,
   Mail,
-  AlertCircle
+  AlertCircle,
+  RotateCcw,
+  CheckCircle2,
+  Clock,
+  Send,
+  Loader2,
+  FileText,
+  FolderArchive,
 } from 'lucide-react';
 
 interface ReleaseCatalogProps {
   releases: ScannedRelease[];
+  queueItems?: Record<string, QueueItem>;
   onToggleSelect: (id: string) => void;
   onSelectAllFreeAndNyp: () => void;
   onSelectAll: () => void;
   onDeselectAll: () => void;
   onDownloadSingle: (release: ScannedRelease) => void;
+  onRetryItem?: (releaseId: string) => void;
 }
 
 export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   releases,
+  queueItems,
   onToggleSelect,
   onSelectAllFreeAndNyp,
   onSelectAll,
   onDeselectAll,
   onDownloadSingle,
+  onRetryItem,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'free' | 'nyp' | 'paid'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [expandedTracklists, setExpandedTracklists] = useState<Record<string, boolean>>({});
+  const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
 
   const toggleTracklist = (id: string) => {
     setExpandedTracklists((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const toggleLogs = (id: string) => {
+    setExpandedLogs((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
   // Filter releases
   const filteredReleases = releases.filter((r) => {
-    // Search query filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchTitle = r.title.toLowerCase().includes(q);
@@ -51,7 +64,6 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
       if (!matchTitle && !matchTags) return false;
     }
 
-    // Type filter
     if (filterType === 'free') return r.isFree && !r.isNameYourPrice;
     if (filterType === 'nyp') return r.isNameYourPrice;
     if (filterType === 'paid') return !r.isFree && !r.isNameYourPrice;
@@ -67,6 +79,66 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   const allEligibleSelected =
     releases.length > 0 &&
     releases.filter((r) => r.isFree || r.isNameYourPrice).every((r) => r.selected);
+
+  const renderStageBadge = (qItem?: QueueItem) => {
+    if (!qItem || qItem.stage === 'pending') return null;
+
+    switch (qItem.stage) {
+      case 'completed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/80 border border-emerald-500/50 text-emerald-300">
+            <CheckCircle2 className="w-3 h-3" />
+            <span>Completed</span>
+          </span>
+        );
+      case 'failed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-red-950/80 border border-red-500/50 text-red-300">
+            <AlertCircle className="w-3 h-3" />
+            <span>Failed</span>
+          </span>
+        );
+      case 'checking_mail':
+      case 'triggering_email':
+      case 'polling_gas':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950/80 border border-amber-500/50 text-amber-300 animate-pulse">
+            <Mail className="w-3 h-3" />
+            <span>
+              {qItem.stage === 'polling_gas' ? 'Polling Mailbox' : 'Email Link Flow'}
+            </span>
+          </span>
+        );
+      case 'downloading_audio':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-950/80 border border-cyan-500/50 text-cyan-300 animate-pulse">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>Downloading Audio</span>
+          </span>
+        );
+      case 'packaging_info':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-950/80 border border-indigo-500/50 text-indigo-300 animate-pulse">
+            <FolderArchive className="w-3 h-3" />
+            <span>Building Info ZIP</span>
+          </span>
+        );
+      case 'pacing':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-950/80 border border-blue-500/50 text-blue-300">
+            <Clock className="w-3 h-3" />
+            <span>Pacing Delay</span>
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-300">
+            <Clock className="w-3 h-3" />
+            <span>{qItem.stage}</span>
+          </span>
+        );
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -132,73 +204,65 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
           </div>
         </div>
 
-        {/* Filter Segmented Controls & Metadata Counts */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mt-4 pt-3 border-t border-slate-800 text-xs">
+        {/* Filter Badges & Counter */}
+        <div className="flex flex-wrap items-center justify-between gap-2 mt-4 pt-3 border-t border-slate-800 text-xs">
           <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 font-medium mr-1">Filter:</span>
             <button
               onClick={() => setFilterType('all')}
-              className={`px-3 py-1 rounded-md font-medium transition ${
+              className={`px-2.5 py-1 rounded-md transition ${
                 filterType === 'all'
-                  ? 'bg-slate-800 text-white'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-slate-700 text-white font-semibold'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
-              All Releases ({totalCount})
+              All ({totalCount})
             </button>
             <button
               onClick={() => setFilterType('free')}
-              className={`px-3 py-1 rounded-md font-medium transition ${
+              className={`px-2.5 py-1 rounded-md transition ${
                 filterType === 'free'
-                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/50'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-emerald-950/70 border border-emerald-500/50 text-emerald-300 font-semibold'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
-              Free Downloads ({freeCount})
+              Free ({freeCount})
             </button>
             <button
               onClick={() => setFilterType('nyp')}
-              className={`px-3 py-1 rounded-md font-medium transition ${
+              className={`px-2.5 py-1 rounded-md transition ${
                 filterType === 'nyp'
-                  ? 'bg-amber-950/80 text-amber-300 border border-amber-800/50'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-amber-950/70 border border-amber-500/50 text-amber-300 font-semibold'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
-              Name Your Price $0 ({nypCount})
+              Name Your Price ({nypCount})
             </button>
             <button
               onClick={() => setFilterType('paid')}
-              className={`px-3 py-1 rounded-md font-medium transition ${
+              className={`px-2.5 py-1 rounded-md transition ${
                 filterType === 'paid'
-                  ? 'bg-slate-800 text-slate-300'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-slate-700 text-white font-semibold'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
-              Paid ({paidCount})
+              Paid / Non-NYP ({paidCount})
             </button>
           </div>
 
-          <div className="text-slate-400 font-mono">
-            <span className="text-cyan-400 font-semibold">{selectedCount}</span> of{' '}
-            <span className="text-slate-200">{totalCount}</span> selected for bulk download
+          <div className="text-slate-400">
+            Selected: <span className="font-semibold text-cyan-400 font-mono">{selectedCount}</span> of {totalCount}
           </div>
         </div>
       </div>
 
-      {/* Empty State */}
-      {filteredReleases.length === 0 && (
-        <div className="bg-[#111827] border border-slate-800 rounded-xl p-12 text-center text-slate-400">
-          <Music className="w-10 h-10 mx-auto mb-3 text-slate-600" />
-          <p className="text-sm font-medium text-slate-300">No releases match this filter.</p>
-          <p className="text-xs text-slate-500 mt-1">Try resetting the filter or search query.</p>
-        </div>
-      )}
-
       {/* Grid View */}
-      {viewMode === 'grid' && filteredReleases.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {viewMode === 'grid' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {filteredReleases.map((release) => {
-            const isEligible = release.isFree || release.isNameYourPrice;
             const isExpanded = !!expandedTracklists[release.id];
+            const isLogOpen = !!expandedLogs[release.id];
+            const qItem = queueItems?.[release.id];
 
             return (
               <div
@@ -253,7 +317,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                   </div>
 
                   {/* Price Tag Overlay */}
-                  <div className="absolute top-2.5 right-2.5 z-10">
+                  <div className="absolute top-2.5 right-2.5 z-10 flex flex-col items-end gap-1">
                     {release.isPurchased ? (
                       <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-cyan-950/90 text-cyan-300 border border-cyan-500/40 backdrop-blur-sm">
                         You Own It
@@ -274,6 +338,8 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                         {release.priceFormatted}
                       </span>
                     )}
+
+                    {renderStageBadge(qItem)}
                   </div>
                 </div>
 
@@ -287,7 +353,6 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                       {release.title}
                     </h3>
                     
-                    {/* Unboxed metadata line with typographic bullet separators */}
                     <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-1">
                       <span>{release.artist}</span>
                       {release.releaseDate && (
@@ -304,11 +369,46 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                       ) : null}
                     </div>
 
-                    {/* Email note if required for $0 NYP */}
+                    {/* Email note if required */}
                     {release.requiresEmail && (
                       <div className="flex items-center gap-1.5 text-[11px] text-amber-400/90 mt-2">
                         <Mail className="w-3 h-3 shrink-0" />
                         <span>Requires email for $0 token</span>
+                      </div>
+                    )}
+
+                    {/* Live queue status text */}
+                    {qItem && qItem.statusText && qItem.stage !== 'pending' && (
+                      <div className="mt-2 p-2 bg-[#0b0f17] rounded border border-slate-800 text-[11px]">
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span className="truncate">{qItem.statusText}</span>
+                          {qItem.logs && qItem.logs.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleLogs(release.id)}
+                              className="text-[10px] text-cyan-400 hover:underline shrink-0 ml-1.5"
+                            >
+                              {isLogOpen ? 'Hide Logs' : 'View Logs'}
+                            </button>
+                          )}
+                        </div>
+                        {qItem.error && (
+                          <div className="text-red-400 text-[10px] mt-1 break-words">
+                            Error: {qItem.error}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Logs Drawer */}
+                    {isLogOpen && qItem?.logs && (
+                      <div className="mt-2 p-2 bg-[#080c14] border border-slate-800 rounded font-mono text-[10px] max-h-28 overflow-y-auto space-y-1">
+                        {qItem.logs.map((log, lIdx) => (
+                          <div key={lIdx} className="text-slate-400">
+                            <span className="text-slate-600">[{log.timestamp}]</span>{' '}
+                            <span className={log.error ? 'text-red-400' : 'text-slate-300'}>{log.message}</span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -332,6 +432,18 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                     )}
 
                     <div className="flex items-center gap-2">
+                      {qItem?.stage === 'failed' && onRetryItem && (
+                        <button
+                          type="button"
+                          onClick={() => onRetryItem(release.id)}
+                          className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800 rounded transition"
+                          title="Retry download"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Retry</span>
+                        </button>
+                      )}
+
                       <a
                         href={release.url}
                         target="_blank"
@@ -390,6 +502,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                   <th className="p-3 w-14">Cover</th>
                   <th className="p-3">Title & Artist</th>
                   <th className="p-3">Pricing Status</th>
+                  <th className="p-3">Queue Status</th>
                   <th className="p-3 text-right">Tracks</th>
                   <th className="p-3">Date</th>
                   <th className="p-3 text-right">Actions</th>
@@ -397,6 +510,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-800/80">
                 {filteredReleases.map((release) => {
+                  const qItem = queueItems?.[release.id];
                   return (
                     <tr
                       key={release.id}
@@ -446,6 +560,14 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                           </span>
                         )}
                       </td>
+                      <td className="p-3">
+                        {renderStageBadge(qItem) || <span className="text-slate-500">—</span>}
+                        {qItem?.statusText && qItem.stage !== 'pending' && (
+                          <div className="text-[10px] text-slate-400 truncate max-w-xs mt-0.5">
+                            {qItem.statusText}
+                          </div>
+                        )}
+                      </td>
                       <td className="p-3 text-right font-mono tabular-nums text-slate-300">
                         {release.trackCount || 1}
                       </td>
@@ -453,6 +575,15 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                         {release.releaseDate || '—'}
                       </td>
                       <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                        {qItem?.stage === 'failed' && onRetryItem && (
+                          <button
+                            type="button"
+                            onClick={() => onRetryItem(release.id)}
+                            className="px-2 py-1 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800 rounded font-medium text-xs"
+                          >
+                            Retry
+                          </button>
+                        )}
                         <a
                           href={release.url}
                           target="_blank"

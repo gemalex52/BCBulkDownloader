@@ -1,5 +1,12 @@
 import React, { useState } from 'react';
-import { AUDIO_FORMATS, DeliveryMode, DownloadTask, ScannedRelease, formatFilenameBySchema } from '../types/bandcamp';
+import {
+  AUDIO_FORMATS,
+  DeliveryMode,
+  DownloadTask,
+  QueueItem,
+  ScannedRelease,
+  formatFilenameBySchema,
+} from '../types/bandcamp';
 import {
   Download,
   FolderArchive,
@@ -8,7 +15,13 @@ import {
   CheckCircle2,
   X,
   RotateCw,
-  FileText
+  FileText,
+  Play,
+  RotateCcw,
+  Clock,
+  Mail,
+  Shield,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface DownloadManagerProps {
@@ -22,10 +35,17 @@ interface DownloadManagerProps {
   namingSchema: string;
   onNamingSchemaChange: (schema: string) => void;
   onStartBulkDownload: () => void;
+  onResumeBulkDownload?: () => void;
+  canResume?: boolean;
+  pendingCount?: number;
+  failedCount?: number;
+  completedCount?: number;
   isDownloading: boolean;
   downloadTasks: DownloadTask[];
   onCancelDownload: () => void;
   onRetryTask: (taskId: string) => void;
+  activePacingNotice?: string;
+  createCompanionInfoZip?: boolean;
 }
 
 export const DownloadManager: React.FC<DownloadManagerProps> = ({
@@ -37,10 +57,17 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
   namingSchema,
   onNamingSchemaChange,
   onStartBulkDownload,
+  onResumeBulkDownload,
+  canResume = false,
+  pendingCount = 0,
+  failedCount = 0,
+  completedCount = 0,
   isDownloading,
   downloadTasks,
   onCancelDownload,
   onRetryTask,
+  activePacingNotice,
+  createCompanionInfoZip = true,
 }) => {
   const [showQueueModal, setShowQueueModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -76,12 +103,11 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const completedCount = downloadTasks.filter((t) => t.status === 'completed').length;
-  const totalTaskCount = downloadTasks.length;
+  const totalTaskCount = downloadTasks.length || (pendingCount + completedCount + failedCount);
   const overallProgress =
     totalTaskCount > 0
       ? Math.round(
-          downloadTasks.reduce((acc, t) => acc + t.progress, 0) / totalTaskCount
+          (completedCount / totalTaskCount) * 100
         )
       : 0;
 
@@ -116,18 +142,28 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                 </span>
               </div>
               <div className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
-                <span>Mode: {deliveryMode === 'zip' ? 'ZIP Bundle (with cover & info.txt)' : 'Individual Files'}</span>
-                {requiresEmailCount > 0 && (
+                <span>
+                  {createCompanionInfoZip ? 'Studio Audio + Companion (info).zip' : 'Studio Audio Only'}
+                </span>
+                {activePacingNotice && (
                   <>
                     <span className="text-slate-600">·</span>
-                    <span className="text-amber-400">{requiresEmailCount} require email auto-fill</span>
+                    <span className="text-cyan-400 font-mono text-[11px] animate-pulse">
+                      {activePacingNotice}
+                    </span>
+                  </>
+                )}
+                {requiresEmailCount > 0 && !activePacingNotice && (
+                  <>
+                    <span className="text-slate-600">·</span>
+                    <span className="text-amber-400">{requiresEmailCount} require email link flow</span>
                   </>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Controls: Format Selector & Delivery Mode */}
+          {/* Controls: Format Selector & Action Buttons */}
           <div className="flex flex-wrap items-center gap-3">
             {/* Format Dropdown */}
             <div className="flex items-center gap-1.5 bg-[#111827] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs">
@@ -143,34 +179,6 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                   </option>
                 ))}
               </select>
-            </div>
-
-            {/* Delivery Mode Toggle */}
-            <div className="flex items-center bg-[#111827] border border-slate-700 rounded-lg p-1 text-xs">
-              <button
-                onClick={() => onDeliveryModeChange('zip')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition font-medium ${
-                  deliveryMode === 'zip'
-                    ? 'bg-cyan-500 text-slate-950 font-semibold shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Download all albums in unified ZIP bundles with artwork and info.txt"
-              >
-                <FolderArchive className="w-3.5 h-3.5" />
-                <span>ZIP Bundle</span>
-              </button>
-              <button
-                onClick={() => onDeliveryModeChange('individual')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition font-medium ${
-                  deliveryMode === 'individual'
-                    ? 'bg-cyan-500 text-slate-950 font-semibold shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Download each album as separate browser downloads"
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Individual</span>
-              </button>
             </div>
 
             {/* Naming Schema Popover Button */}
@@ -206,7 +214,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                     type="text"
                     value={namingSchema}
                     onChange={(e) => onNamingSchemaChange(e.target.value)}
-                    placeholder="%artist% - %date% - %album%/[%track_num%. ]%title%.%format%"
+                    placeholder="%artist% - %date% - %album%[%title%.%format%]"
                     className="w-full px-3 py-1.5 bg-[#0b0f17] border border-slate-700 rounded-lg text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-400"
                   />
 
@@ -244,8 +252,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                           date: sampleRelease.isoDate || sampleRelease.releaseDate,
                           format: selectedFormat,
                           type: sampleRelease.itemType || 'track',
-                        },
-                        { allowSubfolders: deliveryMode === 'zip' }
+                        }
                       )}
                     </span>
                   </div>
@@ -262,7 +269,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
               <FileCode className="w-4 h-4" />
             </button>
 
-            {/* Primary Action Button */}
+            {/* Primary Action Button (Dynamic Resume vs Start) */}
             {isDownloading ? (
               <button
                 onClick={() => setShowQueueModal(true)}
@@ -270,9 +277,35 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
               >
                 <RotateCw className="w-3.5 h-3.5 animate-spin" />
                 <span>
-                  Downloading ({completedCount}/{totalTaskCount} · {overallProgress}%)
+                  Processing ({completedCount}/{totalTaskCount} · {overallProgress}%)
                 </span>
               </button>
+            ) : canResume && onResumeBulkDownload ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    onResumeBulkDownload();
+                    setShowQueueModal(true);
+                  }}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-lg transition shadow-md"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>
+                    Resume Download ({pendingCount + failedCount} remaining)
+                  </span>
+                </button>
+                <button
+                  onClick={() => {
+                    onStartBulkDownload();
+                    setShowQueueModal(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold rounded-lg transition border border-slate-700"
+                  title="Restart all items from the beginning"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Start Fresh</span>
+                </button>
+              </div>
             ) : (
               <button
                 onClick={() => {
@@ -283,7 +316,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                 className="flex items-center gap-2 px-5 py-2.5 bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 disabled:opacity-50 text-slate-950 text-xs font-bold rounded-lg transition shadow-md"
               >
                 <Download className="w-4 h-4" />
-                <span>Start Bulk Download ({selectedCount})</span>
+                <span>Start Download ({selectedCount})</span>
               </button>
             )}
           </div>
@@ -299,7 +332,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
               <div>
                 <h3 className="font-bold text-white text-base">Bulk Download Queue</h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Format: {currentFormatObj.name} · Mode: {deliveryMode === 'zip' ? 'ZIP Archive' : 'Direct Downloads'}
+                  Format: {currentFormatObj.name} · Output: Studio Audio + Companion (info).zip
                 </p>
               </div>
               <button
@@ -316,105 +349,90 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                 <span className="text-slate-400">Total Progress:</span>
                 <span className="text-cyan-400 font-semibold">{overallProgress}%</span>
                 <span className="text-slate-500">
-                  ({completedCount}/{totalTaskCount} completed)
+                  ({completedCount}/{totalTaskCount} completed
+                  {failedCount > 0 ? `, ${failedCount} failed` : ''})
                 </span>
               </div>
               {isDownloading && (
                 <button
                   onClick={onCancelDownload}
-                  className="text-rose-400 hover:text-rose-300 font-sans text-xs underline"
+                  className="text-red-400 hover:text-red-300 font-sans text-xs underline"
                 >
-                  Cancel Remaining
+                  Pause Queue
                 </button>
               )}
             </div>
 
-            {/* Task Item List */}
-            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+            {/* Task List */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-3">
               {downloadTasks.length === 0 ? (
-                <div className="text-center py-8 text-slate-500 text-xs">
-                  No active tasks in queue.
+                <div className="py-8 text-center text-slate-500 text-xs">
+                  No downloads currently in queue.
                 </div>
               ) : (
                 downloadTasks.map((task) => (
                   <div
                     key={task.id}
-                    className="p-3 bg-[#0b0f17] border border-slate-800/80 rounded-xl flex items-center gap-3.5"
+                    className="p-3 bg-[#0d131f] border border-slate-800 rounded-xl space-y-2"
                   >
-                    <div className="w-10 h-10 rounded bg-slate-900 overflow-hidden shrink-0">
-                      {task.artUrl ? (
-                        <img
-                          src={task.artUrl}
-                          alt=""
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : null}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-white truncate max-w-xs">
-                          {task.releaseTitle}
-                        </span>
-                        <span className="font-mono text-[11px] text-slate-400 capitalize">
-                          {task.status === 'downloading'
-                            ? `${task.progress}%`
-                            : task.status}
-                        </span>
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {task.status === 'completed' ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        ) : task.status === 'error' ? (
+                          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                        ) : (
+                          <RotateCw className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
+                        )}
+                        <span className="font-semibold text-white truncate">{task.releaseTitle}</span>
+                        <span className="text-slate-500 text-[11px] truncate">· {task.artist}</span>
                       </div>
 
-                      {/* Progress Bar */}
-                      <div className="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-300 ${
+                      <div className="flex items-center gap-2">
+                        {task.status === 'error' && (
+                          <button
+                            onClick={() => onRetryTask(task.id)}
+                            className="text-xs text-cyan-400 hover:underline"
+                          >
+                            Retry
+                          </button>
+                        )}
+                        <span
+                          className={`text-[11px] font-mono px-2 py-0.5 rounded ${
                             task.status === 'completed'
-                              ? 'bg-emerald-400'
+                              ? 'bg-emerald-950 text-emerald-300'
                               : task.status === 'error'
-                              ? 'bg-rose-500'
-                              : 'bg-cyan-400'
+                              ? 'bg-red-950 text-red-300'
+                              : 'bg-cyan-950 text-cyan-300'
                           }`}
-                          style={{ width: `${task.progress}%` }}
-                        />
+                        >
+                          {task.status}
+                        </span>
                       </div>
-
-                      {task.error && (
-                        <p className="text-[11px] text-rose-400 mt-1">{task.error}</p>
-                      )}
                     </div>
 
-                    {task.status === 'completed' && (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                    )}
-                    {task.status === 'error' && (
-                      <button
-                        onClick={() => onRetryTask(task.id)}
-                        className="p-1.5 text-amber-400 hover:text-amber-300 shrink-0"
-                        title="Retry download"
-                      >
-                        <RotateCw className="w-4 h-4" />
-                      </button>
+                    {/* Progress Bar */}
+                    <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 ${
+                          task.status === 'completed'
+                            ? 'bg-emerald-400'
+                            : task.status === 'error'
+                            ? 'bg-red-400'
+                            : 'bg-cyan-400'
+                        }`}
+                        style={{ width: `${task.progress}%` }}
+                      />
+                    </div>
+
+                    {task.error && (
+                      <div className="text-[11px] text-red-400 bg-red-950/30 p-2 rounded border border-red-900/40">
+                        {task.error}
+                      </div>
                     )}
                   </div>
                 ))
               )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-800 bg-[#0d131f] flex justify-between items-center text-xs">
-              <span className="text-slate-400">
-                {isDownloading
-                  ? 'Downloading sequentially to avoid rate-limiting...'
-                  : completedCount === totalTaskCount && totalTaskCount > 0
-                  ? 'All downloads completed successfully!'
-                  : 'Ready.'}
-              </span>
-              <button
-                onClick={() => setShowQueueModal(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium transition"
-              >
-                Close Queue
-              </button>
             </div>
           </div>
         </div>
@@ -423,42 +441,44 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
       {/* Export Links Modal */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-xl max-h-[80vh] flex flex-col shadow-2xl">
+          <div className="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl">
             <div className="p-5 border-b border-slate-800 flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-white text-base">Export Download Links</h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Export download URLs for command-line tools like curl, wget, or aria2c.
+                  Direct links to selected releases formatted for wget/cURL or external downloaders.
                 </p>
               </div>
               <button
                 onClick={() => setShowExportModal(false)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg"
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg transition"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-5 flex-1 overflow-y-auto">
-              <pre className="p-3 bg-[#0b0f17] border border-slate-800 rounded-lg text-xs font-mono text-cyan-300 overflow-x-auto whitespace-pre">
-                {generateExportText()}
-              </pre>
+            <div className="p-5 overflow-y-auto flex-1 font-mono text-xs text-slate-300 bg-[#0b0f17] select-all whitespace-pre leading-relaxed border-b border-slate-800">
+              {generateExportText()}
             </div>
 
-            <div className="p-4 border-t border-slate-800 bg-[#0d131f] flex justify-end gap-3">
-              <button
-                onClick={() => setShowExportModal(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDownloadExportTxt}
-                className="flex items-center gap-1.5 px-4 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 rounded-lg text-xs font-semibold"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Save as .txt File</span>
-              </button>
+            <div className="p-4 flex items-center justify-between bg-[#111827]">
+              <span className="text-xs text-slate-400">
+                {selectedCount} releases · format: {selectedFormat.toUpperCase()}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadExportTxt}
+                  className="px-4 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 rounded-lg text-xs font-bold transition"
+                >
+                  Download .txt File
+                </button>
+                <button
+                  onClick={() => setShowExportModal(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

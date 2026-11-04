@@ -15,6 +15,7 @@ export interface ScannedRelease {
   artistUrl: string;
   url: string;
   artUrl: string;
+  artistBioPicUrl?: string; // Bandcamp artist bio image (renamed to artist.jpg)
   extraImages?: string[];
   releaseDate?: string;
   isoDate?: string;
@@ -55,31 +56,132 @@ export const AUDIO_FORMATS: AudioFormat[] = [
   { id: 'aiff-lossless', name: 'AIFF', ext: 'aiff', desc: 'Uncompressed audio format', approxMbPerTrack: 50 },
 ];
 
-export type DeliveryMode = 'zip' | 'individual';
+export type DeliveryMode = 'zip' | 'individual' | 'companion';
 
 export interface DownloadTask {
   id: string;
   releaseId: string;
   releaseTitle: string;
   artist: string;
-  artUrl: string;
+  artUrl?: string;
   format: string;
-  status: 'queued' | 'resolving' | 'downloading' | 'zipping' | 'completed' | 'error';
+  status: 'queued' | 'resolving' | 'downloading' | 'completed' | 'error';
   progress: number;
-  downloadUrl?: string;
-  fileSizeMb?: number;
+  filename?: string;
   error?: string;
+}
+
+// Queue item processing stages
+export type QueueItemStage =
+  | 'pending'
+  | 'checking_mail'
+  | 'triggering_email'
+  | 'polling_gas'
+  | 'resolving_stat'
+  | 'downloading_audio'
+  | 'packaging_info'
+  | 'pacing'
+  | 'completed'
+  | 'failed'
+  | 'skipped';
+
+export interface ItemStageLog {
+  timestamp: string;
+  stage: QueueItemStage;
+  message: string;
+  error?: string;
+}
+
+export interface QueueItem {
+  id: string;
+  itemId: number;
+  itemType: 'album' | 'track';
+  title: string;
+  artist: string;
+  url: string;
+  artUrl: string;
+  artistBioPicUrl?: string;
+  extraImages?: string[];
+  releaseDate?: string;
+  isoDate?: string;
+  isFree: boolean;
+  isNameYourPrice: boolean;
+  isPurchased?: boolean;
+  isPaid?: boolean;
+  requiresEmail: boolean;
+  stage: QueueItemStage;
+  stageProgress: number; // 0 to 100
+  statusText: string;
+  audioDownloaded: boolean;
+  infoZipDownloaded: boolean;
+  audioFilename?: string;
+  infoZipFilename?: string;
+  audioDownloadUrl?: string;
+  freeDownloadPageUrl?: string;
+  infoText?: string;
+  aboutText?: string;
+  creditsText?: string;
+  retryCount: number;
+  lastUpdated: string;
+  error?: string;
+  logs: ItemStageLog[];
+}
+
+export interface SiteQueueSession {
+  origin: string; // e.g. "https://esoctrilihum.bandcamp.com"
+  hostname: string; // "esoctrilihum.bandcamp.com"
+  artistName: string;
+  catalogUrl: string;
+  scannedAt: string;
+  updatedAt: string;
+  items: Record<string, QueueItem>;
+  itemOrder: string[];
+  inProgress: boolean;
 }
 
 export interface AppSettings {
   fallbackEmail: string;
   preferredFormat: string;
-  deliveryMode: DeliveryMode;
-  concurrentDownloads: number;
-  skipEmailRequired: boolean;
-  skipAlbumTrackSubpages: boolean;
+  deliveryMode?: DeliveryMode;
+  createCompanionInfoZip: boolean; // default: true
   namingSchema: string;
+  concurrentDownloads?: number;
+  skipEmailRequired?: boolean;
+  skipAlbumTrackSubpages?: boolean;
+  // GAS Webhook Settings
+  gasWebhookUrl: string;
+  gasSecret: string;
+  gasSearchWindowSeconds: number; // legacy fallback
+  gasSearchFilterType: 'offset_hours' | 'start_date'; // filter mode
+  gasSearchOffsetHours: number; // e.g. 1, 6, 24, 72, 168 (7d), 720 (30d)
+  gasSearchStartDate: string; // e.g. "2026-01-01"
+  // Anti-captcha & rate-limit pacing
+  pacingBaseDelaySeconds: number; // default: 2.5
+  pacingJitterPercent: number; // default: 40 (meaning 2.5 +/- 1.0s)
+  cooldownBatchInterval: number; // default: 5 (pause every 5 downloads)
+  cooldownDurationSeconds: number; // default: 12
 }
+
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  fallbackEmail: '',
+  preferredFormat: 'flac',
+  deliveryMode: 'companion',
+  createCompanionInfoZip: true,
+  namingSchema: '%artist% - %date% - %album%[%title%.%format%]',
+  concurrentDownloads: 3,
+  skipEmailRequired: false,
+  skipAlbumTrackSubpages: true,
+  gasWebhookUrl: '',
+  gasSecret: '',
+  gasSearchWindowSeconds: 86400,
+  gasSearchFilterType: 'offset_hours',
+  gasSearchOffsetHours: 72, // default: past 3 days
+  gasSearchStartDate: '',
+  pacingBaseDelaySeconds: 2.5,
+  pacingJitterPercent: 40,
+  cooldownBatchInterval: 5,
+  cooldownDurationSeconds: 12,
+};
 
 export function formatDateToDotString(raw?: string): string {
   if (!raw) return '';
@@ -142,20 +244,23 @@ export function formatFilenameBySchema(
     date?: string;
     format: string;
     type?: string;
+    isArchive?: boolean;
   },
   options: {
     allowSubfolders?: boolean;
   } = {}
 ): string {
   const allowSubfolders = options.allowSubfolders ?? false;
-  const template = schema || '%artist% - %date% - %album%/[%track_num%. ]%title%.%format%';
+  let template = schema || '%artist% - %date% - %album%[%title%.%format%]';
+
+  const isAlbumArchive = meta.isArchive || (meta.type === 'album' && meta.format === 'zip');
 
   // Track number logic:
-  // - Empty for single-track releases
+  // - Empty for single-track releases or album archives
   // - Zero-padded to total tracks count for multitrack releases
   let trackNumStr = '';
   const total = meta.totalTracks ?? (meta.type === 'track' ? 1 : 2);
-  if (total > 1 && meta.trackNum != null && meta.trackNum !== '') {
+  if (!isAlbumArchive && total > 1 && meta.trackNum != null && meta.trackNum !== '') {
     const padLen = Math.max(2, String(total).length);
     trackNumStr = String(meta.trackNum).padStart(padLen, '0');
   }
@@ -167,15 +272,19 @@ export function formatFilenameBySchema(
   const sanitizeSegment = (s: string) =>
     String(s || '').replace(/[:*?"<>|]/g, '_').trim();
 
+  // For album archives or standalone single-track releases, automatically drop track-specific title token
+  const isSingleTrackRelease = meta.type === 'track' && (meta.album === meta.title || !meta.album || total <= 1);
+  const titleVal = (isAlbumArchive || isSingleTrackRelease) ? '' : sanitizeSegment(meta.title || '');
+
   const values: Record<string, string> = {
     '%artist%': sanitizeSegment(meta.artist || 'Bandcamp'),
     '%album%': sanitizeSegment(meta.album || meta.title || 'Album'),
-    '%title%': sanitizeSegment(meta.title || 'Track'),
+    '%title%': titleVal,
     '%track_num%': trackNumStr,
     '%date%': fullDate || yearStr,
     '%year%': yearStr,
-    '%format%': (meta.format || 'flac').replace(/[^a-zA-Z0-9]/g, ''),
-    '%type%': sanitizeSegment(meta.type || 'track'),
+    '%format%': (meta.format || (isAlbumArchive ? 'zip' : 'flac')).replace(/[^a-zA-Z0-9]/g, ''),
+    '%type%': sanitizeSegment(meta.type || 'album'),
   };
 
   // Evaluate conditional brackets [ ... ]
@@ -210,9 +319,13 @@ export function formatFilenameBySchema(
       .trim();
   }
 
+  // Clean trailing hyphens or underscores
+  formatted = formatted.replace(/\s*-\s*$/, '').trim();
+
   // Determine standard file extension
-  let ext = (meta.format || 'flac').toLowerCase().trim();
-  if (ext.startsWith('mp3')) ext = 'mp3';
+  let ext = (meta.format || (isAlbumArchive ? 'zip' : 'flac')).toLowerCase().trim();
+  if (isAlbumArchive) ext = 'zip';
+  else if (ext.startsWith('mp3')) ext = 'mp3';
   else if (ext === 'aac-hi' || ext === 'alac') ext = 'm4a';
   else if (ext === 'aiff-lossless') ext = 'aiff';
   else if (ext === 'wav') ext = 'wav';
@@ -223,6 +336,11 @@ export function formatFilenameBySchema(
   }
 
   return formatted;
+}
+
+export function getCompanionInfoZipName(audioFilename: string): string {
+  const clean = audioFilename.replace(/\.[^/.]+$/, '');
+  return `${clean} (info).zip`;
 }
 
 export interface ExtensionFileItem {

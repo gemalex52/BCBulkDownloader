@@ -1,129 +1,224 @@
-# Bandcamp Free & Name-Your-Price Bulk Downloader (Chrome Extension & Simulator)
+# Bandcamp Bulk Downloader — Redesign Implementation Plan (Revised)
 
-A Chrome-compatible extension and companion web simulator designed to scan Bandcamp artist discographies, filter for free-to-download and name-your-price ($0.00) albums, allow checkbox selection and audio format customization, and batch-download audio files individually or bundled in a single ZIP archive.
+A comprehensive overhaul of the Bandcamp Free & Name-Your-Price bulk downloader, decoupling audio downloads from companion metadata archives, introducing an idempotent persistent queue with multi-artist session resumption, anti-captcha jittered pacing, and automating email-walled download link retrieval via Google Apps Script (GAS) webhooks.
+
+---
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following decisions were confirmed based on your requirements and initial feedback:
-
-- **Confirmed Mode**: Dual-delivery model featuring both an **in-browser interactive scanner/simulator** (for testing with live or proxy crawling against `https://esoctrilihum.bandcamp.com/music`) and a **ready-to-install Manifest V3 Chrome Extension package** with one-click `.zip` export.
-- **Confirmed Email Handling**: An auto-fill fallback email setting is provided to seamlessly resolve "Name Your Price" releases where Bandcamp requires an email address to issue a $0 download token.
-- **Confirmed Download Delivery**: Users can choose between triggering sequential individual browser downloads or packing all selected releases into an organized `.zip` archive.
-- **Scope Restriction**: Only main discography pages and album sub-pages are crawled; individual single-track sub-pages belonging to already-cataloged albums are skipped to optimize scan speed and avoid duplicate downloads.
+> The following operational preferences were confirmed and refined:
+> - **Multi-Site Namespaced Sessions**: Persistent queue and scan cache are partitioned by artist domain/origin (`bc_session_<hostname>`), allowing users to scan, manage, and resume sessions across different Bandcamp artists independently.
+> - **Anti-Captcha & Rate-Limit Pacing**: Configurable request delay with randomized jitter (e.g., $2.0\text{s} \pm 0.8\text{s}$) between downloads, plus an optional cool-down pause (e.g. pause 15s every 5 releases) to prevent Cloudflare/Bandcamp rate-limiting or captchas.
+> - **Watchdog Polling**: Poll the Google Apps Script webhook every 5 seconds for up to 3 minutes, with an immediate manual "Re-check / Retry" action available on card rows.
+> - **Companion Info ZIP**: Enabled by default alongside audio releases, containing untruncated `info.txt`, `cover.jpg`, `photos/`, `artist.jpg` (from `bio_pic`), and separate `.lrc` lyrics files for any tracks with lyrics.
+> - **Interrupted Session Resumption**: When resuming, automatically proceed with pending items and retry previously failed items, while skipping completed items (with per-item re-download overrides).
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Scans a Bandcamp artist's `/music` or discography page, visits every album and standalone release page, identifies free downloads (explicit "Free Download" or "$0.00 Name Your Price"), extracts album metadata (title, artwork, release date, track list, price model), presents an interactive selection table with filters, and executes bulk downloads in the chosen audio format (MP3 320k, FLAC, AAC, ALAC, WAV, AIFF).
-- **Target Audience**: Music collectors, archival listeners, and fans supporting underground and independent artists who offer free or pay-what-you-want digital discographies.
-- **Key Value**: Replaces the tedious manual process of clicking each album, typing "$0", submitting an email, clicking the download link, choosing the format, and repeating 20+ times for large discographies like *Esoctrilihum*.
+- **What It Does**: 
+  1. Scans complete Bandcamp artist catalogs (including unpaginated releases and dynamic client data).
+  2. Resolves free and email-walled releases into their genuine studio audio archives/files (`.zip` or `.flac`) named cleanly by metadata (`Artist - 2026.10.30 - Album.zip` / `Artist - 2026.10.30 - Track.flac`).
+  3. Generates a paired companion archive (`Artist - 2026.10.30 - Album (info).zip`) containing untruncated `info.txt`, `cover.jpg`, packaging `photos/`, `artist.jpg` (from Bandcamp `bio_pic`), and track-level `.lrc` lyrics files.
+  4. Automatically monitors Gmail for email-walled Bandcamp download tokens via a user-deployed Google Apps Script (GAS) webhook, resolving and downloading studio files hands-free.
+  5. Maintains persistent, namespaced queue state in local storage across multiple artist discographies, enabling 1-click **Resume Download** after interruptions with live stage logs for every item.
+  6. Applies jittered delays and configurable cool-down intervals to respect Bandcamp server limits and avoid captcha triggers.
+- **Target Audience**: Music collectors, archivists, and Bandcamp supporters seeking high-fidelity studio archives (FLAC/320) and organized artwork/metadata without manually clicking dozens of email confirmation links.
+- **Key Value**: Eliminates manual email-checking loops and bloated multi-album re-compression, providing direct studio downloads with structured companion archives, anti-ban pacing, and crash-resilient multi-site session resumption.
 
 ---
 
 ### 2. User Experience & Visual Design
 
 #### Key User Flows
-1. **Targeting & Discovery**:
-   - The user enters a Bandcamp URL (pre-filled with `https://esoctrilihum.bandcamp.com/music`) or clicks "Scan Current Page" in the extension popup.
-   - The scanner displays live discovery progress (e.g., "Found 18 releases · Scanning album 4/18").
-2. **Review & Selection**:
-   - A high-density discography grid and table shows cover art, album title, release year, price tag (`Free` / `Name Your Price $0`), and download availability.
-   - Controls allow one-click "Select All Free", "Select All NYP", or fine-grained individual checkbox toggles.
-3. **Format & Options**:
-   - Format selector pills: **MP3 320**, **FLAC**, **AAC**, **WAV**, **AIFF**, **ALAC**.
-   - Output preference toggle: **Bundled ZIP** vs. **Individual Downloads**.
-4. **Bulk Download Execution**:
-   - Real-time queue showing percentage, download speed, active stream, retry button, and overall completion notice.
-5. **Extension Center & Exporter**:
-   - A dedicated tab allowing one-click download of the complete `bandcamp-downloader-extension.zip` with manifest, background service worker, content scripts, and options page ready to load unpacked into Chrome (`chrome://extensions`).
+1. **Catalog Scan & Multi-Session Navigation**:
+   - User inputs artist page or opens extension popup on any Bandcamp artist page.
+   - The queue manager checks for an existing session for that specific artist (`esoctrilihum.bandcamp.com`, `ulver.bandcamp.com`, etc.).
+   - If a session is incomplete, the primary action displays **Resume Download** with progress details (e.g., `4 of 12 completed · 1 failed`). A session switcher allows switching between ongoing artist queues.
+2. **Download Initiation & Full-Tab Launch**:
+   - Clicking **Start Download** (or **Resume Download**) in the extension immediately opens/focuses the dedicated full-tab dashboard (`dashboard.html`) to ensure persistent execution and prevent background worker termination.
+   - Each release item displays its real-time stage:
+     - `Pending` $\rightarrow$ `Checking Existing Mail` $\rightarrow$ `Triggering Email` $\rightarrow$ `Awaiting Link (GAS)` $\rightarrow$ `Resolving Audio` $\rightarrow$ `Downloading Audio` $\rightarrow$ `Packaging Info ZIP` $\rightarrow$ `Pacing Jitter` $\rightarrow$ `Completed`.
+3. **Pacing, Jitter & Cool-Down Feedback**:
+   - Between download tasks, a quiet countdown indicator displays the active jitter delay (e.g. `Pacing: 2.3s cooldown...`) to keep the user informed without intrusive banners.
+   - After a batch threshold (e.g., 5 downloads), the dashboard indicates a brief cool-down phase (`Cooling down for 10s to avoid rate limits...`).
+4. **Email-Walled Multi-Stage Pipeline**:
+   - For email-walled NYP releases, the system first checks the GAS webhook for recently received links (using the configurable search window).
+   - If not found, it submits `/email_download`, starts the 5-second polling watchdog (up to 3 minutes), and displays the countdown and search query in the item's live log.
+   - Once GAS returns `{"found": true, "downloadPageUrl": "..."}`, the system immediately calls `statdownload` until the link is ready, streams the genuine studio ZIP, and saves it with formatted metadata.
+5. **GAS Webhook & Pacing Setup**:
+   - Settings panel includes:
+     - Ready-to-copy Google Apps Script code snippet (`Code.gs`) with 1-click test button.
+     - Pacing settings: Base Delay ($1\text{s}$–$10\text{s}$), Jitter ($\pm 50\%$), and Cool-Down Batch Interval ($N$ downloads, $S$ seconds).
 
 #### Visual Identity & Theme
-- **Aesthetic Direction**: High-contrast dark music production console, drawing inspiration from Bandcamp's minimalist black/teal brand aesthetics combined with modern utilitarian audio tools.
-- **Color Palette**:
-  - Dominant Neutral: Deep obsidian canvas (`#0b0f17`) with rich slate structural cards (`#131c2e`, hairline border `#1e293b`).
-  - Brand Accent: Bandcamp Cyan/Teal (`#1da0c3` / `#00b4d8`) for active selection, download progress, and primary actions.
-  - Semantic Badges: Subtle emerald (`#10b981`) for 100% Free releases, amber (`#f59e0b`) for Name Your Price ($0).
-- **Typography**: `Plus Jakarta Sans` for display titles and navigation, paired with `JetBrains Mono` / `tabular-nums` for scan counters, download speeds, file sizes, and audio bitrates.
-- **Anti-Slop Discipline**: No decorative floating pill chips or fake telemetry tickers; all metrics are real scan numbers and active byte transfers.
+- **Color Discipline (60-30-10)**:
+  - Neutral Canvas: Deep obsidian dark slate (`#0B0F17`) and structural surface panels (`#111827`, `#1E293B`).
+  - Structural Hairlines: 1px dividers (`#334155`, `#1F2937`) with single-elevation depth.
+  - Accent Color: Bandcamp cyan (`#00B4D8`) and electric sky (`#38BDF8`) reserved strictly for interactive CTAs, active filters, and progress bars.
+  - Semantic Status: Emerald (`#10B981`) for completed, Amber (`#F59E0B`) for polling/awaiting, Crimson (`#EF4444`) for errors.
+- **Typographic Hierarchy**:
+  - Primary UI & Display: `Plus Jakarta Sans` for crisp navigation, buttons, and headers.
+  - Body & Metadata: `DM Sans` for clean, unboxed metadata (`Year · 3 tracks · FLAC`).
+  - Telemetry & Status Logs: Monospace with tabular numerals (`font-mono tabular-nums`) for timestamps, byte counters, and polling intervals.
+- **Zero-Pill Metadata**:
+  - Releases list items and dashboard cards use unboxed text with subtle typographic separators (`·` or `/`), never multi-layered pill enclosures.
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Dual Architecture (Live Web Simulator + Chrome Extension Source)**
-  - *Chosen Approach*: Build a full-stack preview application with Express proxy endpoints for live scraping and testing in the AI Studio environment, paired with an extension code generator and ZIP bundler.
-  - *Why*: The AI Studio preview runs inside a sandboxed iframe where browser extension APIs (`chrome.downloads`, `chrome.tabs`) are not natively present. Building both allows instant interactive testing of `https://esoctrilihum.bandcamp.com/music` right in the browser while providing the actual working Chrome extension for day-to-day browser usage.
-- **Decision 2: Direct Bandcamp Tralbum Parsing**
-  - *Chosen Approach*: Parse Bandcamp's embedded `data-tralbum` HTML attribute and `TralbumData` JavaScript objects rather than relying solely on DOM selectors.
-  - *Why*: Bandcamp stores the canonical `freeDownloadPage`, package IDs, download preference flags, and release metadata directly in structured JSON in page markup, making extraction resilient against visual theme variations across artist pages.
-- **Decision 3: Server-Side & Client-Side Download Engine**
-  - *Chosen Approach*: Provide client-side JSZip packaging for browser downloads in the web simulator, while generating native `chrome.downloads` queue orchestration in the extension background script.
+#### 1. Decoupled Audio Archive + Companion Info ZIP with Lyrics (.lrc)
+- **Chosen Approach**:
+  - For each release, download the official Bandcamp audio archive/file as a standalone asset (`Artist - 2026.10.30 - Album.zip` or `Artist - 2026.10.30 - Track.flac`).
+  - Create a separate companion archive (`Artist - 2026.10.30 - Album (info).zip`) containing `info.txt`, `cover.jpg`, `photos/`, `artist.jpg` (from Bandcamp `bio_pic`), and separate `.lrc` lyrics files for any tracks that include lyrics.
+- **Why**: Bandcamp's official archives are natively packaged with verified studio audio and tagging. A decoupled companion info ZIP provides complete archival artwork, unpadded liner notes, and synchronized lyrics files alongside studio files without browser memory exhaustion.
+- **Alternatives Considered**: Dumping individual images into the download folder (clutters user's file system) or forcing audio re-encoding (degrades quality).
+
+#### 2. Multi-Site Namespaced Persistence
+- **Chosen Approach**:
+  - Storage keys are scoped by normalized artist domain/origin:
+    - Queue state: `bc_queue_<origin_hash>`
+    - Scan cache: `bc_catalog_<origin_hash>`
+    - Global preferences: `bc_global_settings` (formats, GAS URL, secret, pacing preferences).
+- **Why**: Users scan multiple artist discographies. Namespaced storage ensures sessions for Artist A and Artist B do not overwrite each other, allowing users to pause, switch artists, and resume seamlessly.
+
+#### 3. Jittered Pacing & Cool-Down Engine
+- **Chosen Approach**:
+  - Between consecutive release downloads, introduce a randomized delay:
+    $$\Delta t = \text{baseDelay} + (\text{Math.random()} \times 2 - 1) \times \text{jitterAmount}$$
+  - Default: $2.5\text{s} \pm 1.0\text{s}$ (range: $1.5\text{s}$–$3.5\text{s}$).
+  - Cool-down: After every 5 downloads, pause for an additional 12 seconds.
+- **Why**: Protects against Bandcamp's IP rate limiting and Cloudflare challenges when processing large 40+ release discographies.
+
+#### 4. Naming Schema Adaptation for Album Archives
+- **Chosen Approach**:
+  - Default naming schema: `%artist% - %date% - %album%[%title%.%format%]`.
+  - For multi-track album archives, track-specific tokens (`%title%`, `%track_num%`) inside bracket groups `[...]` are omitted, resolving to `Artist - 2026.10.30 - Album.zip`.
+  - For single-track releases, resolves to `Artist - 2026.10.30 - Track.flac`.
+
+#### 5. Untruncated Liner Notes via `tralbumData`
+- **Chosen Approach**: Extract `aboutText` directly from `tralbumData.current.about` rather than scraping the rendered HTML div, avoiding truncated text behind "more..." spoilers.
 
 ---
 
 ### 4. Technical Architecture & Data Strategy
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       BANDCAMP BULK DOWNLOAD SUITE                          │
-├──────────────────────────────────────┬──────────────────────────────────────┤
-│        WEB SIMULATOR & TESTBED       │     CHROME EXTENSION (MANIFEST V3)   │
-│                                      │                                      │
-│  ┌────────────────────────────────┐  │  ┌────────────────────────────────┐  │
-│  │ React Frontend (App.tsx)       │  │  │ Popup UI (popup.html / .js)    │  │
-│  │ - URL Input & Quick Templates  │  │  │ - Quick Scan Active Tab        │  │
-│  │ - Album Selection Table & Grid │  │  │ - Format Selector (FLAC, MP3)  │  │
-│  │ - Format & Delivery Controls   │  │  │ - Queue Visualizer             │  │
-│  │ - Download Progress Manager    │  │  └───────────────┬────────────────┘  │
-│  │ - Extension Package Exporter   │  │                  │ chrome.runtime    │
-│  └────────────────┬───────────────┘  │  ┌───────────────▼────────────────┐  │
-│                   │ /api/proxy/*     │  │ Background Service Worker      │  │
-│  ┌────────────────▼───────────────┐  │  │ - CORS-free fetch of subpages  │  │
-│  │ Express Server (server.ts)     │  │  │ - chrome.downloads API queue   │  │
-│  │ - /api/scan: Deep discography  │  │  │ - Email token generator ($0)   │  │
-│  │ - /api/resolve-download: $0 key│  │  └───────────────┬────────────────┘  │
-│  │ - /api/export-extension: .zip  │  │                  │ chrome.tabs       │
-│  └────────────────────────────────┘  │  ┌───────────────▼────────────────┐  │
-│                                      │  │ Content Script (content.js)    │  │
-│                                      │  │ - Bandcamp DOM & TralbumData   │  │
-│                                      │  └────────────────────────────────┘  │
-└──────────────────────────────────────┴──────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   DISCOGRAPHY SCANNER                                   │
+│  - Reads ol#music-grid & data-client-items                                              │
+│  - Fetches subpages & parses raw TralbumData (untruncated about notes, bio_pic, lyrics) │
+└──────────────────────────────────────────┬──────────────────────────────────────────────┘
+                                           │
+                                           ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│              MULTI-SITE NAMESPACED QUEUE CONTROLLER (Local Storage)                     │
+│  - Keys: bc_queue_<artist_domain>, bc_catalog_<artist_domain>                           │
+│  - Stores: { id, title, artist, date, state, audioUrl, infoZipStatus, logs, retryCount }│
+│  - States: PENDING | CHECKING_MAIL | TRIGGER_EMAIL | POLLING_GAS | RESOLVING | COMPLETED│
+│  - Actions: Start Download | Resume Download | Retry Single Item                        │
+└──────────────┬───────────────────────────┬───────────────────────────────┬──────────────┘
+               │                           │                               │
+               ▼                           ▼                               ▼
+     [Direct Free Link]          [Email-Walled NYP]               [Purchased / Paid]
+               │                           │                               │
+               │                  1. Check existing mail                   │ If owned: download
+               │                  2. POST /email_download                  │ If not owned: skip
+               │                  3. Poll GAS Webhook (5s)                 │ audio, generate
+               │                  4. Receive downloadPageUrl               │ (info).zip only
+               │                           │                               │
+               └───────────────────────────┼───────────────────────────────┘
+                                           │
+                                           ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                           BANDCAMP DOWNLOAD STAT RESOLVER                               │
+│  - Calls /statdownload with .rand & retry token until download_url is ready             │
+│  - Resolves genuine studio FLAC / MP3-320 archive URL                                   │
+└──────────────────────────────────────────┬──────────────────────────────────────────────┘
+                                           │
+                      ┌────────────────────┴────────────────────┐
+                      ▼                                         ▼
+┌───────────────────────────────────────────┐ ┌───────────────────────────────────────────┐
+│             STUDIO AUDIO FILE             │ │           COMPANION INFO ZIP              │
+│  - File: Artist - Date - Album.zip        │ │  - File: Artist - Date - Album (info).zip │
+│    or: Artist - Date - Track.flac         │ │  - Contents:                              │
+│  - Downloaded via streaming blob or       │ │    - info.txt (untruncated tralbum data)  │
+│    chrome.downloads with formatted name   │ │    - cover.jpg (_10.jpg hi-res artwork)   │
+│                                           │ │    - photos/ (CD/LP packaging photos)     │
+│                                           │ │    - artist.jpg (from bio_pic_id)         │
+│                                           │ │    - *.lrc (synchronized track lyrics)    │
+└─────────────────────┬─────────────────────┘ └─────────────────┬─────────────────────────┘
+                      └────────────────────┬────────────────────┘
+                                           ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                           PACING & JITTER RATE-LIMIT ENGINE                             │
+│  - Base delay: 2.5s ± 1.0s jitter between downloads                                     │
+│  - Cool-down pause: 12s after every 5 completed releases                                │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Key Entities & State Model
-- **`BandcampRelease`**:
-  - `id`: Unique release identifier (album or track ID).
-  - `title`: Album / track title.
-  - `artist`: Artist name (e.g., Esoctrilihum).
-  - `url`: Canonical URL to release page.
-  - `coverArtUrl`: High-res album artwork.
-  - `releaseDate`: Formatted release date string.
-  - `type`: `'album'` | `'track'`.
-  - `isFree`: Boolean (unconditionally free).
-  - `isNameYourPrice`: Boolean (minimum price is 0).
-  - `requiresEmail`: Boolean.
-  - `downloadPageUrl`: Resolved free download link or null.
-  - `trackCount`: Number of tracks in release.
-  - `selected`: Boolean for batch actions.
-- **`DownloadTask`**:
-  - `releaseId`: Link to release.
-  - `format`: `'mp3-320'` | `'flac'` | `'aac-hi'` | `'wav'` | `'alac'`.
-  - `status`: `'queued'` | `'resolving'` | `'downloading'` | `'zipping'` | `'completed'` | `'error'`.
-  - `progress`: 0 to 100 percentage.
-  - `error`: Error message if resolution fails.
+#### Multi-Stage Processing Pipeline
 
-#### Interactive Component & Handlers Plan
-1. **Header & Navigation Bar**: Clean 3-zone header with Bandcamp Downloader wordmark, mode switch (`Live Scanner` / `Extension Package & Guide` / `Settings`), and primary action (`Scan Esoctrilihum Demo` or `Scan Custom URL`).
-2. **Scanner Controller**: Input bar with validation for `*.bandcamp.com`, "Deep Scan Discography" button, "Scan Album Pages Only" toggle, concurrency slider.
-3. **Catalog Data Grid**:
-   - Master checkbox with indeterminate state.
-   - Filter chips: All, Free Only, Name Your Price, Albums Only.
-   - Format selector with direct file size approximations.
-   - Batch actions: "Download Selected (X items)", "Export URLs as Text / cURL".
-4. **Live Download Queue Drawer**: Shows active transfers, individual retry, pause, cancellation, and ZIP packing progress.
-5. **Extension Package Hub**:
-   - One-click "Download Extension .zip" button containing complete, ready-to-load files.
-   - Code viewer with syntax tabs (`manifest.json`, `background.js`, `content.js`, `popup.html`, `popup.js`).
-   - Visual step-by-step loading instructions for Chrome.
+| Stage | Action | Expected Output / Transition |
+| :--- | :--- | :--- |
+| `1. Inspection` | Checks release type (`freeDownloadPage`, `require_email`, `isPaid`) | Routes release to direct download, email workflow, or info-only. |
+| `2. Existing Mail Check` | Calls GAS webhook with `since = custom_since` or `now - 86400` | If email was already received earlier, skip triggering duplicate email! |
+| `3. Trigger Email` | POST to `https://<artist>.bandcamp.com/email_download` | Bandcamp returns `{"ok": true}`. Record `triggerEpoch`. |
+| `4. Polling Watchdog` | Polls GAS webhook every 5s for up to 3 minutes: `.../exec?secret=...&since=...&id=...&title=...` | Receives `{"found": true, "downloadPageUrl": "..."}` or times out after 3 min with retry button. |
+| `5. Stat Resolver` | Polls Bandcamp `statdownload` until `statResult` returns `download_url` | Obtains direct CDN download link for requested format (FLAC/320). |
+| `6. Audio Download` | Downloads studio file / archive and saves as `%artist% - %date% - %album%[%title%.%format%]` | Saves `Artist - Date - Album.zip` or `Artist - Date - Track.flac`. |
+| `7. Companion Archive` | If enabled (default: ON), builds `Artist - Date - Album (info).zip` with JSZip | Contains untruncated `info.txt`, `cover.jpg`, `photos/`, `artist.jpg`, and `.lrc` lyrics files. |
+| `8. Pacing Jitter` | Waits randomized delay ($1.5\text{s}$–$3.5\text{s}$) + checks cool-down batch counter | Prevents rate-limits; logs wait time in UI. |
+| `9. Completion` | Updates namespaced local storage queue, logs timestamp, marks item `Completed` | Increments completed count; triggers next queue item. |
+
+#### Google Apps Script (GAS) Webhook Specification
+- **Request Format**:
+  `GET https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec?secret=<SECRET>&since=<EPOCH_SECONDS>&id=<RELEASE_ID>&title=<ENCODED_TITLE>`
+- **Response Format**:
+  ```json
+  {
+    "found": true,
+    "downloadPageUrl": "https://bandcamp.com/download?from=email&id=563538331&payment_id=12345&sig=abcdef0123456789&type=album",
+    "subject": "Free download: Othaliël - Eternal Life in Metastasized Dreams",
+    "receivedAt": 1793361234
+  }
+  ```
+- **Included Script Template**: A self-contained Google Apps Script template will be embedded in the application settings with 1-click copy, searching Gmail threads efficiently (`from:noreply@bandcamp.com after:<date>`) and extracting the signed download URL.
+
+---
+
+### 5. Detailed Implementation Phases
+
+1. **Phase 1: Multi-Site Namespaced Storage & Queue State**:
+   - Create storage manager partitioning queues by normalized artist domain/origin (`bc_queue_<artist_domain>`).
+   - Implement idempotent state machine: tracks individual release status (`pending`, `email_triggered`, `polling_gas`, `downloading_audio`, `packaging_info`, `completed`, `failed`), retry counters, and stage logs.
+   - Update UI buttons to dynamically toggle between **Start Download** and **Resume Download** based on saved queue state for the active site.
+2. **Phase 2: Jittered Pacing & Anti-Rate-Limit Engine**:
+   - Implement jittered delay helper: `sleep(baseDelay + jitter)` between downloads.
+   - Implement batch cool-down tracker (pause after every $N$ items).
+   - Expose configurable pacing controls in Settings and Dashboard toolbar.
+3. **Phase 3: GAS Webhook Watchdog & Settings UI**:
+   - Add GAS configuration panel to Settings & Dashboard toolbar (Webhook URL, Secret Password, Fallback Email, Search Window).
+   - Implement test webhook button with live validation feedback.
+   - Provide copyable `Code.gs` script template with deployment instructions.
+   - Build client and extension polling watchdog (5s interval, 3-minute timeout, manual retry).
+4. **Phase 4: Companion Info ZIP with Lyrics (.lrc) & Naming Schema Engine**:
+   - Update `formatFilenameBySchema` to automatically drop track tokens for album archives (`%artist% - %date% - %album%[%title%.%format%]`).
+   - Implement `buildCompanionInfoZip` using JSZip:
+     - Extracts untruncated `tralbumData.current.about`.
+     - Renames `bio_pic` image to `artist.jpg`.
+     - Generates `.lrc` lyrics files for all tracks with lyrics.
+     - Packages `info.txt`, `cover.jpg`, `photos/`, `artist.jpg`, and `*.lrc` without any audio tracks.
+     - Saves companion archive as `<release_name> (info).zip`.
+5. **Phase 5: Extension Integration & Full-Tab Redirection**:
+   - Update `popup.js` to immediately open/focus `dashboard.html` upon starting or resuming downloads.
+   - Synchronize namespaced queue state between `popup.js`, `dashboard.js`, and `background.js` via `chrome.storage.local`.
+   - Ensure all extension files compile cleanly with zero syntax errors.
+6. **Phase 6: Verification & End-to-End Testing**:
+   - Verify multi-stage execution with both direct free tracks and email-walled releases.
+   - Test session interruption and resumption idempotency across multiple artist sites.
+   - Test pacing jitter and cool-down intervals.
+   - Validate compilation and linting.

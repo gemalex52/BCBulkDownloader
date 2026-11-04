@@ -10,6 +10,14 @@ const execPromise = util.promisify(exec);
 import JSZip from 'jszip';
 import NodeID3 from 'node-id3';
 import { formatFilenameBySchema, formatDateToDotString, ScannedRelease } from './src/types/bandcamp';
+import {
+  BANDCAMP_FETCH_HEADERS,
+  cleanHtmlText,
+  extractBandcampTralbum,
+  extractArtistBioPicUrl,
+  parseReleasePageData,
+  resolveBandcampDownload,
+} from './src/services/bandcampCore';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,34 +47,12 @@ export const SUPPORTED_FORMATS = [
   { id: 'aiff-lossless', name: 'AIFF', ext: 'aiff', desc: 'Uncompressed lossless audio format' },
 ];
 
-// Helper to extract TralbumData JSON from Bandcamp HTML
-function extractBandcampTralbum(html: string): any | null {
-  try {
-    const tralbumAttrMatch = html.match(/data-tralbum="([^"]+)"/);
-    if (tralbumAttrMatch) {
-      const decoded = tralbumAttrMatch[1]
-        .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, '&')
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>');
-      return JSON.parse(decoded);
-    }
-
-    const tralbumVarMatch = html.match(/var\s+TralbumData\s*=\s*(\{[\s\S]*?\});/);
-    if (tralbumVarMatch) {
-      return JSON.parse(tralbumVarMatch[1]);
-    }
-  } catch (err) {
-    console.error('Error parsing TralbumData JSON:', err);
-  }
-  return null;
-}
-
 // Discover all releases on a Bandcamp catalog page (rendered <li> + data-client-items)
+// Discover all releases on a Bandcamp catalog page (rendered <li> + data-client-items + single release fallback)
 async function discoverAllCatalogItems(targetUrl: string): Promise<{
   artistName: string;
   origin: string;
+  artistBioPicUrl?: string;
   items: {
     id: string;
     itemId: number;
@@ -79,13 +65,19 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
   const parsedUrl = new URL(targetUrl);
   const origin = parsedUrl.origin;
 
-  const catalogRes = await fetch(targetUrl, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    },
+  let catalogRes = await fetch(targetUrl, {
+    headers: BANDCAMP_FETCH_HEADERS,
   });
+
+  // Fallback to origin root if /music returns 404 (e.g. single-release artists or custom layouts)
+  if (!catalogRes.ok && targetUrl.endsWith('/music')) {
+    try {
+      const rootRes = await fetch(origin, { headers: BANDCAMP_FETCH_HEADERS });
+      if (rootRes.ok) {
+        catalogRes = rootRes;
+      }
+    } catch (e) {}
+  }
 
   if (!catalogRes.ok) {
     throw new Error(`Failed to fetch catalog: HTTP ${catalogRes.status}`);
@@ -94,8 +86,10 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
   const html = await catalogRes.text();
 
   const artistName =
-    html.match(/<span[^>]*class="title"[^>]*>([^<]+)<\/span>/i)?.[1]?.trim() ||
-    html.match(/<title>([^|<]+)/i)?.[1]?.trim() ||
+    cleanHtmlText(html.match(/#band-name-location[^>]*class="title"[^>]*>([^<]+)/i)?.[1]) ||
+    cleanHtmlText(html.match(/<span[^>]*class="title"[^>]*>([^<]+)<\/span>/i)?.[1]) ||
+    cleanHtmlText(html.match(/property="og:site_name"[^>]*content="([^"]+)"/i)?.[1]) ||
+    cleanHtmlText(html.match(/<title>([^|<]+)/i)?.[1]) ||
     parsedUrl.hostname.split('.')[0];
 
   const itemsMap = new Map<string, {
@@ -131,7 +125,7 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
       id: rawId,
       itemId: numId,
       url: fullUrl,
-      title: titleMatch ? titleMatch[1].trim() : 'Release',
+      title: titleMatch ? cleanHtmlText(titleMatch[1]) : 'Release',
       artUrl,
       type: isAlbum ? 'album' : 'track',
     });
@@ -154,7 +148,7 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
             id: rawId,
             itemId: item.id || 0,
             url: fullUrl,
-            title: item.title || 'Release',
+            title: cleanHtmlText(item.title) || 'Release',
             artUrl,
             type: isAlbum ? 'album' : 'track',
           });
@@ -165,225 +159,36 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
     }
   }
 
+  // 3. Single-release fallback: if discography grid has no items, check if the page itself is an album or track release
+  if (itemsMap.size === 0) {
+    const tralbum = extractBandcampTralbum(html);
+    if (tralbum && tralbum.current) {
+      const isAlbum = tralbum.current.type === 'album';
+      const releaseTitle = cleanHtmlText(tralbum.current.title) || 'Release';
+      const artUrl = tralbum.art_id ? `https://f4.bcbits.com/img/a${tralbum.art_id}_10.jpg` : '';
+      const rawId = `${tralbum.current.type || 'item'}-${tralbum.current.id}`;
+      itemsMap.set(parsedUrl.pathname || '/', {
+        id: rawId,
+        itemId: tralbum.current.id || 0,
+        url: targetUrl,
+        title: releaseTitle,
+        artUrl,
+        type: isAlbum ? 'album' : 'track',
+      });
+    }
+  }
+
+  const artistBioPicUrl = extractArtistBioPicUrl(html);
+
   return {
     artistName,
     origin,
+    artistBioPicUrl,
     items: Array.from(itemsMap.values()),
   };
 }
 
-// Clean HTML text stripping scripts, styles, brs, and tags
-function cleanHtmlText(raw?: string): string {
-  if (!raw) return '';
-  return raw
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\r\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-// Parse release subpage into complete metadata, artwork, pricing, and comprehensive info.txt
-function parseReleasePageData(
-  subHtml: string,
-  tralbum: any,
-  item: {
-    id: string;
-    itemId: number;
-    url: string;
-    title: string;
-    artUrl: string;
-    type: 'album' | 'track';
-  },
-  origin: string,
-  fallbackArtist: string
-) {
-  const current = tralbum?.current;
-  const isPurchased = Boolean(
-    tralbum?.is_purchased ||
-    tralbum?.has_purchased ||
-    tralbum?.you_own_it ||
-    /you\s+own\s+this|you\s+own\s+it|class="[^"]*you-own-this/i.test(subHtml)
-  );
-
-  const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
-  const freeDlPage = tralbum?.freeDownloadPage || null;
-  const hasFreeButton = /free\s+download/i.test(subHtml) || current?.download_pref === 1;
-  const hasNypText = /name\s+your\s+price/i.test(subHtml) || current?.download_pref === 2;
-  const requireEmail = Boolean(current?.require_email || current?.require_email_0);
-
-  // Pricing logic:
-  // - If purchased: user owns it
-  // - If explicit freeDownloadPage, 'Free Download' button, or download_pref === 1: free
-  // - If minPrice === 0 and hasNypText: Name Your Price ($0+)
-  // - Otherwise: strictly PAID
-  let isFree = false;
-  let isNyp = false;
-  let isPaid = false;
-
-  if (isPurchased) {
-    isFree = true;
-  } else if (Boolean(freeDlPage) || hasFreeButton || (minPrice === 0 && !hasNypText)) {
-    isFree = true;
-  } else if (minPrice === 0 && hasNypText) {
-    isNyp = true;
-  } else {
-    isPaid = true;
-  }
-
-  let priceFormatted = 'Paid';
-  if (isPurchased) {
-    priceFormatted = 'You Own It';
-  } else if (isFree) {
-    priceFormatted = 'Free Download';
-  } else if (isNyp) {
-    priceFormatted = 'Name Your Price ($0+)';
-  } else if (minPrice > 0) {
-    priceFormatted = `€${minPrice} EUR`;
-  }
-
-  // Audio streams and track lyrics
-  const audioStreams: { trackNum: number; title: string; streamUrl?: string; url?: string; duration?: number; lyrics?: string }[] = [];
-  if (tralbum?.trackinfo && Array.isArray(tralbum.trackinfo)) {
-    tralbum.trackinfo.forEach((t: any, idx: number) => {
-      const stream = t.file?.['mp3-128'];
-      audioStreams.push({
-        trackNum: t.track_num || idx + 1,
-        title: t.title || `Track ${idx + 1}`,
-        streamUrl: stream || undefined,
-        url: stream || undefined,
-        duration: t.duration || undefined,
-        lyrics: t.lyrics ? String(t.lyrics).trim() : undefined,
-      });
-    });
-  }
-
-  // Artwork & additional photos
-  const artId = tralbum?.art_id;
-  const artUrl = artId ? `https://f4.bcbits.com/img/a${artId}_10.jpg` : item.artUrl;
-  const popupImages = Array.from(subHtml.matchAll(/href="([^"]+_10\.jpg)"/g)).map(m => m[1]);
-  const imgMatches = Array.from(subHtml.matchAll(/src="([^"]+_10\.jpg)"/g)).map(m => m[1]);
-  const allImages = Array.from(new Set([...popupImages, ...imgMatches])).filter(u => u !== artUrl);
-
-  // Extract liner notes / about, credits, license, tags, and lyrics
-  const aboutMatch = subHtml.match(/class="[^"]*tralbum-about[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-  const creditsMatch = subHtml.match(/class="[^"]*tralbum-credits[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-  const licenseMatch = subHtml.match(/<div[^>]*id="license"[^>]*>([\s\S]*?)<\/div>/i) ||
-                       subHtml.match(/<div[^>]*class="[^"]*license[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-  const lyricsDivMatch = subHtml.match(/class="[^"]*lyricsText[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-
-  const aboutText = cleanHtmlText(aboutMatch?.[1]) || cleanHtmlText(current?.about);
-  const creditsText = cleanHtmlText(creditsMatch?.[1]) || cleanHtmlText(current?.credits);
-  const licenseText = cleanHtmlText(licenseMatch?.[1]);
-  const pageLyrics = cleanHtmlText(lyricsDivMatch?.[1]);
-
-  let tagsMatches = (tralbum?.tags && Array.isArray(tralbum.tags) && tralbum.tags.length > 0)
-    ? tralbum.tags
-    : Array.from(subHtml.matchAll(/<a[^>]*class="tag"[^>]*>([^<]+)<\/a>/gi)).map(tm => tm[1].trim());
-  tagsMatches = Array.from(new Set(tagsMatches));
-
-  // Format release date
-  const rawDate = current?.release_date || current?.publish_date;
-  const dotDate = formatDateToDotString(rawDate);
-  const humanDate = rawDate
-    ? new Date(rawDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-    : undefined;
-
-  const releaseTitle = current?.title || item.title;
-  const artist = tralbum?.artist || fallbackArtist;
-
-  // Tracklist formatting
-  const formatDuration = (sec?: number) => {
-    if (!sec) return '';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return ` (${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')})`;
-  };
-
-  const trackListFormatted = audioStreams.length > 0
-    ? audioStreams.map(s => `${s.trackNum}. ${s.title}${formatDuration(s.duration)}`)
-    : ['1. ' + releaseTitle];
-
-  // Track lyrics block for info.txt
-  const tracksWithLyrics = audioStreams.filter(s => s.lyrics && s.lyrics.trim().length > 0);
-  let lyricsBlock = '';
-  if (tracksWithLyrics.length > 0) {
-    lyricsBlock = `================================================================================\nLYRICS\n================================================================================\n(Track lyrics are also saved as separate .lrc files alongside track audio files)\n\n` +
-      tracksWithLyrics.map(t => `--- Track ${t.trackNum}: ${t.title} ---\n${t.lyrics}\n`).join('\n') + '\n';
-  } else if (pageLyrics) {
-    lyricsBlock = `================================================================================\nLYRICS\n================================================================================\n${pageLyrics}\n\n`;
-  }
-
-  const divider = '='.repeat(80);
-  let infoText = `${divider}\n${releaseTitle.toUpperCase()} by ${artist}\n${divider}\n`;
-  infoText += `Release Date : ${humanDate || 'Unknown'}${dotDate ? ` (${dotDate})` : ''}\n`;
-  infoText += `Type         : ${item.type.toUpperCase()}\n`;
-  infoText += `Status       : ${priceFormatted}${isPaid ? ' (Paid release - Audio skipped unless purchased. Artwork, photos & info bundled)' : ''}\n`;
-  infoText += `Bandcamp URL : ${item.url}\n`;
-  infoText += `Artist Page  : ${origin}\n\n`;
-
-  if (trackListFormatted.length > 0) {
-    infoText += `${divider}\nTRACKLIST (${trackListFormatted.length} Tracks)\n${divider}\n${trackListFormatted.join('\n')}\n\n`;
-  }
-
-  if (aboutText) {
-    infoText += `${divider}\nLINER NOTES / ABOUT\n${divider}\n${aboutText}\n\n`;
-  }
-
-  if (creditsText) {
-    infoText += `${divider}\nCREDITS\n${divider}\n${creditsText}\n\n`;
-  }
-
-  if (licenseText) {
-    infoText += `${divider}\nLICENSE\n${divider}\n${licenseText}\n\n`;
-  }
-
-  if (tagsMatches.length > 0) {
-    infoText += `${divider}\nTAGS & GENRES\n${divider}\n${tagsMatches.join(', ')}\n\n`;
-  }
-
-  if (lyricsBlock) {
-    infoText += lyricsBlock;
-  }
-
-  infoText += `${divider}\nDownloaded with Bandcamp Free & NYP Bulk Downloader\n${divider}\n`;
-
-  return {
-    releaseTitle,
-    artist,
-    artUrl,
-    allImages,
-    humanDate,
-    dotDate,
-    isFree,
-    isNyp,
-    isPurchased,
-    isPaid,
-    minPrice,
-    priceFormatted,
-    requireEmail,
-    freeDlPage,
-    trackListFormatted,
-    audioStreams,
-    aboutText,
-    creditsText,
-    licenseText,
-    tagsMatches,
-    infoText,
-  };
-}
-
-// Inspect a single release subpage for artwork, full metadata, info text, and pricing
+// Inspect a single release subpage using shared core parser for artwork, full metadata, info text, and pricing
 async function inspectReleaseSubpage(
   origin: string,
   artistName: string,
@@ -394,20 +199,18 @@ async function inspectReleaseSubpage(
     title: string;
     artUrl: string;
     type: 'album' | 'track';
-  }
+  },
+  globalArtistBioPicUrl?: string
 ): Promise<ScannedRelease> {
   try {
     const subRes = await fetch(item.url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      },
+      headers: BANDCAMP_FETCH_HEADERS,
     });
     if (!subRes.ok) throw new Error(`HTTP ${subRes.status}`);
 
     const subHtml = await subRes.text();
     const tralbum = extractBandcampTralbum(subHtml);
-    const parsed = parseReleasePageData(subHtml, tralbum, item, origin, artistName);
+    const parsed = parseReleasePageData(subHtml, tralbum, item, origin, artistName, globalArtistBioPicUrl);
 
     return {
       id: item.id,
@@ -418,6 +221,7 @@ async function inspectReleaseSubpage(
       artistUrl: origin,
       url: item.url,
       artUrl: parsed.artUrl,
+      artistBioPicUrl: parsed.artistBioPicUrl,
       extraImages: parsed.allImages,
       releaseDate: parsed.humanDate,
       isoDate: parsed.dotDate,
@@ -428,7 +232,7 @@ async function inspectReleaseSubpage(
       currency: tralbum?.current?.currency || 'EUR',
       priceFormatted: parsed.priceFormatted,
       requiresEmail: parsed.requireEmail,
-      freeDownloadPageUrl: parsed.freeDlPage,
+      freeDownloadPageUrl: parsed.freeDlPage || undefined,
       trackCount: parsed.trackListFormatted.length,
       trackList: parsed.trackListFormatted,
       audioStreams: parsed.audioStreams,
@@ -438,7 +242,8 @@ async function inspectReleaseSubpage(
       tags: parsed.tagsMatches,
       selected: parsed.isFree || parsed.isNyp || parsed.isPurchased,
     };
-  } catch (e) {
+  } catch (e: any) {
+    console.warn(`Error inspecting subpage ${item.url}:`, e.message);
     return {
       id: item.id,
       itemId: item.itemId,
@@ -448,6 +253,7 @@ async function inspectReleaseSubpage(
       artistUrl: origin,
       url: item.url,
       artUrl: item.artUrl,
+      artistBioPicUrl: globalArtistBioPicUrl,
       isFree: true,
       isNameYourPrice: false,
       isPurchased: false,
@@ -463,106 +269,8 @@ async function inspectReleaseSubpage(
   }
 }
 
-// Resolve genuine Bandcamp FLAC / MP3-320 download link via statdownload algorithm
-async function resolveBandcampDownload(freeDownloadPageUrl: string, requestedFormat: string = 'flac'): Promise<{
-  success: boolean;
-  downloadUrl?: string;
-  format?: string;
-  description?: string;
-  sizeMb?: string;
-  isArchive?: boolean;
-  error?: string;
-}> {
-  try {
-    const dlRes = await fetch(freeDownloadPageUrl, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      },
-    });
-
-    if (!dlRes.ok) throw new Error(`Download page HTTP ${dlRes.status}`);
-
-    const dlHtml = await dlRes.text();
-    const blobMatch = dlHtml.match(/data-blob="([^"]+)"/);
-    if (!blobMatch) throw new Error('No data-blob found on download page');
-
-    const blob = JSON.parse(blobMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
-    const downloads = blob?.digital_items?.[0]?.downloads;
-    if (!downloads) throw new Error('No downloads object found in digital_items');
-
-    // Pick target format: strict preference for requested format (flac, mp3-320, wav, etc.)
-    const target =
-      downloads[requestedFormat] ||
-      downloads['flac'] ||
-      downloads['mp3-320'] ||
-      downloads['mp3-v0'] ||
-      downloads['wav'] ||
-      Object.values(downloads)[0];
-
-    if (!target?.url) throw new Error('No target download URL available');
-
-    // Call Bandcamp statdownload API with random token & retry handling
-    async function callStat(urlToStat: string): Promise<any> {
-      const parsed = new URL(urlToStat);
-      const statUrl =
-        parsed.origin +
-        parsed.pathname.replace('/download/', '/statdownload/') +
-        parsed.search +
-        '&.rand=' +
-        Math.floor(Math.random() * 1000000) +
-        '&.vrs=1';
-
-      const res = await fetch(statUrl, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          Referer: freeDownloadPageUrl,
-        },
-      });
-
-      const text = await res.text();
-      const jsonMatch = text.match(/Downloads\.statResult\s*\(\s*(\{[\s\S]*?\})\s*\)/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[1]);
-      }
-      return null;
-    }
-
-    let stat = await callStat(target.url);
-    if (stat?.result === 'err' && stat?.retry_url) {
-      stat = await callStat(stat.retry_url);
-    }
-
-    if (stat?.download_url) {
-      return {
-        success: true,
-        downloadUrl: stat.download_url,
-        format: target.encoding_name,
-        description: target.description,
-        sizeMb: target.size_mb,
-        isArchive: Boolean(target.url.includes('/album?')),
-      };
-    }
-
-    return {
-      success: true,
-      downloadUrl: target.url,
-      format: target.encoding_name,
-      description: target.description,
-      sizeMb: target.size_mb,
-      isArchive: Boolean(target.url.includes('/album?')),
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      error: err.message,
-    };
-  }
-}
-
 // Catalog scan endpoint
-app.get('/api/bandcamp/scan', async (req: Request, res: Response) => {
+app.get(['/api/bandcamp/scan', '/api/bandcamp/scan-batch'], async (req: Request, res: Response) => {
   const targetUrl = (req.query.url as string) || 'https://esoctrilihum.bandcamp.com/music';
   const forceRefresh = req.query.forceRefresh === 'true';
 
@@ -580,7 +288,7 @@ app.get('/api/bandcamp/scan', async (req: Request, res: Response) => {
   }
 
   try {
-    const { artistName, origin, items } = await discoverAllCatalogItems(targetUrl);
+    const { artistName, origin, artistBioPicUrl, items } = await discoverAllCatalogItems(targetUrl);
 
     const releases: ScannedRelease[] = [];
     const batchSize = 6;
@@ -588,7 +296,7 @@ app.get('/api/bandcamp/scan', async (req: Request, res: Response) => {
     for (let i = 0; i < items.length; i += batchSize) {
       const batch = items.slice(i, i + batchSize);
       const batchResults = await Promise.all(
-        batch.map(item => inspectReleaseSubpage(origin, artistName, item))
+        batch.map(item => inspectReleaseSubpage(origin, artistName, item, artistBioPicUrl))
       );
       releases.push(...batchResults);
     }
@@ -626,58 +334,128 @@ app.get('/api/bandcamp/scan-stream', async (req: Request, res: Response) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const { artistName, origin, items } = await discoverAllCatalogItems(targetUrl);
+    const { artistName, origin, artistBioPicUrl, items } = await discoverAllCatalogItems(targetUrl);
 
     // Send initial catalog manifest
     res.write(`data: ${JSON.stringify({ type: 'manifest', total: items.length, artist: artistName, items })}\n\n`);
 
+    const accumulatedReleases: ScannedRelease[] = [];
+
     // Stream enriched release details progressively
     for (let i = 0; i < items.length; i++) {
-      const release = await inspectReleaseSubpage(origin, artistName, items[i]);
-      res.write(`data: ${JSON.stringify({ type: 'release', index: i, total: items.length, release })}\n\n`);
+      const release = await inspectReleaseSubpage(origin, artistName, items[i], artistBioPicUrl);
+      accumulatedReleases.push(release);
+      res.write(`data: ${JSON.stringify({ type: 'release_discovered', index: i, total: items.length, release })}\n\n`);
     }
 
-    res.write(`data: ${JSON.stringify({ type: 'done', total: items.length })}\n\n`);
+    // Cache the completed crawl
+    serverCatalogCache.set(targetUrl, {
+      targetUrl,
+      artist: artistName,
+      scannedAt: new Date().toISOString(),
+      releases: accumulatedReleases,
+    });
+
+    res.write(`data: ${JSON.stringify({ type: 'complete', total: items.length, artist: artistName, releases: accumulatedReleases })}\n\n`);
     res.end();
   } catch (err: any) {
-    res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'error', error: err.message, message: err.message })}\n\n`);
     res.end();
   }
 });
 
 // Resolve download endpoint: strictly resolves genuine FLAC or requested format
 app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) => {
-  const { albumUrl, releaseId, format = 'flac', email = '' } = req.body;
+  const { albumUrl, releaseId, format = 'flac', email = '', downloadPageUrl, triggerEmailOnly } = req.body;
 
   try {
     const formatInfo = SUPPORTED_FORMATS.find(f => f.id === format) || SUPPORTED_FORMATS[0]; // defaults to FLAC!
 
-    if (albumUrl) {
-      const pageRes = await fetch(albumUrl, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        },
-      });
+    let parsed: any = null;
+    let tralbum: any = null;
+    let origin = '';
 
-      if (pageRes.ok) {
-        const pageHtml = await pageRes.text();
-        const tralbum = extractBandcampTralbum(pageHtml);
-        const origin = new URL(albumUrl).origin;
-        const parsed = parseReleasePageData(
-          pageHtml,
-          tralbum,
-          {
-            id: releaseId || '',
-            itemId: tralbum?.current?.id || 0,
-            url: albumUrl,
-            title: tralbum?.current?.title || '',
-            artUrl: '',
-            type: tralbum?.current?.type || 'album',
-          },
-          origin,
-          tralbum?.artist || 'Esoctrilihum'
-        );
+    if (albumUrl) {
+      try {
+        origin = new URL(albumUrl).origin;
+        const pageRes = await fetch(albumUrl, {
+          headers: BANDCAMP_FETCH_HEADERS,
+        });
+
+        if (pageRes.ok) {
+          const pageHtml = await pageRes.text();
+          tralbum = extractBandcampTralbum(pageHtml);
+          parsed = parseReleasePageData(
+            pageHtml,
+            tralbum,
+            {
+              id: releaseId || '',
+              itemId: tralbum?.current?.id || 0,
+              url: albumUrl,
+              title: tralbum?.current?.title || '',
+              artUrl: '',
+              type: tralbum?.current?.type || 'album',
+            },
+            origin,
+            tralbum?.artist || 'Esoctrilihum'
+          );
+        }
+      } catch (pageErr: any) {
+        console.warn('Error fetching album page in resolve-download:', pageErr.message);
+      }
+    }
+
+    // 0. If downloadPageUrl is provided directly (from Gmail watchdog or freeDownloadPage), resolve immediately!
+    if (downloadPageUrl) {
+      const resolved = await resolveBandcampDownload(downloadPageUrl, formatInfo.id);
+      if (resolved.success && resolved.downloadUrl) {
+        return res.json({
+          success: true,
+          type: resolved.isArchive ? 'direct_archive' : 'direct_audio',
+          downloadUrl: resolved.downloadUrl,
+          format: resolved.format || formatInfo.id,
+          description: resolved.description || formatInfo.name,
+          sizeMb: resolved.sizeMb,
+          fileExtension: formatInfo.ext,
+          isArchive: resolved.isArchive,
+          title: resolved.title || parsed?.releaseTitle,
+          artist: resolved.artist || parsed?.artist,
+          infoText: parsed?.infoText,
+          artUrl: parsed?.artUrl,
+          artistBioPicUrl: parsed?.artistBioPicUrl,
+          extraImages: parsed?.allImages || parsed?.extraImages,
+          audioStreams: parsed?.audioStreams,
+        });
+      }
+    }
+
+    if (parsed) {
+      // If triggerEmailOnly is requested (used before polling watchdog)
+      if (triggerEmailOnly && email && tralbum?.current?.id) {
+        try {
+          const body = new URLSearchParams({
+            encoding_name: formatInfo.id,
+            item_id: String(tralbum.current.id),
+            item_type: tralbum.current.type || 'album',
+            address: email,
+            country: 'US',
+            postcode: '10001',
+          });
+          const emailRes = await fetch(`${origin}/email_download`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              Accept: 'application/json',
+              ...BANDCAMP_FETCH_HEADERS,
+            },
+            body,
+          });
+          const emailData = emailRes.ok ? await emailRes.json().catch(() => ({})) : {};
+          return res.json({ success: true, triggered: true, emailData });
+        } catch (trigErr: any) {
+          return res.json({ success: false, error: trigErr.message });
+        }
+      }
 
         // 1. Direct freeDownloadPage (e.g. CYPH WVNG studio master FLAC)
         if (tralbum?.freeDownloadPage) {
@@ -691,8 +469,10 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
               description: resolved.description || formatInfo.name,
               sizeMb: resolved.sizeMb,
               fileExtension: formatInfo.ext,
+              isArchive: resolved.isArchive,
               infoText: parsed.infoText,
               artUrl: parsed.artUrl,
+              artistBioPicUrl: parsed.artistBioPicUrl,
               extraImages: parsed.allImages,
               audioStreams: parsed.audioStreams,
               title: parsed.releaseTitle,
@@ -739,6 +519,7 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
                     fileExtension: formatInfo.ext,
                     infoText: parsed.infoText,
                     artUrl: parsed.artUrl,
+                    artistBioPicUrl: parsed.artistBioPicUrl,
                     extraImages: parsed.allImages,
                     audioStreams: parsed.audioStreams,
                     title: parsed.releaseTitle,
@@ -752,24 +533,7 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
           }
         }
 
-        // 3. Free, NYP, or Purchased release with track streams (e.g. Eternal Life in Metastasized Dreams)
-        if ((parsed.isFree || parsed.isNyp || parsed.isPurchased) && parsed.audioStreams.length > 0) {
-          return res.json({
-            success: true,
-            type: 'tracks_collection',
-            format: formatInfo.id,
-            fileExtension: formatInfo.ext,
-            infoText: parsed.infoText,
-            artUrl: parsed.artUrl,
-            extraImages: parsed.allImages,
-            audioStreams: parsed.audioStreams,
-            title: parsed.releaseTitle,
-            artist: parsed.artist,
-            description: `${parsed.audioStreams.length} tracks collection (${formatInfo.name})`,
-          });
-        }
-
-        // 4. Paid album not purchased: skip audio and return metadata for bundling
+        // 3. Paid album not purchased: skip audio and package companion info ZIP
         if (parsed.isPaid && !parsed.isPurchased) {
           return res.json({
             success: false,
@@ -779,11 +543,31 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
             format: formatInfo.id,
             infoText: parsed.infoText,
             artUrl: parsed.artUrl,
+            artistBioPicUrl: parsed.artistBioPicUrl,
             extraImages: parsed.allImages,
             audioStreams: parsed.audioStreams,
             title: parsed.releaseTitle,
             artist: parsed.artist,
-            message: 'Paid release: audio skipped per policy. Packaging artwork, photos, info.txt, and lyrics.',
+            minPrice: parsed.minPrice,
+            message: `Paid release (€${parsed.minPrice} EUR): audio skipped per policy. Packaging artwork, photos, info.txt, and lyrics into companion info ZIP.`,
+          });
+        }
+
+        // 4. Fallback streams only if explicitly requested mp3-128 format
+        if (formatInfo.id === 'mp3-128' && (parsed.isFree || parsed.isNyp || parsed.isPurchased) && parsed.audioStreams.length > 0) {
+          return res.json({
+            success: true,
+            type: 'tracks_collection',
+            format: formatInfo.id,
+            fileExtension: formatInfo.ext,
+            infoText: parsed.infoText,
+            artUrl: parsed.artUrl,
+            artistBioPicUrl: parsed.artistBioPicUrl,
+            extraImages: parsed.allImages,
+            audioStreams: parsed.audioStreams,
+            title: parsed.releaseTitle,
+            artist: parsed.artist,
+            description: `${parsed.audioStreams.length} tracks collection (${formatInfo.name})`,
           });
         }
 
@@ -800,16 +584,120 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
           error: `Audio download could not be resolved for this release.`,
         });
       }
+
+      return res.json({
+        success: false,
+        releaseId,
+        format: formatInfo.id,
+        error: 'Download could not be resolved for this release',
+      });
+    } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Proxy endpoint to query Google Apps Script Webhook
+app.post('/api/bandcamp/check-gas-webhook', async (req: Request, res: Response) => {
+  const webhookUrl = req.body.webhookUrl || req.body.gasUrl;
+  const secret = req.body.secret;
+  const releaseId = req.body.releaseId;
+  const title = req.body.title;
+  const since = req.body.since;
+
+  if (!webhookUrl || !secret) {
+    return res.status(400).json({ found: false, error: 'Missing webhookUrl or secret' });
+  }
+
+  try {
+    const url = new URL(webhookUrl);
+    url.searchParams.set('secret', secret);
+    if (releaseId) url.searchParams.set('id', String(releaseId));
+    if (title) url.searchParams.set('title', title);
+    if (since) url.searchParams.set('since', String(since));
+
+    const response = await fetch(url.toString(), {
+      redirect: 'follow',
+      headers: {
+        'Accept': 'application/json, text/plain, */*'
+      }
+    });
+
+    const text = await response.text();
+
+    if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
+      return res.json({
+        found: false,
+        error: 'Google Login required: In Google Apps Script, click Deploy -> Manage deployments -> Edit (pencil icon), and set "Who has access" to "Anyone" (currently set to "Only myself").',
+        raw: text.slice(0, 300)
+      });
     }
 
-    return res.json({
-      success: false,
-      releaseId,
-      format: formatInfo.id,
-      error: 'Download could not be resolved for this release',
+    try {
+      const data = JSON.parse(text);
+      return res.json(data);
+    } catch (e) {
+      return res.json({
+        found: false,
+        error: 'Non-JSON response from Google Apps Script. Ensure "Who has access" is set to "Anyone" in Web App deployment settings.',
+        raw: text.slice(0, 300)
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ found: false, error: err.message });
+  }
+});
+
+// Test Google Apps Script Webhook connection
+app.post('/api/bandcamp/test-gas-webhook', async (req: Request, res: Response) => {
+  const webhookUrl = req.body.webhookUrl || req.body.gasUrl;
+  const secret = req.body.secret;
+
+  if (!webhookUrl || !secret) {
+    return res.status(400).json({ ok: false, success: false, error: 'Missing webhookUrl or secret' });
+  }
+
+  try {
+    const url = new URL(webhookUrl);
+    url.searchParams.set('secret', secret);
+    url.searchParams.set('test', 'true');
+
+    const response = await fetch(url.toString(), {
+      redirect: 'follow',
+      headers: {
+        'Accept': 'application/json, text/plain, */*'
+      }
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, error: error.message });
+
+    const text = await response.text();
+
+    if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
+      return res.json({
+        ok: false,
+        success: false,
+        error: 'Google Login required: In Google Apps Script, click Deploy -> Manage deployments -> Edit (pencil icon), and set "Who has access" to "Anyone" (currently set to "Only myself").',
+        raw: text.slice(0, 300)
+      });
+    }
+
+    try {
+      const data = JSON.parse(text);
+      if (data.test) {
+        return res.json({ ok: true, success: true, message: data.message || 'Connected successfully!' });
+      }
+      if (data.error) {
+        return res.json({ ok: false, success: false, error: data.error });
+      }
+      return res.json({ ok: true, success: true, message: 'Connected to Webhook!' });
+    } catch (e) {
+      return res.json({
+        ok: false,
+        success: false,
+        error: 'Non-JSON response from Google Apps Script. Ensure "Who has access" is set to "Anyone" in Web App deployment settings.',
+        raw: text.slice(0, 300)
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, success: false, error: err.message });
   }
 });
 
@@ -822,10 +710,7 @@ app.get('/api/bandcamp/proxy-image', async (req: Request, res: Response) => {
 
   try {
     const imgRes = await fetch(imageUrl, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      },
+      headers: BANDCAMP_FETCH_HEADERS,
     });
 
     if (!imgRes.ok) {
@@ -864,10 +749,7 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
     let audioRes: any = null;
     if (audioUrl) {
       audioRes = await fetch(audioUrl, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        },
+        headers: BANDCAMP_FETCH_HEADERS,
       });
     }
 
@@ -875,10 +757,7 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
     if ((!audioRes || !audioRes.ok) && albumUrl) {
       try {
         const pageRes = await fetch(albumUrl, {
-          headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          },
+          headers: BANDCAMP_FETCH_HEADERS,
         });
         if (pageRes.ok) {
           const pageHtml = await pageRes.text();
@@ -888,10 +767,7 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
           const freshStreamUrl = tInfo?.file?.['mp3-128'];
           if (freshStreamUrl) {
             audioRes = await fetch(freshStreamUrl, {
-              headers: {
-                'User-Agent':
-                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-              },
+              headers: BANDCAMP_FETCH_HEADERS,
             });
           }
         }
@@ -905,11 +781,27 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
     }
 
     const contentType = audioRes.headers.get('content-type') || '';
+    const isZip =
+      filename.toLowerCase().endsWith('.zip') ||
+      contentType.includes('zip') ||
+      (audioUrl && (audioUrl.includes('.zip') || audioUrl.includes('download/album') || audioUrl.includes('type=album') || audioUrl.includes('enc=zip')));
+
+    // 1. If it's an album ZIP archive, stream raw bytes directly as application/zip (never pipe to ffmpeg!)
+    if (isZip) {
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+      const buffer = Buffer.from(await audioRes.arrayBuffer());
+      return res.send(buffer);
+    }
+
+    // 2. Direct studio master download from Bandcamp (popplers CDN / statdownload / native FLAC)
+    const isDirectBandcamp = audioUrl && (audioUrl.includes('popplers') || audioUrl.includes('/download/track') || audioUrl.includes('bcbits.com'));
     const isSourceNativeFlac = contentType.includes('flac') || (audioUrl && audioUrl.includes('.flac'));
 
-    // If source is already native FLAC and target is FLAC, stream directly
-    if (isSourceNativeFlac && targetFormat === 'flac') {
-      res.setHeader('Content-Type', 'audio/flac');
+    if (isDirectBandcamp || isSourceNativeFlac) {
+      const mime = (targetFormat === 'flac' || isSourceNativeFlac) ? 'audio/flac' : (targetFormat.includes('mp3') ? 'audio/mpeg' : 'application/octet-stream');
+      res.setHeader('Content-Type', mime);
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
       const buffer = Buffer.from(await audioRes.arrayBuffer());
