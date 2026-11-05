@@ -382,22 +382,66 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
  * Resolves a Bandcamp free or email-walled download page by calling statdownload and waiting for busy preparation.
  */
 async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
+  function getSafeHeaders(ref, cookieHeader) {
+    var h = {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9'
+    };
+    if (ref) h['Referer'] = ref;
+    if (cookieHeader) h['Cookie'] = cookieHeader;
+    if (typeof window === 'undefined') {
+      h['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+    }
+    return h;
+  }
+
   requestedFormat = requestedFormat || 'flac';
   try {
-    var dlRes = await fetch(downloadPageUrl, {
-      headers: {
-        'User-Agent': 'curl/8.4.0',
-        'Referer': downloadPageUrl,
-      },
+    var cleanUrl = String(downloadPageUrl || '').replace(/&amp;/g, '&').trim();
+    var dlRes = await fetch(cleanUrl, {
+      headers: getSafeHeaders(cleanUrl),
     });
 
     if (!dlRes.ok) throw new Error('Download page HTTP ' + dlRes.status);
 
-    var dlHtml = await dlRes.text();
-    var blobMatch = dlHtml.match(/data-blob="([^"]+)"/);
-    if (!blobMatch) throw new Error('No data-blob found on download page');
+    var cookieHeader = '';
+    try {
+      if (typeof dlRes.headers.getSetCookie === 'function') {
+        var cookies = dlRes.headers.getSetCookie();
+        if (Array.isArray(cookies) && cookies.length > 0) {
+          cookieHeader = cookies.map(function(c) { return c.split(';')[0]; }).join('; ');
+        }
+      } else {
+        var sc = dlRes.headers.get('set-cookie');
+        if (sc) cookieHeader = sc.split(';')[0];
+      }
+    } catch(e) {}
 
-    var blob = JSON.parse(blobMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+    var dlHtml = await dlRes.text();
+    var blob = null;
+    var doubleQuoteMatch = dlHtml.match(/data-blob="([^"]+)"/);
+    var singleQuoteMatch = dlHtml.match(/data-blob='([^']+)'/);
+    if (doubleQuoteMatch) {
+      try {
+        blob = JSON.parse(doubleQuoteMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'"));
+      } catch(e) {}
+    } else if (singleQuoteMatch) {
+      try {
+        blob = JSON.parse(singleQuoteMatch[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
+      } catch(e) {}
+    }
+
+    if (!blob) {
+      var pagedataMatch = dlHtml.match(/var\\s+pagedata\\s*=\\s*(\\{[\\s\\S]*?\\})\\s*;/);
+      if (pagedataMatch) {
+        try {
+          blob = JSON.parse(pagedataMatch[1]);
+        } catch(e) {}
+      }
+    }
+
+    if (!blob) throw new Error('No data-blob found on download page. Please verify that the download link is active.');
+
     var digitalItem = blob && blob.digital_items && blob.digital_items[0];
     var downloads = digitalItem && digitalItem.downloads;
     if (!downloads) throw new Error('No downloads object found in digital_items');
@@ -416,6 +460,21 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
 
     if (!target || !target.url) throw new Error('No target download URL available');
 
+    var finalUrl = '';
+
+    // Direct check: Bandcamp single tracks and ready archives often return HTTP 302 redirect
+    try {
+      var directCheck = await fetch(target.url, {
+        method: 'GET',
+        headers: getSafeHeaders(cleanUrl, cookieHeader),
+        redirect: 'manual',
+      });
+      if ([301, 302, 303, 307, 308].indexOf(directCheck.status) !== -1) {
+        var loc = directCheck.headers.get('location');
+        if (loc) finalUrl = loc;
+      }
+    } catch (e) {}
+
     async function callStat(urlToStat) {
       try {
         var parsed = new URL(urlToStat);
@@ -428,10 +487,7 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
           '&.vrs=1';
 
         var res = await fetch(statUrl, {
-          headers: {
-            'User-Agent': 'curl/8.4.0',
-            'Referer': downloadPageUrl,
-          },
+          headers: getSafeHeaders(cleanUrl, cookieHeader),
         });
 
         var text = await res.text();
@@ -443,23 +499,42 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
       return null;
     }
 
-    var stat = await callStat(target.url);
+    if (!finalUrl) {
+      var stat = await callStat(target.url);
 
-    var attempts = 0;
-    while (
-      stat &&
-      (stat.result === 'busy' || (!stat.download_url && stat.retry_url)) &&
-      attempts < 25
-    ) {
-      attempts++;
-      await new Promise(function(r) { setTimeout(r, 1500); });
-      stat = await callStat(stat.retry_url || target.url);
-      if (stat && stat.result === 'ok' && stat.download_url) {
-        break;
+      var attempts = 0;
+      while (
+        stat &&
+        (stat.result === 'busy' || (!stat.download_url && stat.retry_url)) &&
+        attempts < 25
+      ) {
+        attempts++;
+        await new Promise(function(r) { setTimeout(r, 1500); });
+        stat = await callStat(stat.retry_url || target.url);
+        if (stat && stat.result === 'ok' && stat.download_url) {
+          break;
+        }
+      }
+
+      if (stat && stat.download_url) {
+        finalUrl = stat.download_url;
       }
     }
 
-    var finalUrl = stat && stat.download_url;
+    if (!finalUrl) {
+      try {
+        var retryCheck = await fetch(target.url, {
+          method: 'GET',
+          headers: getSafeHeaders(cleanUrl, cookieHeader),
+          redirect: 'manual',
+        });
+        if ([301, 302, 303, 307, 308].indexOf(retryCheck.status) !== -1) {
+          var loc2 = retryCheck.headers.get('location');
+          if (loc2) finalUrl = loc2;
+        }
+      } catch(e) {}
+    }
+
     if (!finalUrl) {
       throw new Error(
         (stat && stat.result === 'err')

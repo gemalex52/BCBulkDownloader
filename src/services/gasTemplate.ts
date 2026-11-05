@@ -40,8 +40,25 @@ function doGet(e) {
     var title = params.title ? String(params.title).trim() : '';
     var cleanReleaseId = releaseId ? releaseId.replace(/^(album|track)-/, '') : '';
     
+    // Calculate cutoff timestamp based on user parameters (since, hours, days, startDate)
+    var sinceSeconds = 0;
+    if (params.since) {
+      sinceSeconds = parseInt(params.since, 10) || 0;
+    } else if (params.hours) {
+      var h = parseFloat(params.hours) || 24;
+      sinceSeconds = Math.floor(Date.now() / 1000) - Math.floor(h * 3600);
+    } else if (params.days) {
+      var d = parseFloat(params.days) || 3;
+      sinceSeconds = Math.floor(Date.now() / 1000) - Math.floor(d * 86400);
+    } else if (params.startDate) {
+      var parsedDate = new Date(params.startDate);
+      if (!isNaN(parsedDate.getTime())) {
+        sinceSeconds = Math.floor(parsedDate.getTime() / 1000);
+      }
+    }
+    
     // 2. Query Gmail efficiently using after: date filter
-    var query = 'from:noreply@bandcamp.com';
+    var query = 'from:bandcamp.com OR subject:Bandcamp';
     if (sinceSeconds > 0) {
       // 10 min grace window
       var searchDate = new Date((sinceSeconds - 600) * 1000);
@@ -67,27 +84,45 @@ function doGet(e) {
         var body = msg.getBody() + ' ' + msg.getPlainBody();
         var subject = msg.getSubject() || '';
         
-        // 3. Extract signed Bandcamp download link
-        var regex = /https?:\\/\\/[a-zA-Z0-9.-]*bandcamp\\.com\\/download\\?[^"\'\\s<>&]+/gi;
-        var matches = body.match(regex);
+        // 3. Extract signed Bandcamp download link (DO NOT strip query params with &)
+        var urlsFound = [];
         
-        if (matches && matches.length > 0) {
-          for (var k = 0; k < matches.length; k++) {
-            var rawUrl = matches[k].replace(/&amp;/g, '&');
+        // Pattern A: Match in HTML href attributes
+        var hrefRegex = /href=["'](https?:\/\/[^"']*(?:bandcamp\.com)\/download\?[^"']+)["']/gi;
+        var hrefMatch;
+        while ((hrefMatch = hrefRegex.exec(body)) !== null) {
+          urlsFound.push(hrefMatch[1]);
+        }
+        
+        // Pattern B: Match raw text URLs
+        var textRegex = /https?:\/\/[a-zA-Z0-9.-]*bandcamp\.com\/download\?[a-zA-Z0-9_=&;.~%-]+/gi;
+        var textMatches = body.match(textRegex);
+        if (textMatches) {
+          for (var t = 0; t < textMatches.length; t++) {
+            urlsFound.push(textMatches[t]);
+          }
+        }
+        
+        if (urlsFound.length > 0) {
+          for (var k = 0; k < urlsFound.length; k++) {
+            var rawUrl = urlsFound[k].replace(/&amp;/g, '&').trim();
             
             // Check if matches releaseId or clean numeric ID
-            var hasId = cleanReleaseId ? (rawUrl.indexOf('id=' + cleanReleaseId) !== -1 || body.indexOf(cleanReleaseId) !== -1) : true;
+            var hasId = Boolean(cleanReleaseId && (rawUrl.indexOf('id=' + cleanReleaseId) !== -1 || body.indexOf(cleanReleaseId) !== -1));
             
-            // Check if matches title if provided
-            var hasTitle = true;
+            // Check if matches title if provided (support titles with parenthetical years/subtitles)
+            var titleMatches = false;
             if (title) {
-              var cleanTitle = title.toLowerCase().replace(/[^a-z0-9]/g, '');
+              var baseTitle = title.replace(/\s*\([^)]*\)/g, '').replace(/\s*\[[^\]]*\]/g, '').trim();
+              var cleanBaseTitle = baseTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
               var cleanSubject = subject.toLowerCase().replace(/[^a-z0-9]/g, '');
               var cleanBody = body.toLowerCase().replace(/[^a-z0-9]/g, '');
-              hasTitle = cleanSubject.indexOf(cleanTitle) !== -1 || cleanBody.indexOf(cleanTitle) !== -1;
+              titleMatches = (cleanBaseTitle.length > 2 && (cleanSubject.indexOf(cleanBaseTitle) !== -1 || cleanBody.indexOf(cleanBaseTitle) !== -1));
             }
             
-            if (hasId && hasTitle) {
+            var isMatch = cleanReleaseId ? (hasId || titleMatches) : (title ? titleMatches : true);
+            
+            if (isMatch) {
               return createJsonResponse({
                 found: true,
                 downloadPageUrl: rawUrl,

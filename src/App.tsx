@@ -69,6 +69,20 @@ export default function App() {
     } catch (e) {}
   }, [settings]);
 
+  // Extension mode: Auto-detect active Bandcamp tab URL if opened from browser extension
+  useEffect(() => {
+    if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tabUrl = tabs?.[0]?.url;
+        if (tabUrl && tabUrl.includes('bandcamp.com')) {
+          const cleanUrl = tabUrl.includes('/music') ? tabUrl : (tabUrl.replace(/\/+$/, '') + '/music');
+          setUrl(cleanUrl);
+          loadFromLocalCache(cleanUrl);
+        }
+      });
+    }
+  }, []);
+
   const activeEventSourceRef = useRef<EventSource | null>(null);
 
   // Synchronize or load session whenever URL or releases change
@@ -175,7 +189,7 @@ export default function App() {
             if (packet.release) {
               const rel: ScannedRelease = {
                 ...packet.release,
-                selected: packet.release.isFree || packet.release.isNameYourPrice,
+                selected: packet.release.badgeType !== 'paid',
               };
               progressiveItems = [...progressiveItems, rel];
               setReleases([...progressiveItems]);
@@ -196,7 +210,7 @@ export default function App() {
             if (itemsToUse.length > 0) {
               const processed = itemsToUse.map((r: ScannedRelease) => ({
                 ...r,
-                selected: r.isFree || r.isNameYourPrice,
+                selected: r.badgeType !== 'paid',
               }));
               setReleases(processed);
               setScanMeta({
@@ -205,7 +219,7 @@ export default function App() {
               });
               saveToLocalCache(targetUrl, packet.artist || 'Artist', processed);
               setScanProgressText(
-                `Finished: ${processed.length} releases discovered (${processed.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
+                `Finished: ${processed.length} releases discovered (${processed.filter((r: ScannedRelease) => r.badgeType !== 'paid').length} free/email)`
               );
             }
           } else if (packet.type === 'error') {
@@ -235,7 +249,7 @@ export default function App() {
           });
           saveToLocalCache(targetUrl, progressiveItems[0]?.artist || 'Artist', progressiveItems);
           setScanProgressText(
-            `Finished: ${progressiveItems.length} releases discovered (${progressiveItems.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
+            `Finished: ${progressiveItems.length} releases discovered (${progressiveItems.filter((r: ScannedRelease) => r.badgeType !== 'paid').length} free/email)`
           );
           return;
         }
@@ -255,7 +269,7 @@ export default function App() {
             if (data.releases && Array.isArray(data.releases)) {
               const processed = data.releases.map((r: ScannedRelease) => ({
                 ...r,
-                selected: r.isFree || r.isNameYourPrice,
+                selected: r.badgeType !== 'paid',
               }));
               setReleases(processed);
               setScanMeta({
@@ -264,7 +278,7 @@ export default function App() {
               });
               saveToLocalCache(targetUrl, data.artist || 'Artist', processed);
               setScanProgressText(
-                `Discovered ${processed.length} releases (${processed.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
+                `Discovered ${processed.length} releases (${processed.filter((r: ScannedRelease) => r.badgeType !== 'paid').length} free/email)`
               );
             }
           } else {
@@ -487,7 +501,7 @@ export default function App() {
               }
 
               if (!foundFromPoll && !downloadPageUrl) {
-                throw new Error('Watchdog timeout: Bandcamp email not detected within 3 minutes. Please verify Gmail or retry.');
+                logAndSync('polling_gas', 'Notice: Signed Bandcamp download link not detected in Gmail yet.');
               }
             }
           }
@@ -505,6 +519,7 @@ export default function App() {
             format: selectedFormat,
             email: settings.fallbackEmail,
             downloadPageUrl,
+            release: qItem,
           }),
         });
 
@@ -554,9 +569,10 @@ export default function App() {
           } else {
             throw new Error(`Audio download failed: HTTP ${audioRes.status}`);
           }
-        } else if (selectedFormat === 'mp3-128' && resolveData.audioStreams && resolveData.audioStreams.length > 0) {
+        } else if (selectedFormat === 'mp3-128' && (resolveData.audioStreams || rel.audioStreams) && (resolveData.audioStreams || rel.audioStreams).length > 0) {
           // Explicit mp3-128 stream collection fallback
-          for (const stream of resolveData.audioStreams) {
+          const streamsToDl = resolveData.audioStreams || rel.audioStreams;
+          for (const stream of streamsToDl) {
             const streamUrl = stream.streamUrl || stream.url;
             if (streamUrl) {
               const streamName = formatFilenameBySchema(
@@ -566,7 +582,7 @@ export default function App() {
                   album: effectiveAlbum,
                   title: stream.title,
                   trackNum: stream.trackNum,
-                  totalTracks: resolveData.audioStreams.length,
+                  totalTracks: streamsToDl.length,
                   date: qItem.isoDate || qItem.releaseDate,
                   year: qItem.isoDate?.slice(0, 4) || qItem.releaseDate?.slice(-4),
                   format: selectedFormat,
@@ -591,7 +607,7 @@ export default function App() {
           }
           successfulDownloadsCount++;
         } else {
-          throw new Error(resolveData.error || resolveData.message || `Studio audio download URL could not be resolved for ${selectedFormat.toUpperCase()}`);
+          logAndSync('downloading_audio', `Studio audio not resolved (${resolveData.error || 'signed download link required'}). Packaging companion info ZIP...`);
         }
 
         // Stage 6: Build and download companion (info).zip
@@ -640,12 +656,14 @@ export default function App() {
         }
 
         // Mark Completed
-        const doneStatus = (resolveData.isPaid && resolveData.skipAudio)
-          ? 'Packaging complete (Paid release - companion info ZIP created)'
-          : 'Download completed successfully!';
+        const doneStatus = resolveData.success && resolveData.downloadUrl
+          ? 'Download completed successfully!'
+          : ((resolveData.isPaid && resolveData.skipAudio)
+              ? 'Packaging complete (Paid release - companion info ZIP created)'
+              : 'Packaging complete (Companion info ZIP saved - audio requires email link)');
         logAndSync('completed', doneStatus);
         updateQueueItem(currentHostname, qItem.id, {
-          audioDownloaded: !resolveData.skipAudio,
+          audioDownloaded: Boolean(resolveData.success && resolveData.downloadUrl),
           infoZipDownloaded: settings.createCompanionInfoZip,
           stageProgress: 100,
         });

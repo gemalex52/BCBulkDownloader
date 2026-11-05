@@ -368,10 +368,22 @@ app.get('/api/bandcamp/scan-stream', async (req: Request, res: Response) => {
 
 // Resolve download endpoint: strictly resolves genuine FLAC or requested format
 app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) => {
-  const { albumUrl, releaseId, format = 'flac', email = '', downloadPageUrl, triggerEmailOnly } = req.body;
+  const { albumUrl, releaseId, format = 'flac', email = '', downloadPageUrl, triggerEmailOnly, release: passedRelease } = req.body;
 
   try {
     const formatInfo = SUPPORTED_FORMATS.find(f => f.id === format) || SUPPORTED_FORMATS[0]; // defaults to FLAC!
+
+    // Check serverCatalogCache or passed release
+    let cachedRelease: ScannedRelease | undefined = passedRelease;
+    if (!cachedRelease) {
+      for (const cached of serverCatalogCache.values()) {
+        const match = cached.releases.find(r => (releaseId && r.id === releaseId) || (albumUrl && r.url === albumUrl));
+        if (match) {
+          cachedRelease = match;
+          break;
+        }
+      }
+    }
 
     let parsed: any = null;
     let tralbum: any = null;
@@ -380,6 +392,98 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
     if (albumUrl) {
       try {
         origin = new URL(albumUrl).origin;
+      } catch (e) {}
+    }
+    if (!origin && cachedRelease?.artistUrl) {
+      origin = cachedRelease.artistUrl;
+    }
+
+    // 0. If downloadPageUrl is provided directly (from Gmail watchdog or freeDownloadPage), resolve immediately!
+    const effectiveDownloadPageUrl = downloadPageUrl || cachedRelease?.freeDownloadPageUrl;
+
+    if (effectiveDownloadPageUrl) {
+      const resolved = await resolveBandcampDownload(effectiveDownloadPageUrl, formatInfo.id);
+      if (resolved.success && resolved.downloadUrl) {
+        return res.json({
+          success: true,
+          type: resolved.isArchive ? 'direct_archive' : 'direct_audio',
+          downloadUrl: resolved.downloadUrl,
+          format: resolved.format || formatInfo.id,
+          description: resolved.description || formatInfo.name,
+          sizeMb: resolved.sizeMb,
+          fileExtension: formatInfo.ext,
+          isArchive: resolved.isArchive,
+          title: resolved.title || cachedRelease?.title || 'Release',
+          artist: resolved.artist || cachedRelease?.artist || 'Artist',
+          infoText: cachedRelease?.infoText,
+          artUrl: cachedRelease?.artUrl,
+          artistBioPicUrl: cachedRelease?.artistBioPicUrl,
+          extraImages: cachedRelease?.extraImages || [],
+          audioStreams: cachedRelease?.audioStreams || [],
+        });
+      } else {
+        console.warn('Failed to resolve effectiveDownloadPageUrl:', effectiveDownloadPageUrl, resolved.error);
+        return res.json({
+          success: false,
+          error: resolved.error || 'Failed to resolve audio download from mail link. Bandcamp link may have expired or timed out.',
+          downloadPageUrl: effectiveDownloadPageUrl,
+        });
+      }
+    }
+
+    // 1. Paid release not purchased: skip audio and return full companion metadata immediately
+    if (cachedRelease && cachedRelease.isPaid && !cachedRelease.isPurchased && !cachedRelease.freeDownloadPageUrl) {
+      return res.json({
+        success: false,
+        isPaid: true,
+        skipAudio: true,
+        releaseId: cachedRelease.id,
+        format: formatInfo.id,
+        infoText: cachedRelease.infoText,
+        artUrl: cachedRelease.artUrl,
+        artistBioPicUrl: cachedRelease.artistBioPicUrl,
+        extraImages: cachedRelease.extraImages,
+        audioStreams: cachedRelease.audioStreams,
+        title: cachedRelease.title,
+        artist: cachedRelease.artist,
+        minPrice: cachedRelease.minPrice,
+        message: `Paid release (€${cachedRelease.minPrice} EUR): audio skipped per policy. Packaging artwork, photos, info.txt, and lyrics into companion info ZIP.`,
+      });
+    }
+
+    // 2. If triggerEmailOnly is requested
+    const effectiveItemId = cachedRelease?.itemId || req.body.itemId;
+    const effectiveItemType = cachedRelease?.itemType || req.body.itemType || 'album';
+
+    if (triggerEmailOnly && email && effectiveItemId && origin) {
+      try {
+        const body = new URLSearchParams({
+          encoding_name: formatInfo.id,
+          item_id: String(effectiveItemId),
+          item_type: effectiveItemType,
+          address: email,
+          country: 'US',
+          postcode: '10001',
+        });
+        const emailRes = await fetch(`${origin}/email_download`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+            ...BANDCAMP_FETCH_HEADERS,
+          },
+          body,
+        });
+        const emailData = emailRes.ok ? await emailRes.json().catch(() => ({})) : {};
+        return res.json({ success: true, triggered: true, emailData });
+      } catch (trigErr: any) {
+        return res.json({ success: false, error: trigErr.message });
+      }
+    }
+
+    // 3. Fallback to live album fetch only if not already cached
+    if (albumUrl && !cachedRelease) {
+      try {
         const pageRes = await fetch(albumUrl, {
           headers: BANDCAMP_FETCH_HEADERS,
         });
@@ -407,183 +511,39 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
       }
     }
 
-    // 0. If downloadPageUrl is provided directly (from Gmail watchdog or freeDownloadPage), resolve immediately!
-    if (downloadPageUrl) {
-      const resolved = await resolveBandcampDownload(downloadPageUrl, formatInfo.id);
-      if (resolved.success && resolved.downloadUrl) {
+    const effective = cachedRelease || (parsed ? {
+      id: releaseId,
+      itemId: parsed.itemId || 0,
+      itemType: parsed.itemType || 'album',
+      title: parsed.releaseTitle,
+      artist: parsed.artist,
+      artUrl: parsed.artUrl,
+      artistBioPicUrl: parsed.artistBioPicUrl,
+      extraImages: parsed.allImages || parsed.extraImages || [],
+      infoText: parsed.infoText,
+      audioStreams: parsed.audioStreams || [],
+      isPaid: parsed.isPaid,
+      isPurchased: parsed.isPurchased,
+      isFree: parsed.isFree,
+      minPrice: parsed.minPrice,
+    } : null);
+
+    if (effective) {
+      // Stream fallback if user explicitly chose mp3-128
+      if (formatInfo.id === 'mp3-128' && effective.audioStreams && effective.audioStreams.length > 0) {
         return res.json({
           success: true,
-          type: resolved.isArchive ? 'direct_archive' : 'direct_audio',
-          downloadUrl: resolved.downloadUrl,
-          format: resolved.format || formatInfo.id,
-          description: resolved.description || formatInfo.name,
-          sizeMb: resolved.sizeMb,
+          type: 'tracks_collection',
+          format: formatInfo.id,
           fileExtension: formatInfo.ext,
-          isArchive: resolved.isArchive,
-          title: resolved.title || parsed?.releaseTitle,
-          artist: resolved.artist || parsed?.artist,
-          infoText: parsed?.infoText,
-          artUrl: parsed?.artUrl,
-          artistBioPicUrl: parsed?.artistBioPicUrl,
-          extraImages: parsed?.allImages || parsed?.extraImages,
-          audioStreams: parsed?.audioStreams,
-        });
-      }
-    }
-
-    if (parsed) {
-      // 0. Paid release not purchased: skip audio and return full companion metadata immediately
-      if (parsed.isPaid && !parsed.isPurchased) {
-        return res.json({
-          success: false,
-          isPaid: true,
-          skipAudio: true,
-          releaseId,
-          format: formatInfo.id,
-          infoText: parsed.infoText,
-          artUrl: parsed.artUrl,
-          artistBioPicUrl: parsed.artistBioPicUrl,
-          extraImages: parsed.allImages,
-          audioStreams: parsed.audioStreams,
-          title: parsed.releaseTitle,
-          artist: parsed.artist,
-          minPrice: parsed.minPrice,
-          message: `Paid release (€${parsed.minPrice} EUR): audio skipped per policy. Packaging artwork, photos, info.txt, and lyrics into companion info ZIP.`,
-        });
-      }
-
-      // If triggerEmailOnly is requested (used before polling watchdog)
-      if (triggerEmailOnly && email && tralbum?.current?.id) {
-        try {
-          const body = new URLSearchParams({
-            encoding_name: formatInfo.id,
-            item_id: String(tralbum.current.id),
-            item_type: tralbum.current.type || 'album',
-            address: email,
-            country: 'US',
-            postcode: '10001',
-          });
-          const emailRes = await fetch(`${origin}/email_download`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              Accept: 'application/json',
-              ...BANDCAMP_FETCH_HEADERS,
-            },
-            body,
-          });
-          const emailData = emailRes.ok ? await emailRes.json().catch(() => ({})) : {};
-          return res.json({ success: true, triggered: true, emailData });
-        } catch (trigErr: any) {
-          return res.json({ success: false, error: trigErr.message });
-        }
-      }
-
-        // 1. Direct freeDownloadPage (e.g. CYPH WVNG studio master FLAC)
-        if (tralbum?.freeDownloadPage) {
-          const resolved = await resolveBandcampDownload(tralbum.freeDownloadPage, formatInfo.id);
-          if (resolved.success && resolved.downloadUrl) {
-            return res.json({
-              success: true,
-              type: resolved.isArchive ? 'direct_archive' : 'direct_audio',
-              downloadUrl: resolved.downloadUrl,
-              format: resolved.format || formatInfo.id,
-              description: resolved.description || formatInfo.name,
-              sizeMb: resolved.sizeMb,
-              fileExtension: formatInfo.ext,
-              isArchive: resolved.isArchive,
-              infoText: parsed.infoText,
-              artUrl: parsed.artUrl,
-              artistBioPicUrl: parsed.artistBioPicUrl,
-              extraImages: parsed.allImages,
-              audioStreams: parsed.audioStreams,
-              title: parsed.releaseTitle,
-              artist: parsed.artist,
-            });
-          }
-        }
-
-        // 2. Email token submission for NYP releases
-        if (email && tralbum?.current?.id) {
-          try {
-            const body = new URLSearchParams({
-              encoding_name: formatInfo.id,
-              item_id: String(tralbum.current.id),
-              item_type: tralbum.current.type || 'album',
-              address: email,
-              country: 'US',
-              postcode: '10001',
-            });
-
-            const emailRes = await fetch(`${origin}/email_download`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                Accept: 'application/json',
-                'User-Agent':
-                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-              },
-              body,
-            });
-
-            if (emailRes.ok) {
-              const emailData = await emailRes.json();
-              if (emailData?.download_url) {
-                const resolved = await resolveBandcampDownload(emailData.download_url, formatInfo.id);
-                if (resolved.success && resolved.downloadUrl) {
-                  return res.json({
-                    success: true,
-                    type: resolved.isArchive ? 'direct_archive' : 'direct_audio',
-                    downloadUrl: resolved.downloadUrl,
-                    format: resolved.format || formatInfo.id,
-                    description: resolved.description || formatInfo.name,
-                    sizeMb: resolved.sizeMb,
-                    fileExtension: formatInfo.ext,
-                    infoText: parsed.infoText,
-                    artUrl: parsed.artUrl,
-                    artistBioPicUrl: parsed.artistBioPicUrl,
-                    extraImages: parsed.allImages,
-                    audioStreams: parsed.audioStreams,
-                    title: parsed.releaseTitle,
-                    artist: parsed.artist,
-                  });
-                }
-              }
-            }
-          } catch (emailErr) {
-            console.warn('email_download error:', emailErr);
-          }
-        }
-
-        // 4. Fallback streams only if explicitly requested mp3-128 format
-        if (formatInfo.id === 'mp3-128' && (parsed.isFree || parsed.isNyp || parsed.isPurchased) && parsed.audioStreams.length > 0) {
-          return res.json({
-            success: true,
-            type: 'tracks_collection',
-            format: formatInfo.id,
-            fileExtension: formatInfo.ext,
-            infoText: parsed.infoText,
-            artUrl: parsed.artUrl,
-            artistBioPicUrl: parsed.artistBioPicUrl,
-            extraImages: parsed.allImages,
-            audioStreams: parsed.audioStreams,
-            title: parsed.releaseTitle,
-            artist: parsed.artist,
-            description: `${parsed.audioStreams.length} tracks collection (${formatInfo.name})`,
-          });
-        }
-
-        return res.json({
-          success: false,
-          releaseId,
-          format: formatInfo.id,
-          infoText: parsed.infoText,
-          artUrl: parsed.artUrl,
-          extraImages: parsed.allImages,
-          audioStreams: parsed.audioStreams,
-          title: parsed.releaseTitle,
-          artist: parsed.artist,
-          error: `Audio download could not be resolved for this release.`,
+          infoText: effective.infoText,
+          artUrl: effective.artUrl,
+          artistBioPicUrl: effective.artistBioPicUrl,
+          extraImages: effective.extraImages,
+          audioStreams: effective.audioStreams,
+          title: effective.title,
+          artist: effective.artist,
+          description: `${effective.audioStreams.length} tracks collection (${formatInfo.name})`,
         });
       }
 
@@ -591,8 +551,23 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
         success: false,
         releaseId,
         format: formatInfo.id,
-        error: 'Download could not be resolved for this release',
+        infoText: effective.infoText,
+        artUrl: effective.artUrl,
+        artistBioPicUrl: effective.artistBioPicUrl,
+        extraImages: effective.extraImages,
+        audioStreams: effective.audioStreams,
+        title: effective.title,
+        artist: effective.artist,
+        error: `Studio audio download URL could not be resolved from mail watchdog for ${formatInfo.id.toUpperCase()}.`,
       });
+    }
+
+    return res.json({
+      success: false,
+      releaseId,
+      format: formatInfo.id,
+      error: 'Download could not be resolved for this release',
+    });
     } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -616,6 +591,9 @@ app.post('/api/bandcamp/check-gas-webhook', async (req: Request, res: Response) 
     if (releaseId) url.searchParams.set('id', String(releaseId));
     if (title) url.searchParams.set('title', title);
     if (since) url.searchParams.set('since', String(since));
+    if (req.body.hours) url.searchParams.set('hours', String(req.body.hours));
+    if (req.body.days) url.searchParams.set('days', String(req.body.days));
+    if (req.body.startDate) url.searchParams.set('startDate', String(req.body.startDate));
 
     const response = await fetch(url.toString(), {
       redirect: 'follow',
@@ -636,6 +614,9 @@ app.post('/api/bandcamp/check-gas-webhook', async (req: Request, res: Response) 
 
     try {
       const data = JSON.parse(text);
+      if (data && data.downloadPageUrl) {
+        data.downloadPageUrl = data.downloadPageUrl.replace(/&amp;/g, '&').trim();
+      }
       return res.json(data);
     } catch (e) {
       return res.json({

@@ -40,6 +40,9 @@ export function loadAppSettings(): AppSettings {
 export function saveAppSettings(settings: AppSettings): void {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+    }
   } catch (e) {
     console.warn('Failed to save app settings:', e);
   }
@@ -62,6 +65,9 @@ export function registerSessionHostname(hostname: string): void {
     if (!current.includes(hostname)) {
       current.unshift(hostname);
       localStorage.setItem(SESSIONS_INDEX_KEY, JSON.stringify(current.slice(0, 30)));
+      if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+        chrome.storage.local.set({ [SESSIONS_INDEX_KEY]: current.slice(0, 30) });
+      }
     }
   } catch (e) {}
 }
@@ -84,6 +90,9 @@ export function saveSiteSession(session: SiteQueueSession): void {
     const key = getSessionKey(session.hostname);
     session.updatedAt = new Date().toISOString();
     localStorage.setItem(key, JSON.stringify(session));
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ [key]: session });
+    }
     registerSessionHostname(session.hostname);
   } catch (e) {
     console.warn(`Failed saving session for ${session.hostname}:`, e);

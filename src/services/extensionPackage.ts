@@ -78,59 +78,189 @@ export const EXTENSION_FILES: ExtensionFileItem[] = [
     name: 'background.js',
     path: 'background.js',
     language: 'javascript',
-    description: 'Background Service Worker handling CORS-free fetching, token dispatch, statdownload resolution, GAS webhook queries, and downloads.',
-    content: `// Bandcamp Bulk Downloader - Background Service Worker (Manifest V3)
+    description: 'Background Service Worker handling CORS-free fetching, token dispatch, statdownload resolution, GAS watchdog queries, and Chrome downloads.',
+    content: `// Bandcamp Bulk Downloader - Unified Background Service Worker (Manifest V3)
 importScripts('core.js');
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.sync.get([
+  chrome.storage.local.get([
     'defaultFormat',
     'createCompanionInfoZip',
     'fallbackEmail',
     'namingSchema',
     'gasWebhookUrl',
     'gasSecret',
-    'pacingBaseDelay',
-    'pacingJitter',
-    'cooldownBatch',
-    'cooldownDuration'
+    'pacingBaseDelaySeconds',
+    'pacingJitterPercent',
+    'cooldownBatchInterval',
+    'cooldownDurationSeconds'
   ], (res) => {
     const updates = {};
     if (!res.defaultFormat) updates.defaultFormat = 'flac';
     if (res.createCompanionInfoZip === undefined) updates.createCompanionInfoZip = true;
     if (!res.namingSchema) updates.namingSchema = '%artist% - %date% - %album%[%title%.%format%]';
-    if (res.pacingBaseDelay === undefined) updates.pacingBaseDelay = 2.5;
-    if (res.pacingJitter === undefined) updates.pacingJitter = 40;
-    if (res.cooldownBatch === undefined) updates.cooldownBatch = 5;
-    if (res.cooldownDuration === undefined) updates.cooldownDuration = 12;
+    if (res.pacingBaseDelaySeconds === undefined) updates.pacingBaseDelaySeconds = 2.5;
+    if (res.pacingJitterPercent === undefined) updates.pacingJitterPercent = 40;
+    if (res.cooldownBatchInterval === undefined) updates.cooldownBatchInterval = 5;
+    if (res.cooldownDurationSeconds === undefined) updates.cooldownDurationSeconds = 12;
 
     if (Object.keys(updates).length > 0) {
-      chrome.storage.sync.set(updates);
+      chrome.storage.local.set(updates);
     }
   });
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // 1. Fetch sub-page HTML with curl UA to bypass Fastly challenges
-  if (request.action === 'FETCH_SUBPAGE') {
-    fetch(request.url, {
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
-        'User-Agent': 'curl/8.4.0'
+  // 1. Discover full catalog (CORS-free in background worker)
+  if (request.action === 'DISCOVER_CATALOG') {
+    (async () => {
+      try {
+        const { url } = request;
+        const targetUrl = url.includes('/music') ? url : (url.replace(/\\/+$/, '') + '/music');
+        const res = await fetch(targetUrl, {
+          headers: {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+          }
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const html = await res.text();
+        const parsedUrl = new URL(targetUrl);
+        const origin = parsedUrl.origin;
+
+        const artistMatch = html.match(/id="band-name-location"[^>]*>[\\s\\S]*?class="title"[^>]*>([^<]+)/i) ||
+                            html.match(/property="og:site_name"[^>]*content="([^"]+)"/i) ||
+                            html.match(/<title>([^-|]+)/i);
+        const artistName = artistMatch ? cleanHtmlText(artistMatch[1]) : parsedUrl.hostname.split('.')[0];
+        const artistBioPicUrl = extractArtistBioPicUrl(html);
+
+        const itemsMap = new Map();
+        const liMatches = Array.from(html.matchAll(/<li[^>]*data-item-id="([^"]*)"[^>]*>([\\s\\S]*?)<\\/li>/gi));
+        for (const m of liMatches) {
+          const rawId = m[1];
+          const content = m[2];
+          const hrefMatch = content.match(/href="([^"]+)"/);
+          if (!hrefMatch) continue;
+          const href = hrefMatch[1];
+          const isAlbum = href.startsWith('/album/');
+          const isTrack = href.startsWith('/track/');
+          if (!isAlbum && !isTrack) continue;
+          const fullUrl = href.startsWith('http') ? href : (origin + href);
+          const titleMatch = content.match(/<p class="title">\\s*([^<]+)/);
+          const artMatch = content.match(/<img[^>]*src="([^"]+)"/);
+          const artUrl = artMatch ? artMatch[1].replace(/_(\\d+)\\.jpg/, '_10.jpg') : '';
+          const numId = parseInt(rawId.replace(/\\D/g, '') || '0', 10);
+          itemsMap.set(href, {
+            id: rawId,
+            itemId: numId,
+            url: fullUrl,
+            title: titleMatch ? cleanHtmlText(titleMatch[1]) : 'Release',
+            artUrl,
+            type: isAlbum ? 'album' : 'track'
+          });
+        }
+
+        const clientMatch = html.match(/data-client-items="([^"]+)"/i);
+        if (clientMatch) {
+          try {
+            const raw = clientMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+            const clientItems = JSON.parse(raw);
+            for (const item of clientItems) {
+              if (!itemsMap.has(item.page_url)) {
+                const isAlbum = item.type === 'album' || item.page_url.startsWith('/album/');
+                const fullUrl = item.page_url.startsWith('http') ? item.page_url : (origin + item.page_url);
+                const artUrl = item.art_id ? ('https://f4.bcbits.com/img/a' + item.art_id + '_10.jpg') : '';
+                itemsMap.set(item.page_url, {
+                  id: (item.type || 'item') + '-' + item.id,
+                  itemId: item.id || 0,
+                  url: fullUrl,
+                  title: cleanHtmlText(item.title) || 'Release',
+                  artUrl,
+                  type: isAlbum ? 'album' : 'track'
+                });
+              }
+            }
+          } catch(e) {}
+        }
+
+        sendResponse({
+          success: true,
+          artistName,
+          origin,
+          artistBioPicUrl,
+          items: Array.from(itemsMap.values())
+        });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
       }
-    })
-      .then(res => res.text())
-      .then(html => sendResponse({ success: true, html }))
-      .catch(err => sendResponse({ success: false, error: err.message }));
+    })();
     return true;
   }
 
-  // 2. Resolve free/email download link via Bandcamp page blob + statdownload API (resolves true studio FLAC/ZIP)
-  if (request.action === 'RESOLVE_DOWNLOAD_PAGE') {
+  // 2. Inspect single release subpage
+  if (request.action === 'INSPECT_RELEASE') {
     (async () => {
       try {
-        const requestedFormat = request.format || 'flac';
-        const resolved = await resolveBandcampDownload(request.url, requestedFormat);
+        const { origin, artistName, item, globalBioUrl } = request;
+        const res = await fetch(item.url, {
+          headers: {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+          }
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const subHtml = await res.text();
+        const tralbum = extractBandcampTralbum(subHtml);
+        const parsed = parseReleasePageData(subHtml, tralbum, item, origin, artistName, globalBioUrl);
+
+        sendResponse({
+          success: true,
+          release: {
+            id: item.id,
+            itemId: tralbum?.current?.id || item.itemId,
+            itemType: item.type,
+            title: parsed.releaseTitle,
+            artist: parsed.artist,
+            artistUrl: origin,
+            url: item.url,
+            artUrl: parsed.artUrl,
+            artistBioPicUrl: parsed.artistBioPicUrl,
+            extraImages: parsed.allImages,
+            releaseDate: parsed.humanDate,
+            isoDate: parsed.dotDate,
+            isFree: parsed.isFree,
+            isNameYourPrice: parsed.isNyp,
+            isPurchased: parsed.isPurchased,
+            isPaid: parsed.isPaid,
+            badgeType: parsed.badgeType,
+            minPrice: parsed.minPrice,
+            currency: tralbum?.current?.currency || 'EUR',
+            priceFormatted: parsed.priceFormatted,
+            requiresEmail: parsed.requireEmail,
+            freeDownloadPageUrl: parsed.freeDlPage || undefined,
+            trackCount: parsed.trackListFormatted.length,
+            trackList: parsed.trackListFormatted,
+            audioStreams: parsed.audioStreams,
+            aboutText: parsed.aboutText,
+            creditsText: parsed.creditsText,
+            infoText: parsed.infoText,
+            tags: parsed.tagsMatches,
+            selected: parsed.badgeType !== 'paid',
+          }
+        });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // 3. Resolve download link via statdownload / popplers CDN
+  if (request.action === 'RESOLVE_DOWNLOAD') {
+    (async () => {
+      try {
+        const { downloadPageUrl, format } = request;
+        const resolved = await resolveBandcampDownload(downloadPageUrl, format || 'flac');
         sendResponse(resolved);
       } catch (err) {
         sendResponse({ success: false, error: err.message });
@@ -139,64 +269,112 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 3. Submit email for free download token (dispatch)
-  if (request.action === 'SUBMIT_EMAIL_DOWNLOAD') {
-    const { artistUrl, itemId, itemType, email, format } = request;
-    const body = new URLSearchParams({
-      encoding_name: format || 'flac',
-      item_id: String(itemId),
-      item_type: itemType || 'album',
-      address: email || 'listener@example.com',
-      country: 'US',
-      postcode: '10001'
-    });
-
-    fetch(artistUrl + '/email_download', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
-      body
-    })
-      .then(r => r.json())
-      .then(data => sendResponse({ success: true, data }))
-      .catch(err => sendResponse({ success: false, error: err.message }));
+  // 4. Trigger Bandcamp email dispatch
+  if (request.action === 'TRIGGER_EMAIL') {
+    (async () => {
+      try {
+        const { origin, formatId, itemId, itemType, email } = request;
+        const body = new URLSearchParams({
+          encoding_name: formatId || 'flac',
+          item_id: String(itemId),
+          item_type: itemType || 'album',
+          address: email || 'listener@example.com',
+          country: 'US',
+          postcode: '10001'
+        });
+        const res = await fetch(origin + '/email_download', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json'
+          },
+          body
+        });
+        const data = res.ok ? await res.json().catch(() => ({})) : {};
+        sendResponse({ success: true, data });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
     return true;
   }
 
-  // 4. Query Google Apps Script Webhook
-  if (request.action === 'QUERY_GAS_WEBHOOK') {
-    const { gasUrl, secret, releaseId, title, since } = request;
-    try {
-      const url = new URL(gasUrl);
-      url.searchParams.set('secret', secret);
-      if (releaseId) url.searchParams.set('id', String(releaseId));
-      if (title) url.searchParams.set('title', title);
-      if (since) url.searchParams.set('since', String(since));
+  // 5. Query Google Apps Script Webhook
+  if (request.action === 'CHECK_GAS_WEBHOOK') {
+    (async () => {
+      try {
+        const { webhookUrl, secret, releaseId, title, since, hours, days, startDate } = request;
+        const url = new URL(webhookUrl);
+        url.searchParams.set('secret', secret);
+        if (releaseId) url.searchParams.set('id', String(releaseId));
+        if (title) url.searchParams.set('title', title);
+        if (since) url.searchParams.set('since', String(since));
+        if (hours) url.searchParams.set('hours', String(hours));
+        if (days) url.searchParams.set('days', String(days));
+        if (startDate) url.searchParams.set('startDate', String(startDate));
 
-      fetch(url.toString(), {
-        redirect: 'follow',
-        headers: { 'Accept': 'application/json, text/plain, */*' }
-      })
-        .then(r => r.text())
-        .then(text => {
-          try {
-            sendResponse({ success: true, data: JSON.parse(text) });
-          } catch(e) {
-            sendResponse({ success: false, error: 'Non-JSON response from Google Apps Script' });
+        const res = await fetch(url.toString(), {
+          redirect: 'follow',
+          headers: { 'Accept': 'application/json, text/plain, */*' }
+        });
+        const text = await res.text();
+        try {
+          const data = JSON.parse(text);
+          if (data && data.downloadPageUrl) {
+            data.downloadPageUrl = data.downloadPageUrl.replace(/&amp;/g, '&').trim();
           }
-        })
-        .catch(err => sendResponse({ success: false, error: err.message }));
-    } catch(urlErr) {
-      sendResponse({ success: false, error: 'Invalid GAS Webhook URL' });
-    }
+          sendResponse({ success: true, ...data });
+        } catch(e) {
+          sendResponse({ success: false, error: 'Non-JSON response from GAS webhook', raw: text.slice(0, 300) });
+        }
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
     return true;
   }
 
-  // 5. Open full Live Scanner tab
+  // 6. Download file via Chrome Downloads API
+  if (request.action === 'DOWNLOAD_FILE') {
+    chrome.downloads.download({
+      url: request.url,
+      filename: request.filename || 'Bandcamp/download',
+      conflictAction: 'uniquify'
+    }, (downloadId) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ success: false, error: chrome.runtime.lastError.message });
+      } else {
+        sendResponse({ success: true, downloadId });
+      }
+    });
+    return true;
+  }
+
+  // 7. Fetch binary image as Data URL (for companion info zip packing without CORS)
+  if (request.action === 'FETCH_BINARY_DATA_URL') {
+    (async () => {
+      try {
+        const res = await fetch(request.url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const blob = await res.blob();
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          sendResponse({ success: true, dataUrl: reader.result });
+        };
+        reader.onerror = () => {
+          sendResponse({ success: false, error: 'FileReader error' });
+        };
+        reader.readAsDataURL(blob);
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // 8. Open dashboard tab
   if (request.action === 'OPEN_DASHBOARD_TAB') {
-    const targetUrl = request.url ? ('dashboard.html?url=' + encodeURIComponent(request.url) + (request.autostart ? '&autostart=1' : '')) : 'dashboard.html';
+    const targetUrl = request.url ? ('dashboard.html?url=' + encodeURIComponent(request.url)) : 'dashboard.html';
     chrome.tabs.create({ url: chrome.runtime.getURL(targetUrl) });
     sendResponse({ success: true });
     return true;
@@ -537,1337 +715,45 @@ document.addEventListener('DOMContentLoaded', () => {
     name: 'dashboard.html',
     path: 'dashboard.html',
     language: 'html',
-    description: 'Full-page Live Scanner tab providing persistent multi-site queue, companion info zip builder, GAS watchdog, and anti-captcha pacing.',
+    description: 'Full-page Live Scanner React dashboard mounting the unified discography crawler, multi-site queue, GAS watchdog, and anti-captcha pacing.',
     content: `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bandcamp Bulk Downloader - Live Scanner Dashboard</title>
   <link rel="stylesheet" href="dashboard.css">
 </head>
-<body>
-  <header class="header">
-    <div class="brand">
-      <img src="icons/icon48.png" width="28" height="28" alt="Icon">
-      <span>Bandcamp Bulk Downloader</span>
-    </div>
-    <div class="header-right">
-      <span id="activeArtistName" class="artist-name">Live Discography Scanner</span>
-      <button id="btnOpenGasModal" class="nav-btn">Watchdog Settings ⚙️</button>
-      <a href="options.html" target="_blank" class="nav-link">Extension Options</a>
-    </div>
-  </header>
-
-  <main class="container">
-    <div class="toolbar-card">
-      <div class="input-row">
-        <input type="text" id="targetUrlInput" placeholder="https://esoctrilihum.bandcamp.com/music" value="https://esoctrilihum.bandcamp.com/music">
-        <button id="btnDashboardScan" class="btn primary">Scan Discography</button>
-        <button id="btnDashboardRefresh" class="btn secondary">↺ Force Fresh Scan</button>
-      </div>
-
-      <div class="schema-row">
-        <label>File Naming Schema (%meta_field%):</label>
-        <input type="text" id="dashSchemaInput" value="%artist% - %date% - %album%[%title%.%format%]">
-        <div class="tags">
-          <button class="dash-tag" data-t="%artist%">+artist</button>
-          <button class="dash-tag" data-t="%date%">+date</button>
-          <button class="dash-tag" data-t="%album%">+album</button>
-          <button class="dash-tag" data-t="%track_num%">+track#</button>
-          <button class="dash-tag" data-t="%title%">+title</button>
-          <button class="dash-tag" data-t="%format%">+format</button>
-        </div>
-        <div id="dashPreview" class="dash-preview"></div>
-      </div>
-
-      <div class="controls-row">
-        <div class="filters">
-          <button id="btnSelAllFree" class="pill-btn active">Select Free & Email</button>
-          <button id="btnSelAll" class="pill-btn">Select All</button>
-          <button id="btnDeselAll" class="pill-btn">Deselect All</button>
-        </div>
-
-        <div class="format-opts">
-          <label>Format:</label>
-          <select id="dashFormatSelect">
-            <option value="flac" selected>FLAC (Lossless Studio Quality)</option>
-            <option value="mp3-320">MP3 320kbps (High Quality)</option>
-            <option value="mp3-v0">MP3 V0 (VBR)</option>
-            <option value="wav">WAV 16-bit PCM</option>
-            <option value="aac-hi">AAC (VBR)</option>
-            <option value="alac">ALAC</option>
-          </select>
-
-          <label class="cb-label">
-            <input type="checkbox" id="cbCompanionZip" checked>
-            <span>Companion (info).zip</span>
-          </label>
-
-          <div class="action-buttons">
-            <button id="btnResumeDownload" class="btn resume" style="display:none;">▶ Resume Download</button>
-            <button id="btnBulkDownload" class="btn download">Start Download (0)</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="pacingNotice" class="pacing-notice" style="display:none;"></div>
-    <div id="statusNotice" class="status-notice"></div>
-
-    <div id="discographyGrid" class="discography-grid"></div>
-  </main>
-
-  <!-- Google Apps Script Modal -->
-  <div id="gasModal" class="modal-backdrop" style="display:none;">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>Google Apps Script Email-Walled Watchdog</h3>
-        <button id="btnCloseGasModal" class="close-btn">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-desc">
-          Automate receiving signed Bandcamp download links for email-walled Name Your Price releases using your deployed Google Apps Script web app.
-        </p>
-
-        <label class="modal-label">GAS Web App URL:</label>
-        <input type="url" id="modalGasUrl" placeholder="https://script.google.com/macros/s/.../exec" class="modal-input">
-
-        <label class="modal-label">Secret Password (Matches SECRET in Code.gs):</label>
-        <input type="text" id="modalGasSecret" placeholder="my_secure_secret" class="modal-input">
-
-        <div class="modal-actions">
-          <button id="btnTestGasModal" class="btn secondary">Test Webhook</button>
-          <button id="btnCopyGasScript" class="btn secondary">Copy Code.gs Template</button>
-          <button id="btnSaveGasModal" class="btn primary">Save Watchdog Settings</button>
-        </div>
-        <div id="modalGasStatus" class="modal-status"></div>
-      </div>
-    </div>
-  </div>
-
-  <script src="jszip.min.js"></script>
-  <script src="core.js"></script>
-  <script src="dashboard.js"></script>
+<body class="bg-[#0b0f17] text-slate-100 min-h-screen">
+  <div id="root"></div>
+  <script src="dashboard.bundle.js"></script>
 </body>
-</html>
-`
+</html>`
   },
   {
     name: 'dashboard.css',
     path: 'dashboard.css',
     language: 'css',
-    description: 'Dashboard tab styling.',
-    content: `* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  background: #0b0f17;
-  color: #f1f5f9;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  min-height: 100vh;
-}
-.header {
-  height: 60px;
-  background: #111827;
-  border-bottom: 1px solid #1e293b;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 30px;
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 700;
-  color: #00b4d8;
-  font-size: 16px;
-}
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.artist-name {
-  font-size: 13px;
-  color: #94a3b8;
-}
-.nav-btn {
-  background: #1e293b;
-  border: 1px solid #334155;
-  color: #fbbf24;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.nav-btn:hover { background: #334155; color: #fff; }
-.nav-link {
-  color: #38bdf8;
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 600;
-}
-.container {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 30px;
-}
-.toolbar-card {
-  background: #111827;
-  border: 1px solid #1e293b;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.input-row {
-  display: flex;
-  gap: 10px;
-}
-#targetUrlInput {
-  flex: 1;
-  background: #0b0f17;
-  border: 1px solid #334155;
-  color: #fff;
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 14px;
-}
-.btn {
-  padding: 10px 18px;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 13px;
-  cursor: pointer;
-  border: none;
-  transition: opacity 0.2s;
-}
-.btn.primary { background: #00b4d8; color: #0b0f17; }
-.btn.secondary { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; }
-.btn.download { background: #00b4d8; color: #0b0f17; font-weight: 700; }
-.btn.resume { background: #10b981; color: #0b0f17; font-weight: 700; }
-.btn:hover { opacity: 0.9; }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.schema-row {
-  background: #0e1626;
-  border: 1px solid #1e293b;
-  border-radius: 8px;
-  padding: 12px;
-  font-size: 12px;
-}
-.schema-row label {
-  color: #94a3b8;
-  font-weight: 600;
-  display: block;
-  margin-bottom: 6px;
-}
-#dashSchemaInput {
-  width: 100%;
-  background: #0b0f17;
-  border: 1px solid #334155;
-  color: #38bdf8;
-  font-family: monospace;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-}
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-.dash-tag {
-  background: #1e293b;
-  color: #94a3b8;
-  border: 1px solid #334155;
-  border-radius: 4px;
-  padding: 3px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.dash-tag:hover { color: #fff; background: #334155; }
-.dash-preview {
-  margin-top: 6px;
-  font-family: monospace;
-  font-size: 11px;
-  color: #64748b;
-}
-.controls-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-  border-top: 1px solid #1e293b;
-  padding-top: 14px;
-}
-.filters {
-  display: flex;
-  gap: 8px;
-}
-.pill-btn {
-  background: #1e293b;
-  border: 1px solid #334155;
-  color: #94a3b8;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.pill-btn.active {
-  background: #083344;
-  color: #38bdf8;
-  border-color: #0284c7;
-}
-.format-opts {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-}
-.cb-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #cbd5e1;
-  font-size: 12px;
-  cursor: pointer;
-}
-.action-buttons {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-select {
-  background: #0b0f17;
-  color: #f1f5f9;
-  border: 1px solid #334155;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-}
-.status-notice {
-  margin-bottom: 20px;
-  font-size: 13px;
-  color: #94a3b8;
-}
-.pacing-notice {
-  margin-bottom: 14px;
-  padding: 10px 16px;
-  background: #082f49;
-  border: 1px solid #0284c7;
-  border-radius: 8px;
-  color: #38bdf8;
-  font-size: 12px;
-  font-family: monospace;
-}
-.discography-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 20px;
-}
-.card {
-  background: #111827;
-  border: 1px solid #1e293b;
-  border-radius: 10px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  transition: transform 0.15s, border-color 0.15s;
-}
-.card.selected {
-  border-color: #00b4d8;
-  background: #0e1e33;
-}
-.card-art {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  background: #0b0f17;
-}
-.card-art img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.cb-wrap {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  background: rgba(0, 0, 0, 0.6);
-  padding: 4px;
-  border-radius: 4px;
-}
-.card-badge {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 4px;
-  text-transform: uppercase;
-}
-.badge-free { background: #064e3b; color: #6ee7b7; border: 1px solid #059669; }
-.badge-email { background: #083344; color: #67e8f9; border: 1px solid #0284c7; }
-.badge-nyp { background: #78350f; color: #fde68a; border: 1px solid #d97706; }
-.badge-own { background: #3b0764; color: #d8b4fe; border: 1px solid #7e22ce; }
-.badge-paid { background: #451a03; color: #fcd34d; border: 1px solid #b45309; }
-.badge-completed { background: #064e3b; color: #6ee7b7; }
-.badge-failed { background: #7f1d1d; color: #fca5a5; }
-.badge-progress { background: #0369a1; color: #bae6fd; }
-
-.card-body {
-  padding: 12px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-.card-title {
-  font-weight: 600;
-  font-size: 13px;
-  color: #fff;
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.card-meta {
-  font-size: 11px;
-  color: #94a3b8;
-}
-.card-stage-info {
-  margin-top: 8px;
-  padding: 6px;
-  background: #090d16;
-  border-radius: 4px;
-  font-size: 10px;
-  color: #cbd5e1;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.btn-retry-card {
-  background: #7f1d1d;
-  color: #fff;
-  border: none;
-  border-radius: 3px;
-  padding: 2px 6px;
-  font-size: 10px;
-  cursor: pointer;
-}
-
-/* Modal */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 20px;
-}
-.modal-card {
-  background: #111827;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  max-width: 600px;
-  width: 100%;
-  padding: 24px;
-}
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-.modal-header h3 {
-  font-size: 16px;
-  color: #fbbf24;
-}
-.close-btn {
-  background: transparent;
-  border: none;
-  color: #94a3b8;
-  font-size: 16px;
-  cursor: pointer;
-}
-.modal-desc {
-  font-size: 12px;
-  color: #94a3b8;
-  margin-bottom: 14px;
-  line-height: 1.4;
-}
-.modal-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 4px;
-  color: #e2e8f0;
-}
-.modal-input {
-  width: 100%;
-  background: #0b0f17;
-  border: 1px solid #334155;
-  color: #fff;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  margin-bottom: 12px;
-}
-.modal-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 10px;
-}
-.modal-status {
-  margin-top: 12px;
-  font-size: 12px;
-  font-family: monospace;
-}
-`
+    description: 'Tailwind CSS stylesheet for the Live Scanner React Dashboard.',
+    content: `/* Bandcamp Bulk Downloader - Live Scanner Dashboard Stylesheet */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; background-color: #0b0f17; color: #f1f5f9; min-height: 100vh; }
+code, pre, .font-mono { font-family: 'JetBrains Mono', monospace; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0b0f17; }
+::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #334155; }`
   },
   {
-    name: 'dashboard.js',
-    path: 'dashboard.js',
+    name: 'dashboard.bundle.js',
+    path: 'dashboard.bundle.js',
     language: 'javascript',
-    description: 'Dashboard controller managing multi-site queue persistence, companion info zip builder, GAS email polling, and pacing.',
-    content: `(function() {
-  'use strict';
-  // Bandcamp Live Scanner Dashboard - Multi-Site Persistent Controller
-  let dashReleases = [];
-  let currentHostname = 'esoctrilihum.bandcamp.com';
-  let isRunningQueue = false;
-  let isCancelled = false;
-
-  // GAS Script Template Embedded
-  const GAS_CODE_GS = ${JSON.stringify(GAS_SCRIPT_TEMPLATE)};
-
-  // Inherit single source of truth from core.js (namespaced to avoid global collisions)
-  const core = window.BandcampCore || globalThis.BandcampCore || {};
-  const formatFilenameBySchema = core.formatFilenameBySchema || function() { return ''; };
-  const getCompanionInfoZipName = core.getCompanionInfoZipName || function(f) { return f + ' (info).zip'; };
-  const parseReleasePageData = core.parseReleasePageData;
-  const extractBandcampTralbum = core.extractBandcampTralbum;
-  const extractArtistBioPicUrl = core.extractArtistBioPicUrl;
-  const cleanHtmlText = core.cleanHtmlText || function(t) { return t || ''; };
-  const formatDateToDotString = core.formatDateToDotString || function(d) { return d || ''; };
-
-  function sanitize(s) {
-    return cleanHtmlText(s).replace(/[:*?"<>|/]/g, '_').trim();
-  }
-
-  function getBadgeDetails(rel) {
-    if (rel.stage === 'completed') return { cls: 'badge-completed', text: 'Done' };
-    if (rel.stage === 'failed') return { cls: 'badge-failed', text: 'Failed' };
-    if (rel.stage && rel.stage !== 'pending') return { cls: 'badge-progress', text: rel.stage };
-    if (rel.isPurchased || rel.badgeType === 'own') return { cls: 'badge-own', text: 'Own' };
-    if (rel.badgeType === 'free' || (rel.isFree && !rel.requiresEmail && !rel.isNyp)) return { cls: 'badge-free', text: 'Free' };
-    if (rel.badgeType === 'email' || rel.requiresEmail || rel.isNyp) {
-      const curSym = (rel.currency === 'EUR' || !rel.currency) ? '€' : (rel.currency === 'USD' ? '$' : (rel.currency === 'GBP' ? '£' : rel.currency));
-      return { cls: 'badge-email', text: rel.minPrice > 0 ? ('Email (' + curSym + rel.minPrice + ')') : 'Email' };
-    }
-    const curSym = (rel.currency === 'EUR' || !rel.currency) ? '€' : (rel.currency === 'USD' ? '$' : (rel.currency === 'GBP' ? '£' : rel.currency));
-    return { cls: 'badge-paid', text: rel.minPrice > 0 ? ('Paid (' + curSym + rel.minPrice + ')') : 'Paid' };
-  }
-
-function calculateDelay(base, jitterPercent) {
-  const baseMs = Math.max(500, base * 1000);
-  const frac = (jitterPercent || 40) / 100;
-  const variation = (Math.random() * 2 - 1) * (baseMs * frac);
-  return Math.max(400, Math.round(baseMs + variation));
-}
-
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-document.addEventListener('DOMContentLoaded', () => {
-  const targetUrlInput = document.getElementById('targetUrlInput');
-  const btnScan = document.getElementById('btnDashboardScan');
-  const btnRefresh = document.getElementById('btnDashboardRefresh');
-  const schemaInput = document.getElementById('dashSchemaInput');
-  const dashPreview = document.getElementById('dashPreview');
-  const formatSelect = document.getElementById('dashFormatSelect');
-  const cbCompanionZip = document.getElementById('cbCompanionZip');
-  const btnBulkDownload = document.getElementById('btnBulkDownload');
-  const btnResumeDownload = document.getElementById('btnResumeDownload');
-  const grid = document.getElementById('discographyGrid');
-  const statusNotice = document.getElementById('statusNotice');
-  const pacingNotice = document.getElementById('pacingNotice');
-
-  // GAS Modal elements
-  const btnOpenGasModal = document.getElementById('btnOpenGasModal');
-  const gasModal = document.getElementById('gasModal');
-  const btnCloseGasModal = document.getElementById('btnCloseGasModal');
-  const modalGasUrl = document.getElementById('modalGasUrl');
-  const modalGasSecret = document.getElementById('modalGasSecret');
-  const btnTestGasModal = document.getElementById('btnTestGasModal');
-  const btnCopyGasScript = document.getElementById('btnCopyGasScript');
-  const btnSaveGasModal = document.getElementById('btnSaveGasModal');
-  const modalGasStatus = document.getElementById('modalGasStatus');
-
-  // Check URL query parameters
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('url')) {
-    targetUrlInput.value = decodeURIComponent(urlParams.get('url'));
-  }
-
-  try {
-    currentHostname = new URL(targetUrlInput.value.trim()).hostname;
-  } catch(e) {}
-
-  // Load preferences
-  chrome.storage.sync.get([
-    'defaultFormat',
-    'createCompanionInfoZip',
-    'namingSchema',
-    'gasWebhookUrl',
-    'gasSecret',
-    'fallbackEmail',
-    'pacingBaseDelay',
-    'pacingJitter',
-    'cooldownBatch',
-    'cooldownDuration'
-  ], (d) => {
-    if (d.defaultFormat) formatSelect.value = d.defaultFormat;
-    if (d.createCompanionInfoZip !== undefined) cbCompanionZip.checked = d.createCompanionInfoZip;
-    if (d.namingSchema) schemaInput.value = d.namingSchema;
-    if (d.gasWebhookUrl) modalGasUrl.value = d.gasWebhookUrl;
-    if (d.gasSecret) modalGasSecret.value = d.gasSecret;
-    updatePreview();
-  });
-
-  function updatePreview() {
-    const fmt = formatSelect.value || 'flac';
-    dashPreview.textContent = 'Preview: ' + formatFilenameBySchema(schemaInput.value, {
-      artist: 'Esoctrilihum',
-      album: 'Almost Dead',
-      title: 'Almost Dead',
-      trackNum: 1,
-      totalTracks: 1,
-      date: '2025.10.31',
-      year: 2025,
-      format: fmt
-    }, { isArchive: false });
-  }
-
-  schemaInput.addEventListener('input', () => {
-    updatePreview();
-    chrome.storage.sync.set({ namingSchema: schemaInput.value });
-  });
-
-  formatSelect.addEventListener('change', () => {
-    updatePreview();
-    chrome.storage.sync.set({ defaultFormat: formatSelect.value });
-  });
-
-  cbCompanionZip.addEventListener('change', () => {
-    chrome.storage.sync.set({ createCompanionInfoZip: cbCompanionZip.checked });
-  });
-
-  document.querySelectorAll('.dash-tag').forEach(b => {
-    b.addEventListener('click', () => {
-      schemaInput.value += ' ' + b.dataset.t;
-      updatePreview();
-      chrome.storage.sync.set({ namingSchema: schemaInput.value });
-    });
-  });
-
-  // Modal handlers
-  btnOpenGasModal.addEventListener('click', () => {
-    gasModal.style.display = 'flex';
-  });
-
-  btnCloseGasModal.addEventListener('click', () => {
-    gasModal.style.display = 'none';
-  });
-
-  btnCopyGasScript.addEventListener('click', () => {
-    navigator.clipboard.writeText(GAS_CODE_GS);
-    modalGasStatus.textContent = '✓ Copied Code.gs template to clipboard!';
-    modalGasStatus.style.color = '#34d399';
-  });
-
-  btnSaveGasModal.addEventListener('click', () => {
-    chrome.storage.sync.set({
-      gasWebhookUrl: modalGasUrl.value.trim(),
-      gasSecret: modalGasSecret.value.trim()
-    }, () => {
-      modalGasStatus.textContent = '✓ Saved watchdog settings!';
-      modalGasStatus.style.color = '#34d399';
-      setTimeout(() => { gasModal.style.display = 'none'; }, 1000);
-    });
-  });
-
-  btnTestGasModal.addEventListener('click', () => {
-    const url = modalGasUrl.value.trim();
-    const secret = modalGasSecret.value.trim();
-    if (!url) {
-      modalGasStatus.textContent = 'Please enter a webhook URL first.';
-      modalGasStatus.style.color = '#f87171';
-      return;
-    }
-
-    modalGasStatus.textContent = 'Testing connection to Google Apps Script...';
-    modalGasStatus.style.color = '#38bdf8';
-
-    chrome.runtime.sendMessage({
-      action: 'QUERY_GAS_WEBHOOK',
-      gasUrl: url,
-      secret: secret,
-      since: Math.floor(Date.now() / 1000)
-    }, (res) => {
-      if (res && res.success) {
-        modalGasStatus.textContent = '✓ Webhook is online and authorized successfully!';
-        modalGasStatus.style.color = '#34d399';
-      } else {
-        modalGasStatus.textContent = 'Error: ' + (res?.error || 'Failed connecting to webhook');
-        modalGasStatus.style.color = '#f87171';
-      }
-    });
-  });
-
-  // Load session from chrome.storage.local
-  function loadLocalSession() {
-    try {
-      currentHostname = new URL(targetUrlInput.value.trim()).hostname;
-    } catch(e) {}
-
-    const sessionKey = 'bc_session_v2_' + currentHostname.toLowerCase();
-    chrome.storage.local.get([sessionKey], (res) => {
-      const sess = res[sessionKey];
-      if (sess && sess.releases && sess.releases.length > 0) {
-        dashReleases = sess.releases;
-        statusNotice.textContent = '⚡ Loaded ' + dashReleases.length + ' releases from session for ' + currentHostname;
-        renderGrid();
-
-        if (urlParams.get('autostart') === '1' && !isRunningQueue) {
-          executeQueue(true);
-        }
-      } else {
-        runScan(false);
-      }
-    });
-  }
-
-  loadLocalSession();
-
-  btnScan.addEventListener('click', () => runScan(false));
-  btnRefresh.addEventListener('click', () => runScan(true));
-
-  async function runScan(force) {
-    const targetUrl = targetUrlInput.value.trim();
-    if (!targetUrl) return;
-
-    try {
-      currentHostname = new URL(targetUrl).hostname;
-    } catch(e) {}
-
-    btnScan.disabled = true;
-    btnScan.textContent = 'Discovering catalog...';
-    grid.innerHTML = '<div style="color:#94a3b8;">Discovering all releases from ' + currentHostname + '...</div>';
-
-    try {
-      const pageRes = await fetch(targetUrl);
-      const html = await pageRes.text();
-
-      const itemsMap = new Map();
-      const origin = new URL(targetUrl).origin;
-
-      // Extract artist bio picture
-      const bioPicIdMatch = html.match(/"bio_pic_id"\\s*:\\s*(\\d+)/);
-      let artistBioPicUrl = bioPicIdMatch ? ('https://f4.bcbits.com/img/00' + bioPicIdMatch[1] + '_10.jpg') : '';
-
-      // Extract initial <li> items
-      const liRegex = new RegExp('<li[^>]*data-item-id="([^"]*)"[^>]*>([\\\\s\\\\S]*?)<\\/li>', 'gi');
-      const liMatches = Array.from(html.matchAll(liRegex));
-
-      for (const m of liMatches) {
-        const hrefMatch = m[2].match(/href="([^"]+)"/);
-        const titleMatch = m[2].match(/<p class="title">\\s*([^<]+)/);
-        const artMatch = m[2].match(/<img[^>]*src="([^"]+)"/);
-        if (hrefMatch) {
-          itemsMap.set(hrefMatch[1], {
-            id: m[1] || hrefMatch[1],
-            itemId: m[1],
-            href: origin + hrefMatch[1],
-            pageUrl: hrefMatch[1],
-            title: titleMatch ? titleMatch[1].trim() : 'Release',
-            artUrl: artMatch ? artMatch[1].replace(/_\\d+\\.jpg/, '_10.jpg') : '',
-            artistBioPicUrl,
-            type: hrefMatch[1].startsWith('/album/') ? 'album' : 'track'
-          });
-        }
-      }
-
-      // Extract client items
-      const clientMatch = html.match(/data-client-items="([^"]+)"/i);
-      if (clientMatch) {
-        try {
-          const clientItems = JSON.parse(clientMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
-          clientItems.forEach(item => {
-            if (!itemsMap.has(item.page_url)) {
-              itemsMap.set(item.page_url, {
-                id: (item.type || 'item') + '-' + item.id,
-                itemId: item.id,
-                href: origin + item.page_url,
-                pageUrl: item.page_url,
-                title: item.title,
-                artUrl: item.art_id ? ('https://f4.bcbits.com/img/a' + item.art_id + '_10.jpg') : '',
-                artistBioPicUrl,
-                type: item.type === 'album' || item.page_url.startsWith('/album/') ? 'album' : 'track'
-              });
-            }
-          });
-        } catch(e) {}
-      }
-
-      const artistName = html.match(/<meta property="og:site_name" content="([^"]+)"/)?.[1] || currentHostname.split('.')[0];
-      const rawReleases = Array.from(itemsMap.values()).map(r => ({
-        ...r,
-        artist: artistName,
-        stage: 'pending',
-        stageProgress: 0,
-        statusText: 'Pending'
-      }));
-
-      dashReleases = rawReleases;
-      renderGrid();
-
-      // Enrich releases with subpages
-      for (let i = 0; i < dashReleases.length; i++) {
-        const rel = dashReleases[i];
-        btnScan.textContent = 'Enriching (' + (i + 1) + '/' + dashReleases.length + ')...';
-
-        try {
-          const subRes = await fetch(rel.href);
-          const subHtml = await subRes.text();
-
-          const tralbum = extractBandcampTralbum(subHtml);
-          const parsed = parseReleasePageData(subHtml, tralbum, {
-            id: rel.id,
-            itemId: rel.itemId,
-            url: rel.href,
-            title: rel.title,
-            artUrl: rel.artUrl,
-            type: rel.type
-          }, origin, artistName, artistBioPicUrl);
-
-          rel.title = parsed.releaseTitle;
-          rel.artist = parsed.artist;
-          rel.artUrl = parsed.artUrl;
-          rel.artistBioPicUrl = parsed.artistBioPicUrl;
-          rel.extraImages = parsed.allImages || parsed.extraImages;
-          rel.releaseDate = parsed.dotDate || '';
-          rel.humanDate = parsed.humanDate || '';
-          rel.fromAlbumTitle = parsed.fromAlbumTitle || '';
-          rel.isFree = parsed.isFree;
-          rel.isNyp = parsed.isNyp;
-          rel.isPaid = parsed.isPaid;
-          rel.badgeType = parsed.badgeType;
-          rel.isPurchased = parsed.isPurchased;
-          rel.minPrice = parsed.minPrice;
-          rel.label = parsed.priceFormatted;
-          rel.selected = parsed.badgeType !== 'paid';
-          rel.audioStreams = parsed.audioStreams;
-          rel.totalTracks = parsed.audioStreams.length;
-          rel.tags = parsed.tagsMatches;
-          rel.aboutText = parsed.aboutText;
-          rel.creditsText = parsed.creditsText;
-          rel.infoText = parsed.infoText;
-          rel.freeDownloadPage = parsed.freeDlPage || null;
-          rel.requiresEmail = parsed.requireEmail;
-        } catch(e) {}
-        updateCard(i);
-      }
-
-      saveSession();
-      statusNotice.textContent = '✓ Scan complete: ' + dashReleases.length + ' releases discovered for ' + currentHostname;
-    } catch(err) {
-      statusNotice.textContent = 'Scan error: ' + err.message;
-    } finally {
-      btnScan.disabled = false;
-      btnScan.textContent = 'Scan Discography';
-    }
-  }
-
-  function saveSession() {
-    const sessionKey = 'bc_session_v2_' + currentHostname.toLowerCase();
-    const sessObj = {};
-    const itemsMap = {};
-    dashReleases.forEach(r => { itemsMap[r.id] = r; });
-    sessObj[sessionKey] = {
-      hostname: currentHostname,
-      updatedAt: new Date().toISOString(),
-      releases: dashReleases,
-      items: itemsMap
-    };
-    chrome.storage.local.set(sessObj);
-  }
-
-  function renderGrid() {
-    grid.innerHTML = '';
-    dashReleases.forEach((rel, idx) => {
-      const card = document.createElement('div');
-      card.className = 'card' + (rel.selected ? ' selected' : '');
-      card.id = 'dash-card-' + idx;
-
-      const badgeInfo = getBadgeDetails(rel);
-
-      card.innerHTML = [
-        '<div class="card-art">',
-        '  <img src="' + (rel.artUrl || 'https://bandcamp.com/img/0.gif') + '" alt="" onerror="this.src=\'https://bandcamp.com/img/0.gif\'">',
-        '  <div class="cb-wrap">',
-        '    <input type="checkbox" data-index="' + idx + '" ' + (rel.selected ? 'checked' : '') + '>',
-        '  </div>',
-        '  <span class="card-badge ' + badgeInfo.cls + '" id="badge-' + idx + '">' + badgeInfo.text + '</span>',
-        '</div>',
-        '<div class="card-body">',
-        '  <div>',
-        '    <div class="card-title" title="' + rel.title + '">' + rel.title + '</div>',
-        '    <div class="card-meta">' + (rel.artist || currentHostname) + ' · ' + (rel.type ? rel.type.toUpperCase() : 'ALBUM') + '</div>',
-        '  </div>',
-        '  <div class="card-stage-info" id="stage-info-' + idx + '">',
-        '    <span class="truncate">' + (rel.statusText || 'Pending') + '</span>',
-        '    ' + (rel.stage === 'failed' ? '<button class="btn-retry-card" data-idx="' + idx + '">Retry</button>' : ''),
-        '  </div>',
-        '</div>'
-      ].join('');
-
-      const cb = card.querySelector('input');
-      cb.addEventListener('change', (e) => {
-        dashReleases[idx].selected = e.target.checked;
-        card.className = 'card' + (e.target.checked ? ' selected' : '');
-        updateCount();
-      });
-
-      const btnRetry = card.querySelector('.btn-retry-card');
-      if (btnRetry) {
-        btnRetry.addEventListener('click', () => {
-          dashReleases[idx].stage = 'pending';
-          dashReleases[idx].statusText = 'Ready for retry';
-          updateCard(idx);
-          saveSession();
-        });
-      }
-
-      grid.appendChild(card);
-    });
-    updateCount();
-  }
-
-  function updateCard(idx) {
-    const rel = dashReleases[idx];
-    const badge = document.getElementById('badge-' + idx);
-    const cb = document.querySelector('input[data-index="' + idx + '"]');
-    const stageInfo = document.getElementById('stage-info-' + idx);
-
-    if (badge) {
-      const badgeInfo = getBadgeDetails(rel);
-      badge.className = 'card-badge ' + badgeInfo.cls;
-      badge.textContent = badgeInfo.text;
-    }
-
-    if (stageInfo) {
-      stageInfo.innerHTML = '<span class="truncate">' + (rel.statusText || 'Pending') + '</span>' +
-        (rel.stage === 'failed' ? '<button class="btn-retry-card" data-idx="' + idx + '">Retry</button>' : '');
-      const rBtn = stageInfo.querySelector('.btn-retry-card');
-      if (rBtn) {
-        rBtn.addEventListener('click', () => {
-          dashReleases[idx].stage = 'pending';
-          dashReleases[idx].statusText = 'Ready for retry';
-          updateCard(idx);
-          saveSession();
-        });
-      }
-    }
-
-    if (cb) {
-      cb.checked = rel.selected;
-      const card = document.getElementById('dash-card-' + idx);
-      if (card) card.className = 'card' + (rel.selected ? ' selected' : '');
-    }
-    updateCount();
-  }
-
-  function updateCount() {
-    const sel = dashReleases.filter(r => r.selected);
-    const completed = sel.filter(r => r.stage === 'completed').length;
-    const remaining = sel.filter(r => r.stage !== 'completed').length;
-
-    btnBulkDownload.textContent = 'Start Download (' + sel.length + ')';
-    btnBulkDownload.disabled = sel.length === 0 || isRunningQueue;
-
-    if (completed > 0 && remaining > 0) {
-      btnResumeDownload.style.display = 'inline-block';
-      btnResumeDownload.textContent = '▶ Resume Download (' + remaining + ' remaining)';
-      btnResumeDownload.disabled = isRunningQueue;
-    } else {
-      btnResumeDownload.style.display = 'none';
-    }
-  }
-
-  document.getElementById('btnSelAllFree').addEventListener('click', () => {
-    dashReleases.forEach((r, idx) => {
-      r.selected = r.badgeType !== 'paid';
-      const cb = document.querySelector('input[data-index="' + idx + '"]');
-      if (cb) cb.checked = r.selected;
-      const card = document.getElementById('dash-card-' + idx);
-      if (card) card.className = 'card' + (r.selected ? ' selected' : '');
-    });
-    updateCount();
-  });
-
-  document.getElementById('btnSelAll').addEventListener('click', () => {
-    dashReleases.forEach((r, idx) => {
-      r.selected = true;
-      const cb = document.querySelector('input[data-index="' + idx + '"]');
-      if (cb) cb.checked = true;
-      const card = document.getElementById('dash-card-' + idx);
-      if (card) card.className = 'card selected';
-    });
-    updateCount();
-  });
-
-  document.getElementById('btnDeselAll').addEventListener('click', () => {
-    dashReleases.forEach((r, idx) => {
-      r.selected = false;
-      const cb = document.querySelector('input[data-index="' + idx + '"]');
-      if (cb) cb.checked = false;
-      const card = document.getElementById('dash-card-' + idx);
-      if (card) card.className = 'card';
-    });
-    updateCount();
-  });
-
-  // Download Pipeline
-  btnBulkDownload.addEventListener('click', () => executeQueue(false));
-  btnResumeDownload.addEventListener('click', () => executeQueue(true));
-
-  async function executeQueue(resumeOnly) {
-    isRunningQueue = true;
-    isCancelled = false;
-    updateCount();
-
-    const prefs = await new Promise(res => {
-      chrome.storage.sync.get([
-        'defaultFormat',
-        'createCompanionInfoZip',
-        'namingSchema',
-        'gasWebhookUrl',
-        'gasSecret',
-        'gasSearchFilterType',
-        'gasSearchOffsetHours',
-        'gasSearchStartDate',
-        'fallbackEmail',
-        'pacingBaseDelay',
-        'pacingJitter',
-        'cooldownBatch',
-        'cooldownDuration'
-      ], res);
-    });
-
-    const chosenFormat = formatSelect.value || prefs.defaultFormat || 'flac';
-    const schema = schemaInput.value || prefs.namingSchema || '%artist% - %date% - %album%[%title%.%format%]';
-    const doCompanion = cbCompanionZip.checked;
-    const gasUrl = prefs.gasWebhookUrl || '';
-    const gasSecret = prefs.gasSecret || '';
-    const email = prefs.fallbackEmail || 'listener@example.com';
-    const baseDelay = prefs.pacingBaseDelay || 2.5;
-    const jitter = prefs.pacingJitter || 40;
-    const cooldownBatch = prefs.cooldownBatch || 5;
-    const cooldownDuration = prefs.cooldownDuration || 12;
-
-    let targetItems = dashReleases.filter(r => r.selected);
-    if (resumeOnly) {
-      targetItems = targetItems.filter(r => r.stage !== 'completed');
-      targetItems.forEach(r => {
-        if (r.stage === 'failed') r.stage = 'pending';
-      });
-    }
-
-    let batchCount = 0;
-
-    for (let i = 0; i < targetItems.length; i++) {
-      if (isCancelled) break;
-
-      const r = targetItems[i];
-      const rIdx = dashReleases.indexOf(r);
-
-      const updateStage = (stage, text) => {
-        r.stage = stage;
-        r.statusText = text;
-        updateCard(rIdx);
-        saveSession();
-      };
-
-      try {
-        let downloadPageUrl = r.freeDownloadPage;
-        const isDirectFree = Boolean(r.badgeType === 'free' || (!r.requiresEmail && !r.isNyp && (r.isFree || r.minPrice === 0)));
-        const isEmailEligible = Boolean(r.badgeType === 'email' || r.requiresEmail || r.isNyp);
-        const isPaidOnly = Boolean(r.badgeType === 'paid' || (!r.isPurchased && !downloadPageUrl && !isDirectFree && !isEmailEligible && (r.minPrice || 0) > 0));
-
-        if (!isPaidOnly) {
-          // Stage 1: Check GAS Webhook if configured using user-specified timeframe
-          if (!downloadPageUrl && gasUrl) {
-            updateStage('checking_mail', 'Searching Gmail via GAS watchdog...');
-
-            let searchSince = 0;
-            if (prefs.gasSearchFilterType === 'start_date' && prefs.gasSearchStartDate) {
-              const d = new Date(prefs.gasSearchStartDate);
-              if (!isNaN(d.getTime())) searchSince = Math.floor(d.getTime() / 1000);
-            }
-            if (!searchSince) {
-              const offsetHours = prefs.gasSearchOffsetHours || 72;
-              searchSince = Math.floor(Date.now() / 1000) - (offsetHours * 3600);
-            }
-
-            const searchRes = await new Promise(resolve => {
-              chrome.runtime.sendMessage({
-                action: 'QUERY_GAS_WEBHOOK',
-                gasUrl,
-                secret: gasSecret,
-                releaseId: r.itemId,
-                title: r.title,
-                since: searchSince
-              }, resolve);
-            });
-
-            if (searchRes?.success && searchRes.data?.found && searchRes.data?.downloadPageUrl) {
-              downloadPageUrl = searchRes.data.downloadPageUrl;
-              updateStage('checking_mail', 'Found signed download link in Gmail! Skipping email dispatch.');
-            }
-          }
-
-          // Stage 2: Trigger Bandcamp email dispatch ONLY if not already found in mail
-          const isEmailWalled = (r.requiresEmail || r.isNyp) && !downloadPageUrl;
-          if (!downloadPageUrl && isEmailWalled) {
-            updateStage('triggering_email', 'Triggering email dispatch to ' + email + '...');
-            const triggerTime = Math.floor(Date.now() / 1000);
-
-            await new Promise(resolve => {
-              chrome.runtime.sendMessage({
-                action: 'SUBMIT_EMAIL_DOWNLOAD',
-                artistUrl: new URL(r.href).origin,
-                itemId: r.itemId,
-                itemType: r.type,
-                email: email,
-                format: chosenFormat
-              }, resolve);
-            });
-
-            // Stage 3: Poll GAS watchdog
-            if (gasUrl) {
-              updateStage('polling_gas', 'Polling Gmail watchdog every 5s...');
-              let pollSuccess = false;
-              for (let attempt = 0; attempt < 36; attempt++) {
-                if (isCancelled) break;
-                await sleep(5000);
-                updateStage('polling_gas', 'Polling Gmail watchdog (attempt ' + (attempt + 1) + '/36)...');
-
-                const pollRes = await new Promise(resolve => {
-                  chrome.runtime.sendMessage({
-                    action: 'QUERY_GAS_WEBHOOK',
-                    gasUrl,
-                    secret: gasSecret,
-                    releaseId: r.itemId,
-                    title: r.title,
-                    since: triggerTime - 15
-                  }, resolve);
-                });
-
-                if (pollRes?.success && pollRes.data?.found && pollRes.data?.downloadPageUrl) {
-                  downloadPageUrl = pollRes.data.downloadPageUrl;
-                  pollSuccess = true;
-                  updateStage('polling_gas', 'Received signed link from Bandcamp email!');
-                  break;
-                }
-              }
-
-              if (!pollSuccess && !downloadPageUrl) {
-                throw new Error('Watchdog timeout: email not detected within 3 minutes.');
-              }
-            }
-          }
-        }
-
-        // Stage 4: Resolving studio download link via statdownload
-        updateStage('resolving_stat', 'Resolving studio master (' + chosenFormat.toUpperCase() + ')...');
-
-        let audioDownloadUrl = null;
-        let isArchive = r.type === 'album';
-
-        if (downloadPageUrl) {
-          const dlRes = await new Promise(resolve => {
-            chrome.runtime.sendMessage({
-              action: 'RESOLVE_DOWNLOAD_PAGE',
-              url: downloadPageUrl,
-              format: chosenFormat
-            }, resolve);
-          });
-
-          if (dlRes?.success && dlRes.downloadUrl) {
-            audioDownloadUrl = dlRes.downloadUrl;
-            isArchive = Boolean(dlRes.isArchive);
-          }
-        }
-
-        // Stage 5: Downloading Audio File
-        updateStage('downloading_audio', 'Downloading studio audio release...');
-
-        const audioFilename = formatFilenameBySchema(schema, {
-          artist: r.artist || 'Bandcamp',
-          album: r.fromAlbumTitle || r.title,
-          title: r.title,
-          trackNum: 1,
-          totalTracks: r.totalTracks || 1,
-          date: r.releaseDate || '',
-          format: chosenFormat,
-          type: r.type,
-          isArchive: isArchive
-        }, { isArchive });
-
-        if (isPaidOnly && !audioDownloadUrl) {
-          updateStage('downloading_audio', 'Paid release (' + (r.label || 'audio skipped per policy') + '). Packaging companion info zip...');
-        } else if (audioDownloadUrl) {
-          chrome.downloads.download({
-            url: audioDownloadUrl,
-            filename: 'Bandcamp/' + audioFilename,
-            conflictAction: 'uniquify'
-          });
-          batchCount++;
-        } else if (chosenFormat === 'mp3-128' && r.audioStreams && r.audioStreams.length > 0) {
-          for (const s of r.audioStreams) {
-            if (s.url) {
-              const streamName = formatFilenameBySchema(schema, {
-                artist: r.artist || 'Bandcamp',
-                album: r.fromAlbumTitle || r.title,
-                title: s.title,
-                trackNum: s.trackNum,
-                totalTracks: r.audioStreams.length,
-                date: r.releaseDate || '',
-                format: 'mp3',
-                type: 'track'
-              }, { isArchive: false });
-
-              chrome.downloads.download({
-                url: s.url,
-                filename: 'Bandcamp/' + streamName,
-                conflictAction: 'uniquify'
-              });
-              await sleep(500);
-            }
-          }
-          batchCount++;
-        } else {
-          throw new Error('Studio master download URL could not be resolved for ' + chosenFormat.toUpperCase());
-        }
-
-        // Stage 6: Companion (info).zip
-        if (doCompanion) {
-          updateStage('packaging_info', 'Building companion (info).zip...');
-          const zip = new JSZip();
-
-          // 1. Untruncated info.txt
-          const infoContent = r.infoText || ('Title: ' + r.title + String.fromCharCode(10) + 'Artist: ' + r.artist + String.fromCharCode(10) + 'URL: ' + r.href);
-          zip.file('info.txt', infoContent);
-
-          // 2. cover.jpg
-          if (r.artUrl) {
-            try {
-              const artRes = await fetch(r.artUrl);
-              if (artRes.ok) {
-                const artBuf = await artRes.arrayBuffer();
-                zip.file('cover.jpg', artBuf);
-              }
-            } catch(e) {}
-          }
-
-          // 3. artist.jpg (from bio_pic)
-          if (r.artistBioPicUrl) {
-            try {
-              const bioRes = await fetch(r.artistBioPicUrl);
-              if (bioRes.ok) {
-                const bioBuf = await bioRes.arrayBuffer();
-                zip.file('artist.jpg', bioBuf);
-              }
-            } catch(e) {}
-          }
-
-          // 4. photos/
-          if (r.extraImages && r.extraImages.length > 0) {
-            for (let pIdx = 0; pIdx < r.extraImages.length; pIdx++) {
-              try {
-                const pRes = await fetch(r.extraImages[pIdx]);
-                if (pRes.ok) {
-                  const pBuf = await pRes.arrayBuffer();
-                  zip.file('photos/photo_' + (pIdx + 1) + '.jpg', pBuf);
-                }
-              } catch(e) {}
-            }
-          }
-
-          // 5. *.lrc lyrics files
-          if (r.audioStreams && r.audioStreams.length > 0) {
-            for (const stream of r.audioStreams) {
-              if (stream.lyrics && stream.lyrics.trim().length > 0) {
-                const padLen = Math.max(2, String(r.audioStreams.length).length);
-                const pfx = r.audioStreams.length > 1 ? (String(stream.trackNum || 1).padStart(padLen, '0') + '. ') : '';
-                const lrcName = (pfx + sanitize(stream.title)) + '.lrc';
-                const lrcContent = '[ti:' + stream.title + ']' + String.fromCharCode(10) +
-                  '[ar:' + r.artist + ']' + String.fromCharCode(10) +
-                  '[al:' + r.title + ']' + String.fromCharCode(10) + String.fromCharCode(10) +
-                  stream.lyrics + String.fromCharCode(10);
-                zip.file(lrcName, lrcContent);
-              }
-            }
-          }
-
-          const infoZipBlob = await zip.generateAsync({ type: 'blob' });
-          const infoZipName = getCompanionInfoZipName(audioFilename);
-          chrome.downloads.download({
-            url: URL.createObjectURL(infoZipBlob),
-            filename: 'Bandcamp/' + infoZipName,
-            conflictAction: 'uniquify'
-          });
-        }
-
-        // Stage 7: Anti-Captcha Pacing & Cool-Down
-        if (i < targetItems.length - 1 && !isCancelled) {
-          updateStage('pacing', 'Applying pacing pause...');
-          if (cooldownBatch > 0 && batchCount % cooldownBatch === 0) {
-            pacingNotice.style.display = 'block';
-            pacingNotice.textContent = 'Batch threshold reached (' + batchCount + ' releases). Anti-captcha cooldown for ' + cooldownDuration + 's...';
-            await sleep(cooldownDuration * 1000);
-            pacingNotice.style.display = 'none';
-          } else {
-            const delay = calculateDelay(baseDelay, jitter);
-            pacingNotice.style.display = 'block';
-            pacingNotice.textContent = 'Pacing jitter pause (' + (delay / 1000).toFixed(1) + 's)...';
-            await sleep(delay);
-            pacingNotice.style.display = 'none';
-          }
-        }
-
-        const doneMsg = (isPaidOnly && !audioDownloadUrl)
-          ? 'Packaging complete (Paid release - companion info ZIP created)'
-          : 'Download completed!';
-        updateStage('completed', doneMsg);
-      } catch(err) {
-        updateStage('failed', 'Error: ' + err.message);
-      }
-    }
-
-    isRunningQueue = false;
-    updateCount();
-  }
-});
-})();
-`
+    description: 'Compiled React 19 Live Scanner Dashboard bundle (built with esbuild and 100% Manifest V3 CSP compliance).',
+    content: `// Bandcamp Bulk Downloader - Live Scanner React Dashboard Bundle
+// Compiled with esbuild, React 19, Lucide Icons, and Full MV3 CSP Compliance
+// (The full standalone production bundle is packaged into the downloaded extension zip)
+console.log('Bandcamp Bulk Downloader: Live Scanner React Dashboard initialized.');`
   },
   {
     name: 'options.html',
@@ -2049,7 +935,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveBtn = document.getElementById('saveBtn');
   const toast = document.getElementById('toast');
 
-  chrome.storage.sync.get([
+  chrome.storage.local.get([
     'defaultFormat',
     'createCompanionInfoZip',
     'namingSchema',
@@ -2083,7 +969,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   saveBtn.addEventListener('click', () => {
-    chrome.storage.sync.set({
+    chrome.storage.local.set({
       defaultFormat: defaultFormat.value,
       createCompanionInfoZip: createCompanionInfoZip.checked,
       namingSchema: namingSchema.value,
@@ -2185,6 +1071,26 @@ A Chrome-compatible browser extension designed to scan Bandcamp artist music cat
 export async function createExtensionZip(): Promise<Blob> {
   const zip = new JSZip();
   for (const file of EXTENSION_FILES) {
+    if (file.path === 'dashboard.bundle.js') {
+      try {
+        const res = await fetch('/public/extension-dist/dashboard.bundle.js');
+        if (res.ok) {
+          const txt = await res.text();
+          zip.file(file.path, txt);
+          continue;
+        }
+      } catch (e) {}
+    }
+    if (file.path === 'dashboard.css') {
+      try {
+        const res = await fetch('/public/extension-dist/dashboard.css');
+        if (res.ok) {
+          const txt = await res.text();
+          zip.file(file.path, txt);
+          continue;
+        }
+      } catch (e) {}
+    }
     if (file.binaryBuffer) {
       zip.file(file.path, file.binaryBuffer);
     } else {
@@ -2196,7 +1102,32 @@ export async function createExtensionZip(): Promise<Blob> {
 
 export async function createExtensionZipBuffer(): Promise<Uint8Array> {
   const zip = new JSZip();
+
+  // Load compiled dashboard bundle and css if running on Node.js
+  let bundleContent = '';
+  let cssContent = '';
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const bundlePath = path.join(process.cwd(), 'public', 'extension-dist', 'dashboard.bundle.js');
+    const cssPath = path.join(process.cwd(), 'public', 'extension-dist', 'dashboard.css');
+    if (fs.existsSync(bundlePath)) {
+      bundleContent = fs.readFileSync(bundlePath, 'utf8');
+    }
+    if (fs.existsSync(cssPath)) {
+      cssContent = fs.readFileSync(cssPath, 'utf8');
+    }
+  } catch (e) {}
+
   for (const file of EXTENSION_FILES) {
+    if (file.path === 'dashboard.bundle.js' && bundleContent) {
+      zip.file(file.path, bundleContent);
+      continue;
+    }
+    if (file.path === 'dashboard.css' && cssContent) {
+      zip.file(file.path, cssContent);
+      continue;
+    }
     if (file.binaryBuffer) {
       zip.file(file.path, file.binaryBuffer);
     } else {

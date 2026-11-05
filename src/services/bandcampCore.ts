@@ -1,8 +1,16 @@
 // Core Bandcamp Processing Engine (Unified Single Source of Truth for Server, Client, and Extension)
 
 export const BANDCAMP_FETCH_HEADERS: Record<string, string> = {
-  'User-Agent': 'curl/8.4.0',
-  'Accept': '*/*',
+  'User-Agent':
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  'Accept':
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1',
 };
 
 export interface ParsedReleaseDetails {
@@ -439,20 +447,53 @@ export async function resolveBandcampDownload(
   error?: string;
 }> {
   try {
-    const dlRes = await fetch(downloadPageUrl, {
+    const cleanUrl = downloadPageUrl.replace(/&amp;/g, '&').trim();
+    const dlRes = await fetch(cleanUrl, {
       headers: {
         ...BANDCAMP_FETCH_HEADERS,
-        Referer: downloadPageUrl,
+        Referer: cleanUrl,
       },
     });
 
     if (!dlRes.ok) throw new Error(`Download page HTTP ${dlRes.status}`);
 
-    const dlHtml = await dlRes.text();
-    const blobMatch = dlHtml.match(/data-blob="([^"]+)"/);
-    if (!blobMatch) throw new Error('No data-blob found on download page');
+    // Capture session cookies to pass along to statdownload / popplers CDN
+    let cookieHeader = '';
+    if (typeof (dlRes.headers as any).getSetCookie === 'function') {
+      const cookies = (dlRes.headers as any).getSetCookie();
+      if (Array.isArray(cookies) && cookies.length > 0) {
+        cookieHeader = cookies.map((c: string) => c.split(';')[0]).join('; ');
+      }
+    } else {
+      const sc = dlRes.headers.get('set-cookie');
+      if (sc) cookieHeader = sc.split(';')[0];
+    }
 
-    const blob = JSON.parse(blobMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+    const dlHtml = await dlRes.text();
+    let blob: any = null;
+    const doubleQuoteMatch = dlHtml.match(/data-blob="([^"]+)"/);
+    const singleQuoteMatch = dlHtml.match(/data-blob='([^']+)'/);
+    if (doubleQuoteMatch) {
+      try {
+        blob = JSON.parse(doubleQuoteMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'"));
+      } catch (e) {}
+    } else if (singleQuoteMatch) {
+      try {
+        blob = JSON.parse(singleQuoteMatch[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
+      } catch (e) {}
+    }
+
+    if (!blob) {
+      const pagedataMatch = dlHtml.match(/var\s+pagedata\s*=\s*(\{[\s\S]*?\})\s*;/);
+      if (pagedataMatch) {
+        try {
+          blob = JSON.parse(pagedataMatch[1]);
+        } catch (e) {}
+      }
+    }
+
+    if (!blob) throw new Error('No data-blob found on download page. Please verify that the download link is active.');
+
     const digitalItem = blob?.digital_items?.[0];
     const downloads = digitalItem?.downloads;
     if (!downloads) throw new Error('No downloads object found in digital_items');
@@ -472,6 +513,27 @@ export async function resolveBandcampDownload(
 
     if (!target?.url) throw new Error('No target download URL available');
 
+    let finalUrl = '';
+
+    // Direct check: Bandcamp single tracks and prepared archives often return immediate HTTP 302 redirect
+    try {
+      const directCheck = await fetch(target.url, {
+        method: 'GET',
+        headers: {
+          ...BANDCAMP_FETCH_HEADERS,
+          Referer: cleanUrl,
+          ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        },
+        redirect: 'manual',
+      });
+      if ([301, 302, 303, 307, 308].includes(directCheck.status)) {
+        const loc = directCheck.headers.get('location');
+        if (loc) {
+          finalUrl = loc;
+        }
+      }
+    } catch (e) {}
+
     // Helper to call statdownload
     async function callStat(urlToStat: string): Promise<any> {
       try {
@@ -487,7 +549,8 @@ export async function resolveBandcampDownload(
         const res = await fetch(statUrl, {
           headers: {
             ...BANDCAMP_FETCH_HEADERS,
-            Referer: downloadPageUrl,
+            Referer: cleanUrl,
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
           },
         });
 
@@ -500,29 +563,51 @@ export async function resolveBandcampDownload(
       return null;
     }
 
-    let stat = await callStat(target.url);
+    if (!finalUrl) {
+      let stat = await callStat(target.url);
 
-    // Poll statdownload when Bandcamp is preparing archive ("busy") or following retry_url
-    let attempts = 0;
-    while (
-      stat &&
-      (stat.result === 'busy' || (!stat.download_url && stat.retry_url)) &&
-      attempts < 25
-    ) {
-      attempts++;
-      await new Promise(r => setTimeout(r, 1500));
-      stat = await callStat(stat.retry_url || target.url);
-      if (stat?.result === 'ok' && stat?.download_url) {
-        break;
+      // Poll statdownload when Bandcamp is preparing archive ("busy") or following retry_url
+      let attempts = 0;
+      while (
+        stat &&
+        (stat.result === 'busy' || (!stat.download_url && stat.retry_url)) &&
+        attempts < 25
+      ) {
+        attempts++;
+        await new Promise(r => setTimeout(r, 1500));
+        stat = await callStat(stat.retry_url || target.url);
+        if (stat?.result === 'ok' && stat?.download_url) {
+          break;
+        }
+      }
+
+      if (stat?.download_url) {
+        finalUrl = stat.download_url;
       }
     }
 
-    const finalUrl = stat?.download_url;
+    // Final attempt if still no URL: check target.url redirect once more
+    if (!finalUrl) {
+      try {
+        const retryCheck = await fetch(target.url, {
+          method: 'GET',
+          headers: {
+            ...BANDCAMP_FETCH_HEADERS,
+            Referer: cleanUrl,
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+          },
+          redirect: 'manual',
+        });
+        if ([301, 302, 303, 307, 308].includes(retryCheck.status)) {
+          const loc = retryCheck.headers.get('location');
+          if (loc) finalUrl = loc;
+        }
+      } catch (e) {}
+    }
+
     if (!finalUrl) {
       throw new Error(
-        stat?.result === 'err'
-          ? `Bandcamp error: ${stat.errortype || 'Download link preparation failed'}`
-          : 'Archive preparation timed out on Bandcamp server. Please retry.'
+        'Archive preparation timed out on Bandcamp server. Please retry.'
       );
     }
 
