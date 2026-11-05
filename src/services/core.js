@@ -165,29 +165,37 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
   var isFree = false;
   var isNyp = false;
   var isPaid = false;
+  var badgeType = 'free';
 
   if (isPurchased) {
     isFree = true;
-  } else if (Boolean(freeDlPage)) {
+    badgeType = 'own';
+  } else if (Boolean(freeDlPage) || (minPrice === 0 && current && current.download_pref === 1 && !requireEmail) || (hasFreeButton && !requireEmail)) {
     isFree = true;
+    badgeType = 'free';
+  } else if (requireEmail || hasNypText) {
+    isNyp = Boolean(hasNypText);
+    badgeType = 'email';
   } else if (minPrice > 0) {
     isPaid = true;
-  } else if (hasNypText) {
-    isNyp = true;
+    badgeType = 'paid';
   } else {
     isFree = true;
+    badgeType = 'free';
   }
 
+  var cur = (current && current.currency) || 'EUR';
+  var curSymbol = cur === 'EUR' ? '€' : (cur === 'USD' ? '$' : (cur === 'GBP' ? '£' : cur));
+
   var priceFormatted = 'Paid';
-  if (isPurchased) {
-    priceFormatted = 'You Own It';
-  } else if (isFree) {
-    priceFormatted = 'Free Download';
-  } else if (isNyp) {
-    priceFormatted = 'Name Your Price ($0+)';
-  } else if (minPrice > 0) {
-    var cur = (current && current.currency) || 'EUR';
-    priceFormatted = cur + ' ' + minPrice;
+  if (badgeType === 'own') {
+    priceFormatted = 'Own';
+  } else if (badgeType === 'free') {
+    priceFormatted = 'Free';
+  } else if (badgeType === 'email') {
+    priceFormatted = minPrice > 0 ? ('Email (' + curSymbol + minPrice + ')') : 'Email';
+  } else if (badgeType === 'paid') {
+    priceFormatted = minPrice > 0 ? ('Paid (' + curSymbol + minPrice + ')') : 'Paid';
   }
 
   // Audio streams, durations, and lyrics
@@ -358,6 +366,7 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
     isNyp: isNyp,
     isPurchased: isPurchased,
     isPaid: isPaid,
+    badgeType: badgeType,
     minPrice: minPrice,
     priceFormatted: priceFormatted,
     requireEmail: requireEmail,

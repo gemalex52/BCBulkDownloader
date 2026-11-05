@@ -582,7 +582,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       <div class="controls-row">
         <div class="filters">
-          <button id="btnSelAllFree" class="pill-btn active">Select All Free / NYP</button>
+          <button id="btnSelAllFree" class="pill-btn active">Select Free & Email</button>
           <button id="btnSelAll" class="pill-btn">Select All</button>
           <button id="btnDeselAll" class="pill-btn">Deselect All</button>
         </div>
@@ -911,9 +911,11 @@ select {
   border-radius: 4px;
   text-transform: uppercase;
 }
-.badge-free { background: #064e3b; color: #6ee7b7; }
-.badge-nyp { background: #78350f; color: #fde68a; }
-.badge-paid { background: #334155; color: #94a3b8; }
+.badge-free { background: #064e3b; color: #6ee7b7; border: 1px solid #059669; }
+.badge-email { background: #083344; color: #67e8f9; border: 1px solid #0284c7; }
+.badge-nyp { background: #78350f; color: #fde68a; border: 1px solid #d97706; }
+.badge-own { background: #3b0764; color: #d8b4fe; border: 1px solid #7e22ce; }
+.badge-paid { background: #451a03; color: #fcd34d; border: 1px solid #b45309; }
 .badge-completed { background: #064e3b; color: #6ee7b7; }
 .badge-failed { background: #7f1d1d; color: #fca5a5; }
 .badge-progress { background: #0369a1; color: #bae6fd; }
@@ -1035,29 +1037,44 @@ select {
     path: 'dashboard.js',
     language: 'javascript',
     description: 'Dashboard controller managing multi-site queue persistence, companion info zip builder, GAS email polling, and pacing.',
-    content: `// Bandcamp Live Scanner Dashboard - Multi-Site Persistent Controller
-let dashReleases = [];
-let currentHostname = 'esoctrilihum.bandcamp.com';
-let isRunningQueue = false;
-let isCancelled = false;
+    content: `(function() {
+  'use strict';
+  // Bandcamp Live Scanner Dashboard - Multi-Site Persistent Controller
+  let dashReleases = [];
+  let currentHostname = 'esoctrilihum.bandcamp.com';
+  let isRunningQueue = false;
+  let isCancelled = false;
 
-// GAS Script Template Embedded
-const GAS_CODE_GS = ${JSON.stringify(GAS_SCRIPT_TEMPLATE)};
+  // GAS Script Template Embedded
+  const GAS_CODE_GS = ${JSON.stringify(GAS_SCRIPT_TEMPLATE)};
 
-// Inherit single source of truth from core.js
-const {
-  formatFilenameBySchema,
-  getCompanionInfoZipName,
-  parseReleasePageData,
-  extractBandcampTralbum,
-  extractArtistBioPicUrl,
-  cleanHtmlText,
-  formatDateToDotString,
-} = window.BandcampCore || globalThis;
+  // Inherit single source of truth from core.js (namespaced to avoid global collisions)
+  const core = window.BandcampCore || globalThis.BandcampCore || {};
+  const formatFilenameBySchema = core.formatFilenameBySchema || function() { return ''; };
+  const getCompanionInfoZipName = core.getCompanionInfoZipName || function(f) { return f + ' (info).zip'; };
+  const parseReleasePageData = core.parseReleasePageData;
+  const extractBandcampTralbum = core.extractBandcampTralbum;
+  const extractArtistBioPicUrl = core.extractArtistBioPicUrl;
+  const cleanHtmlText = core.cleanHtmlText || function(t) { return t || ''; };
+  const formatDateToDotString = core.formatDateToDotString || function(d) { return d || ''; };
 
-function sanitize(s) {
-  return cleanHtmlText(s).replace(/[:*?"<>|/]/g, '_').trim();
-}
+  function sanitize(s) {
+    return cleanHtmlText(s).replace(/[:*?"<>|/]/g, '_').trim();
+  }
+
+  function getBadgeDetails(rel) {
+    if (rel.stage === 'completed') return { cls: 'badge-completed', text: 'Done' };
+    if (rel.stage === 'failed') return { cls: 'badge-failed', text: 'Failed' };
+    if (rel.stage && rel.stage !== 'pending') return { cls: 'badge-progress', text: rel.stage };
+    if (rel.isPurchased || rel.badgeType === 'own') return { cls: 'badge-own', text: 'Own' };
+    if (rel.badgeType === 'free' || (rel.isFree && !rel.requiresEmail && !rel.isNyp)) return { cls: 'badge-free', text: 'Free' };
+    if (rel.badgeType === 'email' || rel.requiresEmail || rel.isNyp) {
+      const curSym = (rel.currency === 'EUR' || !rel.currency) ? '€' : (rel.currency === 'USD' ? '$' : (rel.currency === 'GBP' ? '£' : rel.currency));
+      return { cls: 'badge-email', text: rel.minPrice > 0 ? ('Email (' + curSym + rel.minPrice + ')') : 'Email' };
+    }
+    const curSym = (rel.currency === 'EUR' || !rel.currency) ? '€' : (rel.currency === 'USD' ? '$' : (rel.currency === 'GBP' ? '£' : rel.currency));
+    return { cls: 'badge-paid', text: rel.minPrice > 0 ? ('Paid (' + curSym + rel.minPrice + ')') : 'Paid' };
+  }
 
 function calculateDelay(base, jitterPercent) {
   const baseMs = Math.max(500, base * 1000);
@@ -1351,10 +1368,11 @@ document.addEventListener('DOMContentLoaded', () => {
           rel.isFree = parsed.isFree;
           rel.isNyp = parsed.isNyp;
           rel.isPaid = parsed.isPaid;
+          rel.badgeType = parsed.badgeType;
           rel.isPurchased = parsed.isPurchased;
           rel.minPrice = parsed.minPrice;
           rel.label = parsed.priceFormatted;
-          rel.selected = parsed.isFree || parsed.isNyp;
+          rel.selected = parsed.badgeType !== 'paid';
           rel.audioStreams = parsed.audioStreams;
           rel.totalTracks = parsed.audioStreams.length;
           rel.tags = parsed.tagsMatches;
@@ -1398,20 +1416,15 @@ document.addEventListener('DOMContentLoaded', () => {
       card.className = 'card' + (rel.selected ? ' selected' : '');
       card.id = 'dash-card-' + idx;
 
-      let badgeClass = 'badge-paid';
-      if (rel.stage === 'completed') badgeClass = 'badge-completed';
-      else if (rel.stage === 'failed') badgeClass = 'badge-failed';
-      else if (rel.stage && rel.stage !== 'pending') badgeClass = 'badge-progress';
-      else if (rel.isFree) badgeClass = 'badge-free';
-      else if (rel.isNyp) badgeClass = 'badge-nyp';
+      const badgeInfo = getBadgeDetails(rel);
 
       card.innerHTML = [
         '<div class="card-art">',
-        '  <img src="' + (rel.artUrl || 'https://bandcamp.com/img/0.gif') + '" alt="" onerror="this.src=\\'https://bandcamp.com/img/0.gif\\'">',
+        '  <img src="' + (rel.artUrl || 'https://bandcamp.com/img/0.gif') + '" alt="" onerror="this.src=\'https://bandcamp.com/img/0.gif\'">',
         '  <div class="cb-wrap">',
         '    <input type="checkbox" data-index="' + idx + '" ' + (rel.selected ? 'checked' : '') + '>',
         '  </div>',
-        '  <span class="card-badge ' + badgeClass + '" id="badge-' + idx + '">' + (rel.stage !== 'pending' ? rel.stage : (rel.label || 'Checking')) + '</span>',
+        '  <span class="card-badge ' + badgeInfo.cls + '" id="badge-' + idx + '">' + badgeInfo.text + '</span>',
         '</div>',
         '<div class="card-body">',
         '  <div>',
@@ -1454,15 +1467,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const stageInfo = document.getElementById('stage-info-' + idx);
 
     if (badge) {
-      let bClass = 'badge-paid';
-      if (rel.stage === 'completed') bClass = 'badge-completed';
-      else if (rel.stage === 'failed') bClass = 'badge-failed';
-      else if (rel.stage && rel.stage !== 'pending') bClass = 'badge-progress';
-      else if (rel.isFree) bClass = 'badge-free';
-      else if (rel.isNyp) bClass = 'badge-nyp';
-
-      badge.className = 'card-badge ' + bClass;
-      badge.textContent = rel.stage !== 'pending' ? rel.stage : (rel.label || 'Checking');
+      const badgeInfo = getBadgeDetails(rel);
+      badge.className = 'card-badge ' + badgeInfo.cls;
+      badge.textContent = badgeInfo.text;
     }
 
     if (stageInfo) {
@@ -1506,7 +1513,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btnSelAllFree').addEventListener('click', () => {
     dashReleases.forEach((r, idx) => {
-      r.selected = r.isFree || r.isNyp;
+      r.selected = r.badgeType !== 'paid';
       const cb = document.querySelector('input[data-index="' + idx + '"]');
       if (cb) cb.checked = r.selected;
       const card = document.getElementById('dash-card-' + idx);
@@ -1600,9 +1607,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       try {
         let downloadPageUrl = r.freeDownloadPage;
-        const isPaidRelease = Boolean(r.isPaid || (!r.isFree && !r.isPurchased && r.minPrice > 0) || (r.minPrice > 0 && !r.isPurchased && !downloadPageUrl));
+        const isDirectFree = Boolean(r.badgeType === 'free' || (!r.requiresEmail && !r.isNyp && (r.isFree || r.minPrice === 0)));
+        const isEmailEligible = Boolean(r.badgeType === 'email' || r.requiresEmail || r.isNyp);
+        const isPaidOnly = Boolean(r.badgeType === 'paid' || (!r.isPurchased && !downloadPageUrl && !isDirectFree && !isEmailEligible && (r.minPrice || 0) > 0));
 
-        if (!isPaidRelease) {
+        if (!isPaidOnly) {
           // Stage 1: Check GAS Webhook if configured using user-specified timeframe
           if (!downloadPageUrl && gasUrl) {
             updateStage('checking_mail', 'Searching Gmail via GAS watchdog...');
@@ -1722,7 +1731,7 @@ document.addEventListener('DOMContentLoaded', () => {
           isArchive: isArchive
         }, { isArchive });
 
-        if ((isPaidRelease || r.isPaid) && !audioDownloadUrl) {
+        if (isPaidOnly && !audioDownloadUrl) {
           updateStage('downloading_audio', 'Paid release (' + (r.label || 'audio skipped per policy') + '). Packaging companion info zip...');
         } else if (audioDownloadUrl) {
           chrome.downloads.download({
@@ -1844,7 +1853,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
 
-        const doneMsg = ((isPaidRelease || r.isPaid) && !audioDownloadUrl)
+        const doneMsg = (isPaidOnly && !audioDownloadUrl)
           ? 'Packaging complete (Paid release - companion info ZIP created)'
           : 'Download completed!';
         updateStage('completed', doneMsg);
@@ -1857,6 +1866,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateCount();
   }
 });
+})();
 `
   },
   {
@@ -2018,10 +2028,12 @@ document.addEventListener('DOMContentLoaded', () => {
     path: 'options.js',
     language: 'javascript',
     description: 'Options page controller handling chrome.storage.sync persistence.',
-    content: `// Bandcamp Bulk Downloader - Options Script
-const GAS_CODE_GS = ${JSON.stringify(GAS_SCRIPT_TEMPLATE)};
+    content: `(function() {
+  'use strict';
+  // Bandcamp Bulk Downloader - Options Script
+  const GAS_CODE_GS = ${JSON.stringify(GAS_SCRIPT_TEMPLATE)};
 
-document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', () => {
   const defaultFormat = document.getElementById('defaultFormat');
   const createCompanionInfoZip = document.getElementById('createCompanionInfoZip');
   const namingSchema = document.getElementById('namingSchema');
@@ -2090,6 +2102,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 });
+})();
 `
   },
   {

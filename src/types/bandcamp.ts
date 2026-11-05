@@ -23,6 +23,7 @@ export interface ScannedRelease {
   isNameYourPrice: boolean;
   isPurchased?: boolean;
   isPaid?: boolean;
+  badgeType?: 'own' | 'free' | 'email' | 'paid';
   minPrice: number;
   currency: string;
   priceFormatted: string;
@@ -109,6 +110,7 @@ export interface QueueItem {
   isNameYourPrice: boolean;
   isPurchased?: boolean;
   isPaid?: boolean;
+  badgeType?: 'own' | 'free' | 'email' | 'paid';
   minPrice?: number;
   requiresEmail: boolean;
   stage: QueueItemStage;

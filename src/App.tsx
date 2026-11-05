@@ -309,7 +309,7 @@ export default function App() {
     setReleases((prev) =>
       prev.map((r) => ({
         ...r,
-        selected: r.isFree || r.isNameYourPrice,
+        selected: r.badgeType !== 'paid' && (r.isFree || r.isNameYourPrice || r.requiresEmail || r.isPurchased || r.badgeType === 'free' || r.badgeType === 'email' || r.badgeType === 'own'),
       }))
     );
   };
@@ -375,14 +375,14 @@ export default function App() {
 
       try {
         let downloadPageUrl = qItem.freeDownloadPageUrl || rel.freeDownloadPageUrl;
-        const isPaidRelease = Boolean(
-          qItem.isPaid ||
-          rel.isPaid ||
-          (!qItem.isFree && !qItem.isNameYourPrice && (qItem.minPrice || 0) > 0) ||
-          (qItem.minPrice != null && qItem.minPrice > 0)
+        const isEmailEligible = Boolean(qItem.requiresEmail || rel.requiresEmail || qItem.isNameYourPrice || rel.isNameYourPrice || qItem.badgeType === 'email' || rel.badgeType === 'email');
+        const isDirectFree = Boolean(downloadPageUrl || qItem.isPurchased || rel.isPurchased || qItem.badgeType === 'own' || rel.badgeType === 'own' || (!isEmailEligible && (qItem.isFree || rel.isFree || qItem.badgeType === 'free' || rel.badgeType === 'free')));
+        const isPaidOnly = Boolean(
+          (qItem.badgeType === 'paid' || rel.badgeType === 'paid') ||
+          (!isDirectFree && !isEmailEligible && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0 || qItem.isPaid || rel.isPaid))
         );
 
-        if (!isPaidRelease) {
+        if (!isPaidOnly) {
           // Stage 1: Checking Mailbox via GAS watchdog if configured
           if (!downloadPageUrl && settings.gasWebhookUrl.trim()) {
             logAndSync('checking_mail', 'Searching Gmail via GAS watchdog for existing download link...');

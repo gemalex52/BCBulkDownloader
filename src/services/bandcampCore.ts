@@ -18,6 +18,7 @@ export interface ParsedReleaseDetails {
   isNyp: boolean;
   isPurchased: boolean;
   isPaid: boolean;
+  badgeType: 'own' | 'free' | 'email' | 'paid';
   minPrice: number;
   priceFormatted: string;
   requireEmail: boolean;
@@ -198,29 +199,40 @@ export function parseReleasePageData(
   let isFree = false;
   let isNyp = false;
   let isPaid = false;
+  let badgeType: 'own' | 'free' | 'email' | 'paid' = 'free';
 
   if (isPurchased) {
     isFree = true;
-  } else if (Boolean(freeDlPage)) {
+    badgeType = 'own';
+  } else if (Boolean(freeDlPage) || (minPrice === 0 && current?.download_pref === 1 && !requireEmail) || (hasFreeButton && !requireEmail)) {
+    // Direct free download without email
     isFree = true;
+    badgeType = 'free';
+  } else if (requireEmail || hasNypText) {
+    // Email is sufficient for download (even if minPrice > 0, paying is optional)
+    isNyp = hasNypText;
+    badgeType = 'email';
   } else if (minPrice > 0) {
+    // Strictly paid-only: requires payment, no email or free download option
     isPaid = true;
-  } else if (hasNypText) {
-    isNyp = true;
+    badgeType = 'paid';
   } else {
     isFree = true;
+    badgeType = 'free';
   }
 
+  const cur = current?.currency || 'EUR';
+  const curSymbol = cur === 'EUR' ? '€' : (cur === 'USD' ? '$' : (cur === 'GBP' ? '£' : cur));
+
   let priceFormatted = 'Paid';
-  if (isPurchased) {
-    priceFormatted = 'You Own It';
-  } else if (isFree) {
-    priceFormatted = 'Free Download';
-  } else if (isNyp) {
-    priceFormatted = 'Name Your Price ($0+)';
-  } else if (minPrice > 0) {
-    const cur = current?.currency || 'EUR';
-    priceFormatted = `${cur} ${minPrice}`;
+  if (badgeType === 'own') {
+    priceFormatted = 'Own';
+  } else if (badgeType === 'free') {
+    priceFormatted = 'Free';
+  } else if (badgeType === 'email') {
+    priceFormatted = minPrice > 0 ? `Email (${curSymbol}${minPrice})` : 'Email';
+  } else if (badgeType === 'paid') {
+    priceFormatted = minPrice > 0 ? `Paid (${curSymbol}${minPrice})` : 'Paid';
   }
 
   // Audio streams, durations, and lyrics
@@ -394,6 +406,7 @@ export function parseReleasePageData(
     isNyp,
     isPurchased,
     isPaid,
+    badgeType,
     minPrice,
     priceFormatted,
     requireEmail,

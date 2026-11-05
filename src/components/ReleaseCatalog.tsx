@@ -31,6 +31,50 @@ interface ReleaseCatalogProps {
   onRetryItem?: (releaseId: string) => void;
 }
 
+export function getReleaseBadgeInfo(r: ScannedRelease) {
+  if (r.isPurchased || r.badgeType === 'own') {
+    return {
+      type: 'own' as const,
+      label: 'Own',
+      badgeClass: 'bg-purple-950/90 text-purple-300 border-purple-500/40',
+      textClass: 'text-purple-400 font-semibold',
+    };
+  }
+
+  const isEmail = r.badgeType === 'email' || r.requiresEmail || r.isNameYourPrice;
+  const isDirectFree = r.badgeType === 'free' || (r.isFree && !isEmail);
+
+  if (isDirectFree) {
+    return {
+      type: 'free' as const,
+      label: 'Free',
+      badgeClass: 'bg-emerald-950/90 text-emerald-300 border-emerald-500/40',
+      textClass: 'text-emerald-400 font-medium',
+    };
+  }
+
+  if (isEmail) {
+    const cur = r.currency === 'EUR' ? '€' : (r.currency === 'USD' ? '$' : (r.currency === 'GBP' ? '£' : r.currency || '€'));
+    const label = r.minPrice > 0 ? `Email (${cur}${r.minPrice})` : 'Email';
+    return {
+      type: 'email' as const,
+      label,
+      badgeClass: 'bg-cyan-950/90 text-cyan-300 border-cyan-500/40',
+      textClass: 'text-cyan-400 font-medium',
+    };
+  }
+
+  // Strictly paid
+  const cur = r.currency === 'EUR' ? '€' : (r.currency === 'USD' ? '$' : (r.currency === 'GBP' ? '£' : r.currency || '€'));
+  const label = r.minPrice > 0 ? `Paid (${cur}${r.minPrice})` : (r.priceFormatted || 'Paid');
+  return {
+    type: 'paid' as const,
+    label,
+    badgeClass: 'bg-amber-950/90 text-amber-300 border-amber-500/40',
+    textClass: 'text-amber-400 font-medium',
+  };
+}
+
 export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   releases,
   queueItems,
@@ -41,7 +85,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   onDownloadSingle,
   onRetryItem,
 }) => {
-  const [filterType, setFilterType] = useState<'all' | 'free' | 'nyp' | 'paid'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'free' | 'email' | 'paid' | 'own'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [expandedTracklists, setExpandedTracklists] = useState<Record<string, boolean>>({});
@@ -64,21 +108,24 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
       if (!matchTitle && !matchTags) return false;
     }
 
-    if (filterType === 'free') return r.isFree && !r.isNameYourPrice;
-    if (filterType === 'nyp') return r.isNameYourPrice;
-    if (filterType === 'paid') return !r.isFree && !r.isNameYourPrice;
+    const badge = getReleaseBadgeInfo(r);
+    if (filterType === 'free') return badge.type === 'free';
+    if (filterType === 'email') return badge.type === 'email';
+    if (filterType === 'paid') return badge.type === 'paid';
+    if (filterType === 'own') return badge.type === 'own';
     return true;
   });
 
   const totalCount = releases.length;
-  const freeCount = releases.filter((r) => r.isFree && !r.isNameYourPrice).length;
-  const nypCount = releases.filter((r) => r.isNameYourPrice).length;
-  const paidCount = releases.filter((r) => !r.isFree && !r.isNameYourPrice).length;
+  const ownCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'own').length;
+  const freeCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'free').length;
+  const emailCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'email').length;
+  const paidCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'paid').length;
   const selectedCount = releases.filter((r) => r.selected).length;
 
   const allEligibleSelected =
     releases.length > 0 &&
-    releases.filter((r) => r.isFree || r.isNameYourPrice).every((r) => r.selected);
+    releases.filter((r) => getReleaseBadgeInfo(r).type !== 'paid').every((r) => r.selected);
 
   const renderStageBadge = (qItem?: QueueItem) => {
     if (!qItem || qItem.stage === 'pending') return null;
@@ -152,7 +199,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
               className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-800/60 rounded-lg text-xs font-semibold transition"
             >
               <CheckSquare className="w-3.5 h-3.5" />
-              <span>Select Free & NYP ({freeCount + nypCount})</span>
+              <span>Select Free & Email ({freeCount + emailCount})</span>
             </button>
             <button
               onClick={onSelectAll}
@@ -206,7 +253,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
 
         {/* Filter Badges & Counter */}
         <div className="flex flex-wrap items-center justify-between gap-2 mt-4 pt-3 border-t border-slate-800 text-xs">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-slate-400 font-medium mr-1">Filter:</span>
             <button
               onClick={() => setFilterType('all')}
@@ -229,25 +276,37 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
               Free ({freeCount})
             </button>
             <button
-              onClick={() => setFilterType('nyp')}
+              onClick={() => setFilterType('email')}
               className={`px-2.5 py-1 rounded-md transition ${
-                filterType === 'nyp'
-                  ? 'bg-amber-950/70 border border-amber-500/50 text-amber-300 font-semibold'
+                filterType === 'email'
+                  ? 'bg-cyan-950/70 border border-cyan-500/50 text-cyan-300 font-semibold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
-              Name Your Price ({nypCount})
+              Email ({emailCount})
             </button>
             <button
               onClick={() => setFilterType('paid')}
               className={`px-2.5 py-1 rounded-md transition ${
                 filterType === 'paid'
-                  ? 'bg-slate-700 text-white font-semibold'
+                  ? 'bg-amber-950/70 border border-amber-500/50 text-amber-300 font-semibold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
-              Paid / Non-NYP ({paidCount})
+              Paid ({paidCount})
             </button>
+            {ownCount > 0 && (
+              <button
+                onClick={() => setFilterType('own')}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  filterType === 'own'
+                    ? 'bg-purple-950/70 border border-purple-500/50 text-purple-300 font-semibold'
+                    : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Own ({ownCount})
+              </button>
+            )}
           </div>
 
           <div className="text-slate-400">
@@ -318,26 +377,14 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
 
                   {/* Price Tag Overlay */}
                   <div className="absolute top-2.5 right-2.5 z-10 flex flex-col items-end gap-1">
-                    {release.isPurchased ? (
-                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-cyan-950/90 text-cyan-300 border border-cyan-500/40 backdrop-blur-sm">
-                        You Own It
-                      </span>
-                    ) : release.isFree && !release.isNameYourPrice ? (
-                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 backdrop-blur-sm">
-                        Free Download
-                      </span>
-                    ) : release.isNameYourPrice ? (
-                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-950/90 text-amber-300 border border-amber-500/40 backdrop-blur-sm">
-                        Name Your Price ($0+)
-                      </span>
-                    ) : (
-                      <span
-                        className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-900/90 text-slate-400 border border-slate-700 backdrop-blur-sm"
-                        title="Paid album: Audio skipped per policy unless owned. Hi-res artwork, liner notes, lyrics, and extra photos will be bundled."
-                      >
-                        {release.priceFormatted}
-                      </span>
-                    )}
+                    {(() => {
+                      const badge = getReleaseBadgeInfo(release);
+                      return (
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border backdrop-blur-sm ${badge.badgeClass}`}>
+                          {badge.label}
+                        </span>
+                      );
+                    })()}
 
                     {renderStageBadge(qItem)}
                   </div>
@@ -548,17 +595,14 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                         <div className="text-slate-400 text-[11px]">{release.artist}</div>
                       </td>
                       <td className="p-3">
-                        {release.isPurchased ? (
-                          <span className="text-cyan-400 font-semibold">You Own It</span>
-                        ) : release.isFree && !release.isNameYourPrice ? (
-                          <span className="text-emerald-400 font-medium">Free Download</span>
-                        ) : release.isNameYourPrice ? (
-                          <span className="text-amber-400 font-medium">Name Your Price ($0+)</span>
-                        ) : (
-                          <span className="text-slate-400" title="Audio skipped unless owned">
-                            {release.priceFormatted}
-                          </span>
-                        )}
+                        {(() => {
+                          const badge = getReleaseBadgeInfo(release);
+                          return (
+                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${badge.badgeClass}`}>
+                              {badge.label}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="p-3">
                         {renderStageBadge(qItem) || <span className="text-slate-500">—</span>}

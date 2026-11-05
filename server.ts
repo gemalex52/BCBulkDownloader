@@ -229,6 +229,7 @@ async function inspectReleaseSubpage(
       isNameYourPrice: parsed.isNyp,
       isPurchased: parsed.isPurchased,
       isPaid: parsed.isPaid,
+      badgeType: parsed.badgeType,
       minPrice: parsed.minPrice,
       currency: tralbum?.current?.currency || 'EUR',
       priceFormatted: parsed.priceFormatted,
@@ -241,7 +242,7 @@ async function inspectReleaseSubpage(
       creditsText: parsed.creditsText,
       infoText: parsed.infoText,
       tags: parsed.tagsMatches,
-      selected: parsed.isFree || parsed.isNyp || parsed.isPurchased,
+      selected: parsed.badgeType !== 'paid',
     };
   } catch (e: any) {
     console.warn(`Error inspecting subpage ${item.url}:`, e.message);
