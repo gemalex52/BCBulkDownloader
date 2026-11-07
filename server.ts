@@ -457,25 +457,34 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
 
     if (triggerEmailOnly && email && effectiveItemId && origin) {
       try {
+        const targetOrigin = origin || (req.body.itemUrl ? new URL(req.body.itemUrl).origin : 'https://bandcamp.com');
         const body = new URLSearchParams({
-          encoding_name: formatInfo.id,
+          encoding_name: 'none',
           item_id: String(effectiveItemId),
           item_type: effectiveItemType,
           address: email,
           country: 'US',
-          postcode: '10001',
+          postcode: '0',
         });
-        const emailRes = await fetch(`${origin}/email_download`, {
+        const emailRes = await fetch(`${targetOrigin}/email_download`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            Accept: 'application/json, text/javascript, */*; q=0.01',
+            'X-Requested-With': 'XMLHttpRequest',
+            Origin: targetOrigin,
+            Referer: req.body.itemUrl || targetOrigin,
             ...BANDCAMP_FETCH_HEADERS,
           },
           body,
         });
-        const emailData = emailRes.ok ? await emailRes.json().catch(() => ({})) : {};
-        return res.json({ success: true, triggered: true, emailData });
+        const text = await emailRes.text();
+        let emailData: any = {};
+        try { emailData = JSON.parse(text); } catch (e) {}
+        if (text.includes('Client Challenge')) {
+          return res.json({ success: false, error: 'Bandcamp Cloudflare Bot Challenge active on datacenter IP. Use Chrome Extension to trigger email directly from your browser session.' });
+        }
+        return res.json({ success: true, ok: emailData?.ok !== false, triggered: true, emailData });
       } catch (trigErr: any) {
         return res.json({ success: false, error: trigErr.message });
       }
@@ -599,7 +608,8 @@ app.post('/api/bandcamp/check-gas-webhook', async (req: Request, res: Response) 
       redirect: 'follow',
       headers: {
         'Accept': 'application/json, text/plain, */*'
-      }
+      },
+      signal: AbortSignal.timeout(12000),
     });
 
     const text = await response.text();
@@ -648,7 +658,8 @@ app.post('/api/bandcamp/test-gas-webhook', async (req: Request, res: Response) =
       redirect: 'follow',
       headers: {
         'Accept': 'application/json, text/plain, */*'
-      }
+      },
+      signal: AbortSignal.timeout(12000),
     });
 
     const text = await response.text();

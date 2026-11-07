@@ -1,4 +1,5 @@
 // Core Bandcamp Processing Engine (Unified Single Source of Truth for Server, Client, and Extension)
+import { ExtraPhotoItem } from '../types/bandcamp';
 
 export const BANDCAMP_FETCH_HEADERS: Record<string, string> = {
   'User-Agent':
@@ -34,6 +35,7 @@ export interface ParsedReleaseDetails {
   artUrl: string;
   artistBioPicUrl?: string;
   extraImages: string[];
+  extraPhotos?: ExtraPhotoItem[];
   allImages: string[];
   humanDate?: string;
   dotDate?: string;
@@ -189,6 +191,167 @@ export function extractArtistBioPicUrl(html: string, tralbum?: any, globalBioUrl
   return globalBioUrl || undefined;
 }
 
+export function cleanBandcampUrl(input: string): string {
+  if (!input) return '';
+  let cleaned = input.trim();
+
+  // If input contains a dashboard parameter like dashboard.html?url=...
+  if (cleaned.includes('url=')) {
+    const match = cleaned.match(/url=([^&]+)/);
+    if (match) {
+      try {
+        cleaned = decodeURIComponent(match[1]);
+      } catch (e) {
+        cleaned = match[1];
+      }
+    }
+  }
+
+  // Attempt decode in case %3A%2F%2F is present
+  try {
+    if (cleaned.includes('%3A') || cleaned.includes('%2F') || cleaned.includes('%3a') || cleaned.includes('%2f')) {
+      cleaned = decodeURIComponent(cleaned);
+    }
+  } catch (e) {}
+
+  // Strip duplicate trailing /music repeats (e.g. /music/music -> /music)
+  cleaned = cleaned.replace(/(\/music)+$/i, '/music');
+
+  // Strip trailing slashes
+  cleaned = cleaned.replace(/\/+$/, '');
+
+  // If bare domain e.g. esoctrilihum.bandcamp.com
+  if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
+    cleaned = 'https://' + cleaned;
+  }
+
+  // If artist subdomain root (e.g. https://esoctrilihum.bandcamp.com), append /music
+  try {
+    const parsed = new URL(cleaned);
+    if (parsed.hostname.endsWith('.bandcamp.com') && (parsed.pathname === '' || parsed.pathname === '/')) {
+      cleaned = `${parsed.origin}/music`;
+    }
+  } catch (e) {}
+
+  return cleaned;
+}
+
+export function extractImageNumericId(url?: string): string {
+  if (!url) return '';
+  const m = url.match(/[a0-9]*?(\d{6,})_/);
+  return m ? m[1].replace(/^0+/, '') : '';
+}
+
+export function cleanPhotoSectionTitle(rawTitle: string): string {
+  if (!rawTitle) return '';
+  let clean = cleanHtmlText(rawTitle);
+  // Clear quotes and punctuation as requested: '"Arise" - Picture Vinyl' -> 'Arise - Picture Vinyl'
+  clean = clean.replace(/["'“”‘’]/g, '');
+  clean = clean.replace(/[:*?"<>|\\\/]/g, ' - ');
+  clean = clean.replace(/\s*-\s*-\s*/g, ' - ');
+  clean = clean.replace(/\s{2,}/g, ' ');
+  clean = clean.replace(/^[\s\-_.]+/, '').replace(/[\s\-_.]+$/, '');
+  return clean;
+}
+
+export function extractExtraPhotosWithTitles(
+  html: string,
+  artUrl?: string,
+  artistBioPicUrl?: string
+): { extraImages: string[]; extraPhotos: ExtraPhotoItem[] } {
+  const coverId = extractImageNumericId(artUrl);
+  const bioId = extractImageNumericId(artistBioPicUrl);
+
+  const seenIds = new Set<string>();
+  if (coverId) seenIds.add(coverId);
+  if (bioId) seenIds.add(bioId);
+
+  const extraPhotos: ExtraPhotoItem[] = [];
+
+  const addPhoto = (rawUrl: string, sectionTitle?: string) => {
+    if (!rawUrl || typeof rawUrl !== 'string') return;
+    const cleanUrl = rawUrl.startsWith('//') ? `https:${rawUrl}` : rawUrl;
+    // Upgrade to _10.jpg
+    const highResUrl = cleanUrl.replace(/_\d+\.jpg/, '_10.jpg');
+    const id = extractImageNumericId(highResUrl);
+    if (!id || seenIds.has(id)) return;
+    seenIds.add(id);
+
+    const title = cleanPhotoSectionTitle(sectionTitle || '');
+    extraPhotos.push({
+      url: highResUrl,
+      title: title || undefined,
+    });
+  };
+
+  // 1. Packages / merch items with titles
+  const packageMatches = Array.from(
+    html.matchAll(/<(?:li|div)[^>]*class="[^"]*(?:package|merch-item|buyItem)[^"]*"[^>]*>([\s\S]*?)<\/(?:li|div)>/gi)
+  );
+
+  for (const p of packageMatches) {
+    const block = p[1];
+    const titleMatch =
+      block.match(/class="[^"]*(?:package-title|merch-item-title|title)[^"]*"[^>]*>([\s\S]*?)<\//i) ||
+      block.match(/<h[34][^>]*>([\s\S]*?)<\/h[34]>/i) ||
+      block.match(/class="popupImage"[^>]*title="([^"]+)"/i) ||
+      block.match(/<img[^>]*alt="([^"]+)"/i);
+    const sectionTitle = titleMatch ? titleMatch[1] : '';
+
+    const imgUrls = Array.from(
+      block.matchAll(/(?:href|src|data-original)="([^"]*bcbits\.com\/img\/a\d+_\d+\.jpg)"/gi)
+    ).map((m) => m[1]);
+    for (const u of imgUrls) {
+      addPhoto(u, sectionTitle);
+    }
+  }
+
+  // 2. popupImage anchors across the page
+  const popupAnchors = Array.from(
+    html.matchAll(/<a[^>]*class="[^"]*popupImage[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)
+  );
+  for (const pa of popupAnchors) {
+    const href = pa[1];
+    const inner = pa[2];
+    const titleMatch = pa[0].match(/title="([^"]+)"/i) || inner.match(/alt="([^"]+)"/i);
+    addPhoto(href, titleMatch ? titleMatch[1] : '');
+  }
+
+  // 3. More thumbs list
+  const moreThumbsMatch = html.match(/<ul[^>]*class="[^"]*more-thumbs[^"]*"[^>]*>([\s\S]*?)<\/ul>/i);
+  if (moreThumbsMatch) {
+    const thumbBlocks = Array.from(moreThumbsMatch[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi));
+    for (const tb of thumbBlocks) {
+      const uMatch = tb[1].match(/(?:href|src|data-original)="([^"]*bcbits\.com\/img\/a\d+_\d+\.jpg)"/i);
+      const tMatch = tb[1].match(/(?:title|alt)="([^"]+)"/i);
+      if (uMatch) {
+        addPhoto(uMatch[1], tMatch ? tMatch[1] : '');
+      }
+    }
+  }
+
+  // 4. Any remaining img tags with alt text
+  const imgTags = Array.from(
+    html.matchAll(/<img[^>]*src="([^"]*bcbits\.com\/img\/a\d+_\d+\.jpg)"[^>]*alt="([^"]*)"/gi)
+  );
+  for (const it of imgTags) {
+    addPhoto(it[1], it[2]);
+  }
+
+  // 5. Fallback scan for any other high-res photos on page
+  const fallbackUrls = Array.from(html.matchAll(/https?:\/\/[a-z0-9.]*bcbits\.com\/img\/a\d+_10\.jpg/gi)).map(
+    (m) => m[0]
+  );
+  for (const fu of fallbackUrls) {
+    addPhoto(fu, '');
+  }
+
+  return {
+    extraImages: extraPhotos.map((p) => p.url),
+    extraPhotos,
+  };
+}
+
 // Complete release parser generating exhaustive info.txt and rich metadata
 export function parseReleasePageData(
   subHtml: string,
@@ -274,18 +437,14 @@ export function parseReleasePageData(
     });
   }
 
-  // Artwork & extra packaging photos
+  // Artwork & artist bio picture
   const artId = tralbum?.art_id;
   const artUrl = artId ? `https://f4.bcbits.com/img/a${artId}_10.jpg` : (item.artUrl || '');
-  
-  // Collect all high-res photos (excluding the main cover art)
-  const popupImages = Array.from(subHtml.matchAll(/href="([^"]+a\d+_10\.jpg)"/gi)).map(m => m[1]);
-  const imgMatches = Array.from(subHtml.matchAll(/src="([^"]+a\d+_10\.jpg)"/gi)).map(m => m[1]);
-  const moreThumbs = Array.from(subHtml.matchAll(/data-original="([^"]+a\d+_10\.jpg)"/gi)).map(m => m[1]);
-  const allImages = Array.from(new Set([...popupImages, ...imgMatches, ...moreThumbs])).filter(u => u !== artUrl);
-
-  // Artist Bio Picture (for artist.jpg)
   const artistBioPicUrl = extractArtistBioPicUrl(subHtml, tralbum, globalArtistBioPicUrl);
+
+  // Extract extra packaging photos with guessed section titles (excluding cover & artist bio duplicates)
+  const { extraImages, extraPhotos } = extractExtraPhotosWithTitles(subHtml, artUrl, artistBioPicUrl);
+  const allImages = extraImages;
 
   // Untruncated liner notes / about (checking current, tralbum root, trackinfo[0], and HTML)
   const aboutMatch = subHtml.match(/class="[^"]*tralbum-about[^"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
@@ -421,7 +580,8 @@ export function parseReleasePageData(
     artist,
     artUrl,
     artistBioPicUrl,
-    extraImages: allImages,
+    extraImages,
+    extraPhotos,
     allImages,
     humanDate,
     dotDate,

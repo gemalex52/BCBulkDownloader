@@ -7,6 +7,7 @@ import {
   AUDIO_FORMATS,
   DEFAULT_APP_SETTINGS,
   QueueItem,
+  ItemStageLog,
   SiteQueueSession,
   formatFilenameBySchema,
   getCompanionInfoZipName,
@@ -33,10 +34,23 @@ import {
 } from './services/queueManager';
 
 import { storage, apiClient, isExtension } from './services/unifiedClient';
-import { setDebugLogging, debugLog } from './services/bandcampCore';
+import { setDebugLogging, debugLog, cleanBandcampUrl } from './services/bandcampCore';
 
 const DEFAULT_URL = 'https://esoctrilihum.bandcamp.com/music';
 const SETTINGS_STORAGE_KEY = 'bc_app_settings_v2';
+
+function getInitialTargetUrl(): string {
+  if (typeof window !== 'undefined' && window.location) {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlParam = params.get('url');
+      if (urlParam) {
+        return cleanBandcampUrl(urlParam);
+      }
+    } catch (e) {}
+  }
+  return DEFAULT_URL;
+}
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<'scanner' | 'extension' | 'guide' | 'settings'>('scanner');
@@ -47,7 +61,8 @@ export default function App() {
     }
   }, [currentTab]);
 
-  const [url, setUrl] = useState(DEFAULT_URL);
+  const initialUrlRef = useRef<string>(getInitialTargetUrl());
+  const [url, setUrl] = useState<string>(initialUrlRef.current);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgressText, setScanProgressText] = useState('');
   const [releases, setReleases] = useState<ScannedRelease[]>([]);
@@ -104,9 +119,9 @@ export default function App() {
     (async () => {
       const activeUrl = await apiClient.fetchActiveTabUrl();
       if (activeUrl) {
-        const cleanUrl = activeUrl.includes('/music') ? activeUrl : (activeUrl.replace(/\/+$/, '') + '/music');
-        setUrl(cleanUrl);
-        loadFromLocalCache(cleanUrl);
+        const cleaned = cleanBandcampUrl(activeUrl);
+        setUrl(cleaned);
+        loadFromLocalCache(cleaned);
       }
     })();
   }, []);
@@ -410,9 +425,10 @@ export default function App() {
 
   // Initial load
   useEffect(() => {
-    const cached = loadFromLocalCache(DEFAULT_URL);
+    const target = initialUrlRef.current;
+    const cached = loadFromLocalCache(target);
     if (!cached) {
-      runScan(DEFAULT_URL, false);
+      runScan(target, false);
     }
     return () => {
       if (activeEventSourceRef.current) {
@@ -492,6 +508,8 @@ export default function App() {
         artUrl: r.artUrl,
         artistBioPicUrl: r.artistBioPicUrl,
         extraImages: r.extraImages,
+        extraPhotos: r.extraPhotos,
+        downloadScope: r.downloadScope || 'both',
         releaseDate: r.releaseDate,
         isoDate: r.isoDate,
         isFree: r.isFree,
@@ -512,6 +530,34 @@ export default function App() {
         logs: [],
       };
     });
+  };
+
+  // Change individual release download target scope
+  const handleSetReleaseScope = (id: string, scope: 'both' | 'audio' | 'info') => {
+    setReleases((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, downloadScope: scope } : r))
+    );
+    if (currentSession && currentSession.items[id]) {
+      const updated = updateQueueItem(currentHostname, id, { downloadScope: scope });
+      if (updated) setCurrentSession({ ...updated });
+    }
+  };
+
+  // Batch change download target scope for all selected releases
+  const handleSetBatchScope = (scope: 'both' | 'audio' | 'info') => {
+    setReleases((prev) =>
+      prev.map((r) => (r.selected ? { ...r, downloadScope: scope } : r))
+    );
+    if (currentSession) {
+      let lastSess = currentSession;
+      releases
+        .filter((r) => r.selected)
+        .forEach((r) => {
+          const upd = updateQueueItem(currentHostname, r.id, { downloadScope: scope });
+          if (upd) lastSess = upd;
+        });
+      setCurrentSession({ ...lastSess });
+    }
   };
 
   // 1-Click Retry an individual item
@@ -555,6 +601,32 @@ export default function App() {
         const updated = appendItemLog(currentHostname, qItem.id, stage, msg, err);
         if (updated) {
           setCurrentSession({ ...updated });
+        } else {
+          setCurrentSession((prev) => {
+            if (!prev) return prev;
+            const prevItem = prev.items[qItem.id] || { ...qItem };
+            const newLog: ItemStageLog = {
+              timestamp: new Date().toLocaleTimeString(),
+              stage,
+              message: msg,
+              error: err,
+            };
+            return {
+              ...prev,
+              updatedAt: new Date().toISOString(),
+              items: {
+                ...prev.items,
+                [qItem.id]: {
+                  ...prevItem,
+                  stage,
+                  statusText: msg,
+                  error: err || prevItem.error,
+                  lastUpdated: new Date().toISOString(),
+                  logs: [...(prevItem.logs || []), newLog].slice(-25),
+                },
+              },
+            };
+          });
         }
       };
 
@@ -569,7 +641,11 @@ export default function App() {
 
         const hasGasWatchdog = Boolean(settings.gasWebhookUrl && settings.gasWebhookUrl.trim());
 
-        if (!isPaidOnly) {
+        const effectiveScope = qItem.downloadScope || rel.downloadScope || settings.defaultDownloadScope || 'both';
+        const shouldDownloadAudio = effectiveScope !== 'info';
+        const shouldDownloadInfo = effectiveScope !== 'audio' && settings.createCompanionInfoZip;
+
+        if (!isPaidOnly && shouldDownloadAudio) {
           // Stage 1: Checking Mailbox via GAS watchdog if configured
           if (!downloadPageUrl && hasGasWatchdog) {
             logAndSync('checking_mail', 'Searching Gmail via GAS watchdog for existing download link...');
@@ -592,12 +668,14 @@ export default function App() {
                 title: qItem.title,
                 since: searchSinceEpoch,
               });
+              debugLog('gas', 'Initial GAS check response:', checkData);
 
               if (checkData && checkData.found && checkData.downloadPageUrl) {
                 downloadPageUrl = checkData.downloadPageUrl;
                 logAndSync('checking_mail', `Found existing signed download link in Gmail! Skipping new email dispatch.`);
               }
             } catch (gasErr: any) {
+              debugLog('gas', 'Initial GAS check error:', gasErr);
               console.warn('GAS check warning:', gasErr);
             }
           }
@@ -610,17 +688,24 @@ export default function App() {
             const triggerTime = Math.floor(Date.now() / 1000);
             let emailTriggerOk = false;
             try {
+              const itemOrigin = qItem.url.startsWith('http')
+                ? new URL(qItem.url).origin
+                : (url.startsWith('http') ? new URL(url).origin : `https://${currentHostname}`);
+
               const trigData = await apiClient.triggerEmailDownload(
-                url.startsWith('http') ? new URL(url).origin : `https://${currentHostname}`,
+                itemOrigin,
                 selectedFormat,
                 qItem.itemId,
                 qItem.itemType,
-                settings.fallbackEmail || 'listener@example.com'
+                settings.fallbackEmail || 'listener@example.com',
+                qItem.url
               );
-              if (trigData && !trigData.isPaid) {
+              debugLog('pipeline', 'triggerEmailDownload response:', trigData);
+              if (trigData && (trigData.ok || trigData.success)) {
                 emailTriggerOk = true;
               }
             } catch (trigErr) {
+              debugLog('pipeline', 'triggerEmailDownload error:', trigErr);
               console.warn('Email trigger warning:', trigErr);
             }
 
@@ -644,6 +729,7 @@ export default function App() {
                     title: qItem.title,
                     since: triggerTime - 15,
                   });
+                  debugLog('gas', `Polling attempt ${cycle + 1}/36 response:`, pollData);
 
                   if (pollData && pollData.found && pollData.downloadPageUrl) {
                     downloadPageUrl = pollData.downloadPageUrl;
@@ -651,7 +737,9 @@ export default function App() {
                     logAndSync('polling_gas', 'Received signed download link from Bandcamp email!');
                     break;
                   }
-                } catch (e) {}
+                } catch (pollErr: any) {
+                  debugLog('gas', `Polling attempt ${cycle + 1}/36 error:`, pollErr);
+                }
               }
 
               if (!foundFromPoll && !downloadPageUrl) {
@@ -661,22 +749,23 @@ export default function App() {
           }
         }
 
-        // Stage 4: Resolving download stream (resolves true studio format FLAC / MP3-320)
-        logAndSync('resolving_stat', `Resolving studio master download URL for format: ${selectedFormat.toUpperCase()}...`);
+        let resolveData: any = null;
 
-        const resolveData = await apiClient.resolveDownload({
-          albumUrl: qItem.url,
-          releaseId: qItem.id,
-          itemId: qItem.itemId,
-          itemType: qItem.itemType,
-          format: selectedFormat,
-          email: settings.fallbackEmail,
-          downloadPageUrl,
-          release: qItem,
-        });
+        if (shouldDownloadAudio) {
+          // Stage 4: Resolving download stream (resolves true studio format FLAC / MP3-320)
+          logAndSync('resolving_stat', `Resolving studio master download URL for format: ${selectedFormat.toUpperCase()}...`);
 
-        // Stage 5: Downloading Studio Audio
-        logAndSync('downloading_audio', 'Downloading studio audio files...');
+          resolveData = await apiClient.resolveDownload({
+            albumUrl: qItem.url,
+            releaseId: qItem.id,
+            itemId: qItem.itemId,
+            itemType: qItem.itemType,
+            format: selectedFormat,
+            email: settings.fallbackEmail,
+            downloadPageUrl,
+            release: qItem,
+          });
+        }
 
         const effectiveArtist = resolveData?.artist || qItem.artist;
         const effectiveAlbum = resolveData?.title || qItem.title;
@@ -700,46 +789,51 @@ export default function App() {
           { allowSubfolders: false }
         );
 
-        if (resolveData?.isPaid && resolveData?.skipAudio) {
-          logAndSync('downloading_audio', `Paid release (${resolveData.message || 'audio skipped per policy'}). Packaging companion info ZIP...`);
-        } else if (resolveData?.success && resolveData?.downloadUrl) {
-          // Direct studio archive or FLAC track
-          debugLog('pipeline', 'Downloading resolved studio audio:', resolveData.downloadUrl, 'as', audioFilename);
-          await apiClient.downloadAudioFile(resolveData.downloadUrl, audioFilename);
-          successfulDownloadsCount++;
-        } else if (selectedFormat === 'mp3-128' && (resolveData?.audioStreams || rel.audioStreams) && (resolveData?.audioStreams || rel.audioStreams).length > 0) {
-          // Explicit mp3-128 stream collection fallback
-          const streamsToDl = resolveData?.audioStreams || rel.audioStreams;
-          for (const stream of streamsToDl) {
-            const streamUrl = stream.streamUrl || stream.url;
-            if (streamUrl) {
-              const streamName = formatFilenameBySchema(
-                settings.namingSchema,
-                {
-                  artist: effectiveArtist,
-                  album: effectiveAlbum,
-                  title: stream.title,
-                  trackNum: stream.trackNum,
-                  totalTracks: streamsToDl.length,
-                  date: qItem.isoDate || qItem.releaseDate,
-                  year: qItem.isoDate?.slice(0, 4) || qItem.releaseDate?.slice(-4),
-                  format: selectedFormat,
-                  type: 'track',
-                },
-                { allowSubfolders: false }
-              );
+        // Stage 5: Downloading Studio Audio
+        if (shouldDownloadAudio) {
+          logAndSync('downloading_audio', 'Downloading studio audio files...');
 
-              await apiClient.downloadAudioFile(streamUrl, streamName);
-              await sleep(600);
+          if (resolveData?.isPaid && resolveData?.skipAudio) {
+            logAndSync('downloading_audio', `Paid release (${resolveData.message || 'audio skipped per policy'}).`);
+          } else if (resolveData?.success && resolveData?.downloadUrl) {
+            // Direct studio archive or FLAC track
+            debugLog('pipeline', 'Downloading resolved studio audio:', resolveData.downloadUrl, 'as', audioFilename);
+            await apiClient.downloadAudioFile(resolveData.downloadUrl, audioFilename);
+            successfulDownloadsCount++;
+          } else if (selectedFormat === 'mp3-128' && (resolveData?.audioStreams || rel.audioStreams) && (resolveData?.audioStreams || rel.audioStreams).length > 0) {
+            // Explicit mp3-128 stream collection fallback
+            const streamsToDl = resolveData?.audioStreams || rel.audioStreams;
+            for (const stream of streamsToDl) {
+              const streamUrl = stream.streamUrl || stream.url;
+              if (streamUrl) {
+                const streamName = formatFilenameBySchema(
+                  settings.namingSchema,
+                  {
+                    artist: effectiveArtist,
+                    album: effectiveAlbum,
+                    title: stream.title,
+                    trackNum: stream.trackNum,
+                    totalTracks: streamsToDl.length,
+                    date: qItem.isoDate || qItem.releaseDate,
+                    year: qItem.isoDate?.slice(0, 4) || qItem.releaseDate?.slice(-4),
+                    format: selectedFormat,
+                    type: 'track',
+                  },
+                  { allowSubfolders: false }
+                );
+
+                await apiClient.downloadAudioFile(streamUrl, streamName);
+                await sleep(600);
+              }
             }
+            successfulDownloadsCount++;
+          } else {
+            logAndSync('downloading_audio', `Studio audio not resolved (${resolveData?.error || 'signed download link required'}).`);
           }
-          successfulDownloadsCount++;
-        } else {
-          logAndSync('downloading_audio', `Studio audio not resolved (${resolveData?.error || 'signed download link required'}). Packaging companion info ZIP...`);
         }
 
         // Stage 6: Build and download companion (info).zip
-        if (settings.createCompanionInfoZip) {
+        if (shouldDownloadInfo) {
           logAndSync('packaging_info', 'Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)...');
 
           const companionResult = await buildCompanionInfoZip({
@@ -748,6 +842,7 @@ export default function App() {
             artUrl: resolveData?.artUrl || rel.artUrl,
             artistBioPicUrl: resolveData?.artistBioPicUrl || rel.artistBioPicUrl,
             extraImages: resolveData?.extraImages || rel.extraImages,
+            extraPhotos: resolveData?.extraPhotos || rel.extraPhotos,
             audioStreams: resolveData?.audioStreams || rel.audioStreams,
           });
 
@@ -780,15 +875,25 @@ export default function App() {
         }
 
         // Mark Completed
-        const doneStatus = resolveData?.success && resolveData?.downloadUrl
-          ? 'Download completed successfully!'
-          : ((resolveData?.isPaid && resolveData?.skipAudio)
-              ? 'Packaging complete (Paid release - companion info ZIP created)'
-              : 'Packaging complete (Companion info ZIP saved - audio requires email link)');
+        let doneStatus = 'Completed!';
+        if (shouldDownloadAudio && !shouldDownloadInfo) {
+          doneStatus = resolveData?.success && resolveData?.downloadUrl
+            ? 'Download completed (Audio only)!'
+            : 'Audio download completed / requires attention';
+        } else if (!shouldDownloadAudio && shouldDownloadInfo) {
+          doneStatus = 'Packaging complete (Companion info archive saved)!';
+        } else {
+          doneStatus = resolveData?.success && resolveData?.downloadUrl
+            ? 'Download completed successfully!'
+            : ((resolveData?.isPaid && resolveData?.skipAudio)
+                ? 'Packaging complete (Paid release - companion info ZIP created)'
+                : 'Packaging complete (Companion info ZIP saved - audio requires email link)');
+        }
+
         logAndSync('completed', doneStatus);
         updateQueueItem(currentHostname, qItem.id, {
-          audioDownloaded: Boolean(resolveData?.success && resolveData?.downloadUrl),
-          infoZipDownloaded: settings.createCompanionInfoZip,
+          audioDownloaded: shouldDownloadAudio && Boolean(resolveData?.success && resolveData?.downloadUrl),
+          infoZipDownloaded: shouldDownloadInfo,
           stageProgress: 100,
         });
       } catch (itemErr: any) {
@@ -978,9 +1083,15 @@ export default function App() {
               scanProgressText={scanProgressText}
               skipTrackSubpages={skipTrackSubpages}
               onToggleSkipTracks={setSkipTrackSubpages}
+              onResetInitialUrl={() => {
+                const target = initialUrlRef.current || DEFAULT_URL;
+                setUrl(target);
+                runScan(target, false);
+              }}
               onLoadEsoctrilihum={() => {
-                setUrl(DEFAULT_URL);
-                runScan(DEFAULT_URL, false);
+                const target = initialUrlRef.current || DEFAULT_URL;
+                setUrl(target);
+                runScan(target, false);
               }}
               isCached={scanMeta.source === 'local_cache' || scanMeta.source === 'server_cache'}
               cacheTime={scanMeta.timestamp}
@@ -1029,6 +1140,8 @@ export default function App() {
               onDeselectAll={handleDeselectAll}
               onDownloadSingle={handleDownloadSingle}
               onRetryItem={handleRetryItem}
+              onSetReleaseScope={handleSetReleaseScope}
+              onSetBatchScope={handleSetBatchScope}
             />
           </div>
         )}

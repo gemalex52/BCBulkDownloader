@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
-import { QueueItem, ScannedRelease, TrackAudioStream } from '../types/bandcamp';
+import { QueueItem, ScannedRelease, TrackAudioStream, ExtraPhotoItem } from '../types/bandcamp';
 import { isExtension, apiClient } from './unifiedClient';
+import { extractImageNumericId, cleanPhotoSectionTitle } from './bandcampCore';
 
 export interface CompanionZipOptions {
   release: ScannedRelease | QueueItem;
@@ -8,6 +9,7 @@ export interface CompanionZipOptions {
   artUrl?: string;
   artistBioPicUrl?: string;
   extraImages?: string[];
+  extraPhotos?: ExtraPhotoItem[];
   audioStreams?: TrackAudioStream[];
   proxyFetch?: (url: string) => Promise<Response>;
 }
@@ -17,7 +19,7 @@ export async function buildCompanionInfoZip(options: CompanionZipOptions): Promi
   sizeBytes: number;
   filesCount: number;
 }> {
-  const { release, infoText, artUrl, artistBioPicUrl, extraImages, audioStreams, proxyFetch } = options;
+  const { release, infoText, artUrl, artistBioPicUrl, extraImages, extraPhotos, audioStreams, proxyFetch } = options;
   const zip = new JSZip();
   let filesCount = 0;
 
@@ -45,13 +47,14 @@ export async function buildCompanionInfoZip(options: CompanionZipOptions): Promi
   filesCount++;
 
   // 2. cover.jpg: Hi-res artwork
+  let coverBuf: ArrayBuffer | null = null;
   const targetArt = artUrl || release.artUrl;
   if (targetArt) {
     try {
       const artRes = await doFetch(targetArt);
       if (artRes.ok) {
-        const artBuf = await artRes.arrayBuffer();
-        zip.file('cover.jpg', artBuf);
+        coverBuf = await artRes.arrayBuffer();
+        zip.file('cover.jpg', coverBuf);
         filesCount++;
       }
     } catch (e) {
@@ -60,12 +63,13 @@ export async function buildCompanionInfoZip(options: CompanionZipOptions): Promi
   }
 
   // 3. artist.jpg: Bandcamp bio_pic image
+  let bioBuf: ArrayBuffer | null = null;
   const targetBio = artistBioPicUrl || (release as any).artistBioPicUrl;
   if (targetBio) {
     try {
       const bioRes = await doFetch(targetBio);
       if (bioRes.ok) {
-        const bioBuf = await bioRes.arrayBuffer();
+        bioBuf = await bioRes.arrayBuffer();
         zip.file('artist.jpg', bioBuf);
         filesCount++;
       }
@@ -75,17 +79,90 @@ export async function buildCompanionInfoZip(options: CompanionZipOptions): Promi
   }
 
   // 4. photos/: Additional CD/LP and gatefold packaging photos
-  const targetPhotos = extraImages || release.extraImages || [];
-  if (targetPhotos.length > 0) {
-    for (let i = 0; i < targetPhotos.length; i++) {
+  // User requirements: Do not include duplicates of cover.jpg or artist.jpg,
+  // and guess pic names from the HTML section (cleared of punctuation).
+  const coverId = extractImageNumericId(targetArt);
+  const bioId = extractImageNumericId(targetBio);
+  const seenPhotoIds = new Set<string>();
+  if (coverId) seenPhotoIds.add(coverId);
+  if (bioId) seenPhotoIds.add(bioId);
+
+  const photoCandidates: { url: string; title?: string }[] = [];
+  const rawPhotos = extraPhotos || (release as any).extraPhotos;
+  const rawImages = extraImages || release.extraImages || [];
+
+  if (rawPhotos && Array.isArray(rawPhotos) && rawPhotos.length > 0) {
+    for (const p of rawPhotos) {
+      if (typeof p === 'string') {
+        photoCandidates.push({ url: p });
+      } else if (p && p.url) {
+        photoCandidates.push(p);
+      }
+    }
+  } else if (rawImages && Array.isArray(rawImages)) {
+    for (const img of rawImages) {
+      if (typeof img === 'string') {
+        photoCandidates.push({ url: img });
+      } else if (img && (img as any).url) {
+        photoCandidates.push(img as any);
+      }
+    }
+  }
+
+  const usedFilenames = new Map<string, number>();
+
+  function areBuffersIdentical(a: ArrayBuffer, b: ArrayBuffer): boolean {
+    if (a.byteLength !== b.byteLength) return false;
+    const viewA = new Uint8Array(a);
+    const viewB = new Uint8Array(b);
+    const sampleSize = Math.min(viewA.length, 1024);
+    for (let i = 0; i < sampleSize; i++) {
+      if (viewA[i] !== viewB[i]) return false;
+    }
+    return true;
+  }
+
+  if (photoCandidates.length > 0) {
+    for (let i = 0; i < photoCandidates.length; i++) {
+      const candidate = photoCandidates[i];
+      const photoUrl = candidate.url;
+      const photoId = extractImageNumericId(photoUrl);
+
+      // Exclude if it's the cover, artist photo, or already processed
+      if (photoId && seenPhotoIds.has(photoId)) {
+        continue;
+      }
+      if (photoId) seenPhotoIds.add(photoId);
+
       try {
-        const pRes = await doFetch(targetPhotos[i]);
+        const pRes = await doFetch(photoUrl);
         if (pRes.ok) {
           const pBuf = await pRes.arrayBuffer();
-          zip.file(`photos/photo_${i + 1}.jpg`, pBuf);
+
+          // Byte-level duplicate safety net against cover and artist images
+          if (coverBuf && areBuffersIdentical(pBuf, coverBuf)) {
+            continue;
+          }
+          if (bioBuf && areBuffersIdentical(pBuf, bioBuf)) {
+            continue;
+          }
+
+          let baseName = candidate.title ? cleanPhotoSectionTitle(candidate.title) : '';
+          if (!baseName) {
+            baseName = `photo_${i + 1}`;
+          }
+
+          const lowerKey = baseName.toLowerCase();
+          const count = (usedFilenames.get(lowerKey) || 0) + 1;
+          usedFilenames.set(lowerKey, count);
+
+          const finalPhotoName = count > 1 ? `${baseName} (${count}).jpg` : `${baseName}.jpg`;
+          zip.file(`photos/${finalPhotoName}`, pBuf);
           filesCount++;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('Failed fetching photo for info zip:', e);
+      }
     }
   }
 

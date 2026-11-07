@@ -8,6 +8,11 @@ export interface TrackAudioStream {
   lyrics?: string;
 }
 
+export interface ExtraPhotoItem {
+  url: string;
+  title?: string;
+}
+
 export interface ScannedRelease {
   id: string;
   itemId: number;
@@ -19,6 +24,8 @@ export interface ScannedRelease {
   artUrl: string;
   artistBioPicUrl?: string; // Bandcamp artist bio image (renamed to artist.jpg)
   extraImages?: string[];
+  extraPhotos?: ExtraPhotoItem[];
+  downloadScope?: 'both' | 'audio' | 'info';
   releaseDate?: string;
   isoDate?: string;
   isFree: boolean;
@@ -106,6 +113,8 @@ export interface QueueItem {
   artUrl: string;
   artistBioPicUrl?: string;
   extraImages?: string[];
+  extraPhotos?: ExtraPhotoItem[];
+  downloadScope?: 'both' | 'audio' | 'info';
   releaseDate?: string;
   isoDate?: string;
   isFree: boolean;
@@ -148,6 +157,7 @@ export interface SiteQueueSession {
 export interface AppSettings {
   fallbackEmail: string;
   preferredFormat: string;
+  defaultDownloadScope?: 'both' | 'audio' | 'info';
   deliveryMode?: DeliveryMode;
   createCompanionInfoZip: boolean; // default: true
   namingSchema: string;
@@ -173,6 +183,7 @@ export interface AppSettings {
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   fallbackEmail: '',
   preferredFormat: 'flac',
+  defaultDownloadScope: 'both',
   deliveryMode: 'companion',
   createCompanionInfoZip: true,
   namingSchema: '%artist% - %date% - %album%[%title%.%format%]',

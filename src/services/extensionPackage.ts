@@ -82,6 +82,36 @@ export const EXTENSION_FILES: ExtensionFileItem[] = [
     content: `// Bandcamp Bulk Downloader - Unified Background Service Worker (Manifest V3)
 importScripts('core.js');
 
+// Map of URLs and download IDs to custom sanitized filenames for chrome.downloads.onDeterminingFilename
+const pendingUrlFilenameMap = new Map();
+const downloadFilenameMap = new Map();
+
+function sanitizeChromeDownloadFilename(pathStr) {
+  if (!pathStr || typeof pathStr !== 'string') return 'download.zip';
+  const normalized = pathStr.split('\\\\').join('/');
+  const segments = normalized.split('/').filter(Boolean);
+  const cleanSegments = segments.map((seg) => {
+    let clean = seg.replace(/[:*?"<>|]/g, '_').trim();
+    while (clean.startsWith('.')) clean = clean.slice(1).trim();
+    return clean || 'download';
+  });
+  return cleanSegments.length > 0 ? cleanSegments.join('/') : 'download.zip';
+}
+
+if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
+  chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    const customName = downloadFilenameMap.get(item.id) || pendingUrlFilenameMap.get(item.url);
+    if (customName) {
+      const sanitized = sanitizeChromeDownloadFilename(customName);
+      suggest({ filename: sanitized, conflictAction: 'uniquify' });
+      downloadFilenameMap.delete(item.id);
+      pendingUrlFilenameMap.delete(item.url);
+    } else {
+      suggest();
+    }
+  });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get([
     'defaultFormat',
@@ -116,7 +146,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       try {
         const { url } = request;
-        const targetUrl = url.includes('/music') ? url : (url.replace(/\\/+$/, '') + '/music');
+        let targetUrl = typeof cleanBandcampUrl === 'function' ? cleanBandcampUrl(url) : url;
+        if (!targetUrl.includes('/music')) {
+          while (targetUrl.endsWith('/')) targetUrl = targetUrl.slice(0, -1);
+          targetUrl += '/music';
+        }
         const res = await fetch(targetUrl, {
           headers: {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
@@ -347,27 +381,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'TRIGGER_EMAIL') {
     (async () => {
       try {
-        const { origin, formatId, itemId, itemType, email } = request;
+        const { origin, formatId, itemId, itemType, email, itemUrl } = request;
+        const targetOrigin = origin || (itemUrl ? new URL(itemUrl).origin : 'https://bandcamp.com');
         const body = new URLSearchParams({
-          encoding_name: formatId || 'flac',
+          encoding_name: 'none',
           item_id: String(itemId),
           item_type: itemType || 'album',
           address: email || 'listener@example.com',
           country: 'US',
-          postcode: '10001'
+          postcode: '0'
         });
-        const res = await fetch(origin + '/email_download', {
+        const res = await fetch(targetOrigin + '/email_download', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': targetOrigin,
+            'Referer': itemUrl || targetOrigin
           },
           body
         });
-        const data = res.ok ? await res.json().catch(() => ({})) : {};
-        sendResponse({ success: true, data });
+        const text = await res.text();
+        let data = {};
+        try { data = JSON.parse(text); } catch(e) {}
+        if (text.includes('Client Challenge')) {
+          sendResponse({ success: false, ok: false, error: 'Bandcamp bot challenge triggered on email request' });
+          return;
+        }
+        if (data && data.ok === false) {
+          sendResponse({ success: false, ok: false, error: data.error || data.error_message || 'Bandcamp rejected email dispatch', data });
+          return;
+        }
+        sendResponse({ success: true, ok: true, data });
       } catch (err) {
-        sendResponse({ success: false, error: err.message });
+        sendResponse({ success: false, ok: false, error: err.message });
       }
     })();
     return true;
@@ -389,7 +437,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         const res = await fetch(url.toString(), {
           redirect: 'follow',
-          headers: { 'Accept': 'application/json, text/plain, */*' }
+          headers: { 'Accept': 'application/json, text/plain, */*' },
+          signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined
         });
         const text = await res.text();
         if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
@@ -410,7 +459,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({ success: false, error: 'Non-JSON response from GAS webhook', raw: text.slice(0, 300) });
         }
       } catch (err) {
-        sendResponse({ success: false, error: err.message });
+        sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
       }
     })();
     return true;
@@ -431,7 +480,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         const res = await fetch(url.toString(), {
           redirect: 'follow',
-          headers: { 'Accept': 'application/json, text/plain, */*' }
+          headers: { 'Accept': 'application/json, text/plain, */*' },
+          signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined
         });
         const text = await res.text();
         if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
@@ -460,22 +510,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
         }
       } catch (err) {
-        sendResponse({ success: false, ok: false, error: err.message });
+        sendResponse({ success: false, ok: false, error: err && err.message ? err.message : String(err) });
       }
     })();
     return true;
   }
 
+  // 5c. Register custom filename before download
+  if (request.action === 'REGISTER_DOWNLOAD_FILENAME') {
+    if (request.url && request.filename) {
+      const clean = sanitizeChromeDownloadFilename(request.filename);
+      pendingUrlFilenameMap.set(request.url, clean);
+    }
+    sendResponse({ success: true });
+    return true;
+  }
+
   // 6. Download file via Chrome Downloads API
   if (request.action === 'DOWNLOAD_FILE') {
+    const rawFilename = request.filename || 'download.zip';
+    const cleanFilename = sanitizeChromeDownloadFilename(rawFilename);
+    pendingUrlFilenameMap.set(request.url, cleanFilename);
+
     chrome.downloads.download({
       url: request.url,
-      filename: request.filename || 'Bandcamp/download',
+      filename: cleanFilename,
       conflictAction: 'uniquify'
     }, (downloadId) => {
       if (chrome.runtime.lastError) {
+        pendingUrlFilenameMap.delete(request.url);
         sendResponse({ success: false, error: chrome.runtime.lastError.message });
       } else {
+        if (downloadId) {
+          downloadFilenameMap.set(downloadId, cleanFilename);
+        }
         sendResponse({ success: true, downloadId });
       }
     });
@@ -506,9 +574,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 8. Open dashboard tab
   if (request.action === 'OPEN_DASHBOARD_TAB') {
-    const targetUrl = request.url ? ('dashboard.html?url=' + encodeURIComponent(request.url)) : 'dashboard.html';
-    chrome.tabs.create({ url: chrome.runtime.getURL(targetUrl) });
-    sendResponse({ success: true });
+    let targetUrl = 'dashboard.html';
+    const params = [];
+    if (request.url) params.push('url=' + encodeURIComponent(request.url));
+    if (request.autostart) params.push('autostart=1');
+    if (params.length > 0) targetUrl += '?' + params.join('&');
+    chrome.tabs.create({ url: chrome.runtime.getURL(targetUrl) }, (tab) => {
+      sendResponse({ success: true, tabId: tab ? tab.id : null });
+    });
     return true;
   }
 });
@@ -610,6 +683,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse(scanFullDiscography());
     }
   });
+
+  // Non-intrusive floating button on Bandcamp pages to open Dedicated Scanner Tab directly
+  function injectPageButton() {
+    if (document.getElementById('bc-bulk-open-tab-btn')) return;
+    const btn = document.createElement('button');
+    btn.id = 'bc-bulk-open-tab-btn';
+    btn.textContent = '⚡ Open Dedicated Tab';
+    btn.title = 'Open Bandcamp Bulk Downloader Live Scanner for this catalog';
+    btn.style.cssText = 'position:fixed;bottom:22px;right:22px;z-index:999999;background:#00b4d8;color:#0b0f17;font-weight:700;font-size:12px;padding:8px 14px;border:none;border-radius:20px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.45);font-family:sans-serif;transition:transform 0.15s,box-shadow 0.15s;';
+    btn.onmouseenter = function() { btn.style.transform = 'scale(1.05)'; };
+    btn.onmouseleave = function() { btn.style.transform = 'scale(1)'; };
+    btn.onclick = function(e) {
+      e.preventDefault();
+      chrome.runtime.sendMessage({
+        action: 'OPEN_DASHBOARD_TAB',
+        url: window.location.href,
+        autostart: false
+      });
+    };
+    document.body.appendChild(btn);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectPageButton);
+  } else {
+    injectPageButton();
+  }
 })();
 `
   },
@@ -785,10 +885,41 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeUrl = 'https://esoctrilihum.bandcamp.com/music';
   let activeHostname = 'esoctrilihum.bandcamp.com';
 
+  function normalizeUrl(raw) {
+    if (!raw) return 'https://esoctrilihum.bandcamp.com/music';
+    var c = raw.trim();
+    if (c.indexOf('url=') !== -1) {
+      var m = c.match(/url=([^&]+)/);
+      if (m) {
+        try { c = decodeURIComponent(m[1]); } catch(e) { c = m[1]; }
+      }
+    }
+    try {
+      if (c.indexOf('%3A') !== -1 || c.indexOf('%2F') !== -1) c = decodeURIComponent(c);
+    } catch(e) {}
+    c = c.replace(new RegExp('(/music)+$', 'i'), '/music');
+    while (c.endsWith('/')) c = c.slice(0, -1);
+    if (c.indexOf('http://') !== 0 && c.indexOf('https://') !== 0) c = 'https://' + c;
+    try {
+      var u = new URL(c);
+      if (u.hostname.endsWith('.bandcamp.com') && (u.pathname === '' || u.pathname === '/')) {
+        c = u.origin + '/music';
+      }
+    } catch(e) {}
+    return c;
+  }
+
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs[0];
-    if (tab && tab.url && tab.url.includes('bandcamp.com')) {
-      activeUrl = tab.url;
+    const tab = tabs && tabs[0];
+    if (
+      tab &&
+      tab.url &&
+      !tab.url.startsWith('chrome-extension://') &&
+      !tab.url.startsWith('moz-extension://') &&
+      !tab.url.includes('dashboard.html') &&
+      (tab.url.includes('.bandcamp.com') || tab.url.includes('bandcamp.com/'))
+    ) {
+      activeUrl = normalizeUrl(tab.url);
       try {
         activeHostname = new URL(activeUrl).hostname;
       } catch(e) {}
@@ -798,7 +929,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const sessionKey = 'bc_session_v2_' + activeHostname.toLowerCase();
     chrome.storage.local.get([sessionKey], (res) => {
-      const sess = res[sessionKey];
+      const sess = res && res[sessionKey];
       if (sess && sess.items) {
         const itemIds = Object.keys(sess.items);
         const completed = itemIds.filter(id => sess.items[id].stage === 'completed').length;
@@ -823,22 +954,38 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  btnOpenDashboard.addEventListener('click', () => {
-    chrome.runtime.sendMessage({
-      action: 'OPEN_DASHBOARD_TAB',
-      url: activeUrl,
-      autostart: false
-    });
-    window.close();
+  function openDedicatedTab(autostart) {
+    let targetUrl = 'dashboard.html';
+    const params = [];
+    const clean = normalizeUrl(activeUrl);
+    if (clean) params.push('url=' + encodeURIComponent(clean));
+    if (autostart) params.push('autostart=1');
+    if (params.length > 0) targetUrl += '?' + params.join('&');
+
+    const fullUrl = chrome.runtime.getURL(targetUrl);
+    if (chrome.tabs && chrome.tabs.create) {
+      chrome.tabs.create({ url: fullUrl }, () => {
+        window.close();
+      });
+    } else {
+      chrome.runtime.sendMessage({
+        action: 'OPEN_DASHBOARD_TAB',
+        url: activeUrl,
+        autostart: Boolean(autostart)
+      }, () => {
+        window.close();
+      });
+    }
+  }
+
+  btnOpenDashboard.addEventListener('click', (e) => {
+    e.preventDefault();
+    openDedicatedTab(false);
   });
 
-  btnQuickResume.addEventListener('click', () => {
-    chrome.runtime.sendMessage({
-      action: 'OPEN_DASHBOARD_TAB',
-      url: activeUrl,
-      autostart: true
-    });
-    window.close();
+  btnQuickResume.addEventListener('click', (e) => {
+    e.preventDefault();
+    openDedicatedTab(true);
   });
 });
 `

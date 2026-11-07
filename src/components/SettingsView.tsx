@@ -149,6 +149,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </label>
           </div>
 
+          {/* Default Download Target Scope */}
+          <div className="space-y-2">
+            <label className="block text-sm font-semibold text-white flex items-center gap-2">
+              <FolderArchive className="w-4 h-4 text-cyan-400" />
+              <span>Default Download Target</span>
+            </label>
+            <select
+              value={formState.defaultDownloadScope || 'both'}
+              onChange={(e) =>
+                setFormState((prev) => ({
+                  ...prev,
+                  defaultDownloadScope: e.target.value as 'both' | 'audio' | 'info',
+                }))
+              }
+              className="w-full px-4 py-2.5 bg-[#0b0f17] border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-cyan-400"
+            >
+              <option value="both" className="bg-[#111827]">
+                Audio & Companion Info Archive (Both) — Default
+              </option>
+              <option value="audio" className="bg-[#111827]">
+                Studio Audio Master Only (FLAC / MP3)
+              </option>
+              <option value="info" className="bg-[#111827]">
+                Companion Info Archive Only (info.txt, cover, artist, photos, lyrics)
+              </option>
+            </select>
+            <p className="text-xs text-slate-400">
+              Can also be customized per-release directly in the Live Scanner catalog grid or table.
+            </p>
+          </div>
+
           {/* Preferred Format */}
           <div className="space-y-2">
             <label className="block text-sm font-semibold text-white flex items-center gap-2">

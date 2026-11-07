@@ -59,19 +59,38 @@ export const storage = {
 };
 
 /**
- * Background RPC helper for Chrome Extension
+ * Background RPC helper for Chrome Extension with timeout safeguard
  */
-function sendExtensionMessage<T = any>(message: any): Promise<T> {
+function sendExtensionMessage<T = any>(message: any, timeoutMs = 25000): Promise<T> {
   return new Promise((resolve, reject) => {
-    if (!chrome.runtime?.sendMessage) {
+    if (!chrome?.runtime?.sendMessage) {
       return reject(new Error('chrome.runtime.sendMessage is not available'));
     }
-    chrome.runtime.sendMessage(message, (response: any) => {
-      if (chrome.runtime.lastError) {
-        return reject(new Error(chrome.runtime.lastError.message));
+
+    let completed = false;
+    const timer = setTimeout(() => {
+      if (completed) return;
+      completed = true;
+      reject(new Error(`Extension background worker timed out after ${Math.round(timeoutMs / 1000)}s (action: ${message?.action})`));
+    }, timeoutMs);
+
+    try {
+      chrome.runtime.sendMessage(message, (response: any) => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timer);
+        if (chrome.runtime?.lastError) {
+          return reject(new Error(chrome.runtime.lastError.message));
+        }
+        resolve(response);
+      });
+    } catch (err: any) {
+      if (!completed) {
+        completed = true;
+        clearTimeout(timer);
+        reject(err);
       }
-      resolve(response);
-    });
+    }
   });
 }
 
@@ -86,7 +105,13 @@ export const apiClient = {
       return new Promise((resolve) => {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any) => {
           const tabUrl = tabs?.[0]?.url;
-          if (tabUrl && tabUrl.includes('bandcamp.com')) {
+          if (
+            tabUrl &&
+            !tabUrl.startsWith('chrome-extension://') &&
+            !tabUrl.startsWith('moz-extension://') &&
+            !tabUrl.includes('dashboard.html') &&
+            (tabUrl.includes('.bandcamp.com') || tabUrl.includes('bandcamp.com/'))
+          ) {
             resolve(tabUrl);
           } else {
             resolve(null);
@@ -176,16 +201,28 @@ export const apiClient = {
       return sendExtensionMessage({
         action: 'CHECK_GAS_WEBHOOK',
         ...params,
-      });
+      }, 15000);
     }
 
-    const res = await fetch('/api/bandcamp/check-gas-webhook', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    if (!res.ok) throw new Error(`GAS check HTTP ${res.status}`);
-    return res.json();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const res = await fetch('/api/bandcamp/check-gas-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) throw new Error(`GAS check HTTP ${res.status}`);
+      return res.json();
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        return { found: false, error: 'GAS check timed out after 12s' };
+      }
+      throw err;
+    }
   },
 
   async testGasWebhook(params: { webhookUrl: string; secret: string }): Promise<any> {
@@ -193,18 +230,34 @@ export const apiClient = {
       return sendExtensionMessage({
         action: 'TEST_GAS_WEBHOOK',
         ...params,
-      });
+      }, 15000);
     }
 
-    const res = await fetch('/api/bandcamp/test-gas-webhook', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    return res.json();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const res = await fetch('/api/bandcamp/test-gas-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      return res.json();
+    } catch (err: any) {
+      clearTimeout(timeout);
+      return { ok: false, success: false, error: err.name === 'AbortError' ? 'Webhook test timed out after 12s' : err.message };
+    }
   },
 
-  async triggerEmailDownload(origin: string, formatId: string, itemId: number, itemType: string, email: string): Promise<any> {
+  async triggerEmailDownload(
+    origin: string,
+    formatId: string,
+    itemId: number,
+    itemType: string,
+    email: string,
+    itemUrl?: string
+  ): Promise<any> {
     if (isExtension) {
       return sendExtensionMessage({
         action: 'TRIGGER_EMAIL',
@@ -213,6 +266,7 @@ export const apiClient = {
         itemId,
         itemType,
         email,
+        itemUrl,
       });
     }
 
@@ -224,6 +278,7 @@ export const apiClient = {
         itemId,
         itemType,
         email,
+        itemUrl,
         triggerEmailOnly: true,
       }),
     });
@@ -236,7 +291,7 @@ export const apiClient = {
       await sendExtensionMessage({
         action: 'DOWNLOAD_FILE',
         url: downloadUrl,
-        filename: 'Bandcamp/' + filename,
+        filename,
       });
       return;
     }
@@ -253,6 +308,37 @@ export const apiClient = {
 
   async downloadBlob(blob: Blob, filename: string): Promise<void> {
     if (isExtension) {
+      if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
+        const blobUrl = URL.createObjectURL(blob);
+        try {
+          await sendExtensionMessage({
+            action: 'REGISTER_DOWNLOAD_FILENAME',
+            url: blobUrl,
+            filename,
+          });
+          await new Promise<void>((resolve, reject) => {
+            chrome.downloads.download(
+              {
+                url: blobUrl,
+                filename,
+                conflictAction: 'uniquify',
+              },
+              (downloadId: any) => {
+                if (chrome.runtime.lastError) {
+                  reject(new Error(chrome.runtime.lastError.message));
+                } else {
+                  resolve();
+                }
+              }
+            );
+          });
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
+          return;
+        } catch (e) {
+          console.warn('Direct blob chrome.downloads error, falling back to base64:', e);
+        }
+      }
+
       const reader = new FileReader();
       const base64Data = await new Promise<string>((resolve, reject) => {
         reader.onloadend = () => resolve(reader.result as string);
@@ -263,7 +349,7 @@ export const apiClient = {
       await sendExtensionMessage({
         action: 'DOWNLOAD_FILE',
         url: base64Data,
-        filename: 'Bandcamp/' + filename,
+        filename,
       });
       return;
     }

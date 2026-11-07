@@ -145,6 +145,144 @@ function extractArtistBioPicUrl(html, tralbum, globalBioUrl) {
   return globalBioUrl || undefined;
 }
 
+function cleanBandcampUrl(input) {
+  if (!input) return '';
+  var cleaned = input.trim();
+  if (cleaned.indexOf('url=') !== -1) {
+    var match = cleaned.match(/url=([^&]+)/);
+    if (match) {
+      try {
+        cleaned = decodeURIComponent(match[1]);
+      } catch (e) {
+        cleaned = match[1];
+      }
+    }
+  }
+  try {
+    if (cleaned.indexOf('%3A') !== -1 || cleaned.indexOf('%2F') !== -1 || cleaned.indexOf('%3a') !== -1 || cleaned.indexOf('%2f') !== -1) {
+      cleaned = decodeURIComponent(cleaned);
+    }
+  } catch (e) {}
+  cleaned = cleaned.replace(new RegExp('(/music)+$', 'i'), '/music');
+  while (cleaned.endsWith('/')) cleaned = cleaned.slice(0, -1);
+  if (cleaned.indexOf('http://') !== 0 && cleaned.indexOf('https://') !== 0) {
+    cleaned = 'https://' + cleaned;
+  }
+  try {
+    var parsed = new URL(cleaned);
+    if (parsed.hostname.endsWith('.bandcamp.com') && (parsed.pathname === '' || parsed.pathname === '/')) {
+      cleaned = parsed.origin + '/music';
+    }
+  } catch (e) {}
+  return cleaned;
+}
+
+function extractImageNumericId(url) {
+  if (!url) return '';
+  var m = url.match(/[a0-9]*?(\\d{6,})_/);
+  return m ? m[1].replace(/^0+/, '') : '';
+}
+
+function cleanPhotoSectionTitle(rawTitle) {
+  if (!rawTitle) return '';
+  var clean = cleanHtmlText(rawTitle);
+  clean = clean.replace(/["'“”‘’]/g, '');
+  clean = clean.replace(/[:*?"<>|\\\\/]/g, ' - ');
+  clean = clean.replace(/\\s*-\\s*-\\s*/g, ' - ');
+  clean = clean.replace(/\\s{2,}/g, ' ');
+  clean = clean.replace(/^[\\s\\-_.]+/, '').replace(/[\\s\\-_.]+$/, '');
+  return clean;
+}
+
+function extractExtraPhotosWithTitles(html, artUrl, artistBioPicUrl) {
+  var coverId = extractImageNumericId(artUrl);
+  var bioId = extractImageNumericId(artistBioPicUrl);
+
+  var seenIds = new Set();
+  if (coverId) seenIds.add(coverId);
+  if (bioId) seenIds.add(bioId);
+
+  var extraPhotos = [];
+
+  function addPhoto(rawUrl, sectionTitle) {
+    if (!rawUrl || typeof rawUrl !== 'string') return;
+    var cleanUrl = rawUrl.indexOf('//') === 0 ? ('https:' + rawUrl) : rawUrl;
+    var highResUrl = cleanUrl.replace(/_\\d+\\.jpg/, '_10.jpg');
+    var id = extractImageNumericId(highResUrl);
+    if (!id || seenIds.has(id)) return;
+    seenIds.add(id);
+
+    var title = cleanPhotoSectionTitle(sectionTitle || '');
+    extraPhotos.push({
+      url: highResUrl,
+      title: title || undefined,
+    });
+  }
+
+  var packageMatches = Array.from(
+    html.matchAll(/<(?:li|div)[^>]*class="[^"]*(?:package|merch-item|buyItem)[^"]*"[^>]*>([\\s\\S]*?)<\\/(?:li|div)>/gi)
+  );
+
+  for (var i = 0; i < packageMatches.length; i++) {
+    var block = packageMatches[i][1];
+    var titleMatch =
+      block.match(/class="[^"]*(?:package-title|merch-item-title|title)[^"]*"[^>]*>([\\s\\S]*?)<\\//i) ||
+      block.match(/<h[34][^>]*>([\\s\\S]*?)<\\/h[34]>/i) ||
+      block.match(/class="popupImage"[^>]*title="([^"]+)"/i) ||
+      block.match(/<img[^>]*alt="([^"]+)"/i);
+    var sectionTitle = titleMatch ? titleMatch[1] : '';
+
+    var imgUrls = Array.from(
+      block.matchAll(/(?:href|src|data-original)="([^"]*bcbits\\.com\\/img\\/a\\d+_\\d+\\.jpg)"/gi)
+    ).map(function(m) { return m[1]; });
+    for (var j = 0; j < imgUrls.length; j++) {
+      addPhoto(imgUrls[j], sectionTitle);
+    }
+  }
+
+  var popupAnchors = Array.from(
+    html.matchAll(/<a[^>]*class="[^"]*popupImage[^"]*"[^>]*href="([^"]+)"[^>]*>([\\s\\S]*?)<\\/a>/gi)
+  );
+  for (var k = 0; k < popupAnchors.length; k++) {
+    var pa = popupAnchors[k];
+    var href = pa[1];
+    var inner = pa[2];
+    var aTitleMatch = pa[0].match(/title="([^"]+)"/i) || inner.match(/alt="([^"]+)"/i);
+    addPhoto(href, aTitleMatch ? aTitleMatch[1] : '');
+  }
+
+  var moreThumbsMatch = html.match(/<ul[^>]*class="[^"]*more-thumbs[^"]*"[^>]*>([\\s\\S]*?)<\\/ul>/i);
+  if (moreThumbsMatch) {
+    var thumbBlocks = Array.from(moreThumbsMatch[1].matchAll(/<li[^>]*>([\\s\\S]*?)<\\/li>/gi));
+    for (var m = 0; m < thumbBlocks.length; m++) {
+      var uMatch = thumbBlocks[m][1].match(/(?:href|src|data-original)="([^"]*bcbits\\.com\\/img\\/a\\d+_\\d+\\.jpg)"/i);
+      var tMatch = thumbBlocks[m][1].match(/(?:title|alt)="([^"]+)"/i);
+      if (uMatch) {
+        addPhoto(uMatch[1], tMatch ? tMatch[1] : '');
+      }
+    }
+  }
+
+  var imgTags = Array.from(
+    html.matchAll(/<img[^>]*src="([^"]*bcbits\\.com\\/img\\/a\\d+_\\d+\\.jpg)"[^>]*alt="([^"]*)"/gi)
+  );
+  for (var n = 0; n < imgTags.length; n++) {
+    addPhoto(imgTags[n][1], imgTags[n][2]);
+  }
+
+  var fallbackUrls = Array.from(html.matchAll(/https?:\\/\\/[a-z0-9.]*bcbits\\.com\\/img\\/a\\d+_10\\.jpg/gi)).map(
+    function(m) { return m[0]; }
+  );
+  for (var f = 0; f < fallbackUrls.length; f++) {
+    addPhoto(fallbackUrls[f], '');
+  }
+
+  return {
+    extraImages: extraPhotos.map(function(p) { return p.url; }),
+    extraPhotos: extraPhotos,
+  };
+}
+
 /**
  * Comprehensive release parser extracting untruncated liner notes, credits, tracklist with durations, tags, lyrics, and photos.
  */
@@ -213,17 +351,16 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
     });
   }
 
-  // Artwork & extra packaging photos
+  // Artwork & artist bio picture
   var artId = tralbum ? tralbum.art_id : null;
   var artUrl = artId ? ('https://f4.bcbits.com/img/a' + artId + '_10.jpg') : (item.artUrl || '');
-
-  var popupImages = Array.from(subHtml.matchAll(/href="([^"]+a\\d+_10\\.jpg)"/gi)).map(function(m) { return m[1]; });
-  var imgMatches = Array.from(subHtml.matchAll(/src="([^"]+a\\d+_10\\.jpg)"/gi)).map(function(m) { return m[1]; });
-  var moreThumbs = Array.from(subHtml.matchAll(/data-original="([^"]+a\\d+_10\\.jpg)"/gi)).map(function(m) { return m[1]; });
-  var allImages = Array.from(new Set(popupImages.concat(imgMatches, moreThumbs))).filter(function(u) { return u !== artUrl; });
-
-  // Artist Bio Picture (for artist.jpg)
   var artistBioPicUrl = extractArtistBioPicUrl(subHtml, tralbum, globalArtistBioPicUrl);
+
+  // Extract extra packaging photos with guessed section titles (excluding cover & artist bio duplicates)
+  var photoData = extractExtraPhotosWithTitles(subHtml, artUrl, artistBioPicUrl);
+  var extraImages = photoData.extraImages;
+  var extraPhotos = photoData.extraPhotos;
+  var allImages = extraImages;
 
   // Untruncated liner notes / about
   var aboutMatch = subHtml.match(/class="[^"]*tralbum-about[^"]*"[^>]*>([\\s\\S]*?)<\\/div>/i) ||
@@ -354,7 +491,8 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
     artist: artist,
     artUrl: artUrl,
     artistBioPicUrl: artistBioPicUrl,
-    extraImages: allImages,
+    extraImages: extraImages,
+    extraPhotos: extraPhotos,
     allImages: allImages,
     humanDate: humanDate,
     dotDate: dotDate,

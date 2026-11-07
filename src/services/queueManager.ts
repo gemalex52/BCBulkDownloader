@@ -13,9 +13,23 @@ import {
 const SETTINGS_KEY = 'bc_global_settings_v2';
 const SESSIONS_INDEX_KEY = 'bc_sessions_index_v2';
 
+const sessionMemoryCache = new Map<string, SiteQueueSession>();
+
 export function getDomainHostname(urlOrOrigin: string): string {
   try {
-    const u = new URL(urlOrOrigin.startsWith('http') ? urlOrOrigin : `https://${urlOrOrigin}`);
+    if (!urlOrOrigin) return '';
+    let target = urlOrOrigin.trim();
+    if (target.includes('url=')) {
+      const match = target.match(/url=([^&]+)/);
+      if (match) {
+        try {
+          target = decodeURIComponent(match[1]);
+        } catch (e) {
+          target = match[1];
+        }
+      }
+    }
+    const u = new URL(target.startsWith('http') ? target : `https://${target}`);
     return u.hostname.toLowerCase();
   } catch (e) {
     return urlOrOrigin.replace(/[^a-zA-Z0-9.-]/g, '').toLowerCase();
@@ -98,12 +112,18 @@ export function registerSessionHostname(hostname: string): void {
 }
 
 export function loadSiteSession(hostname: string): SiteQueueSession | null {
+  const norm = (hostname || '').toLowerCase();
+  if (sessionMemoryCache.has(norm)) {
+    return sessionMemoryCache.get(norm)!;
+  }
   try {
     if (typeof localStorage !== 'undefined') {
-      const key = getSessionKey(hostname);
+      const key = getSessionKey(norm);
       const raw = localStorage.getItem(key);
       if (raw) {
-        return JSON.parse(raw);
+        const sess = JSON.parse(raw);
+        sessionMemoryCache.set(norm, sess);
+        return sess;
       }
     }
   } catch (e) {
@@ -113,11 +133,16 @@ export function loadSiteSession(hostname: string): SiteQueueSession | null {
 }
 
 export async function loadSiteSessionAsync(hostname: string): Promise<SiteQueueSession | null> {
+  const norm = (hostname || '').toLowerCase();
+  if (sessionMemoryCache.has(norm)) {
+    return sessionMemoryCache.get(norm)!;
+  }
   if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-    const key = getSessionKey(hostname);
+    const key = getSessionKey(norm);
     return new Promise<SiteQueueSession | null>((resolve) => {
       chrome.storage.local.get([key], (res: any) => {
         if (res && res[key]) {
+          sessionMemoryCache.set(norm, res[key]);
           resolve(res[key]);
         } else {
           resolve(loadSiteSession(hostname));
@@ -130,10 +155,14 @@ export async function loadSiteSessionAsync(hostname: string): Promise<SiteQueueS
 
 export function saveSiteSession(session: SiteQueueSession): void {
   try {
-    const key = getSessionKey(session.hostname);
+    const norm = (session.hostname || '').toLowerCase();
+    const key = getSessionKey(norm);
     session.updatedAt = new Date().toISOString();
+    sessionMemoryCache.set(norm, session);
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, JSON.stringify(session));
+      try {
+        localStorage.setItem(key, JSON.stringify(session));
+      } catch (e) {}
     }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ [key]: session });
@@ -169,6 +198,8 @@ export function initSiteSession(
       artUrl: rel.artUrl,
       artistBioPicUrl: rel.artistBioPicUrl,
       extraImages: rel.extraImages,
+      extraPhotos: rel.extraPhotos,
+      downloadScope: rel.downloadScope || prev?.downloadScope || 'both',
       releaseDate: rel.releaseDate,
       isoDate: rel.isoDate,
       isFree: rel.isFree,

@@ -10,7 +10,8 @@ interface ScannerBarProps {
   scanProgressText?: string;
   skipTrackSubpages: boolean;
   onToggleSkipTracks: (skip: boolean) => void;
-  onLoadEsoctrilihum: () => void;
+  onLoadEsoctrilihum?: () => void;
+  onResetInitialUrl?: () => void;
   isCached?: boolean;
   cacheTime?: string;
 }
@@ -25,6 +26,7 @@ export const ScannerBar: React.FC<ScannerBarProps> = ({
   skipTrackSubpages,
   onToggleSkipTracks,
   onLoadEsoctrilihum,
+  onResetInitialUrl,
   isCached,
   cacheTime,
 }) => {
@@ -59,7 +61,7 @@ export const ScannerBar: React.FC<ScannerBarProps> = ({
                 onUrlChange(e.target.value);
                 if (inputError) setInputError(null);
               }}
-              placeholder="https://esoctrilihum.bandcamp.com/music"
+              placeholder="https://artistname.bandcamp.com/music"
               className="w-full pl-10 pr-4 py-2.5 bg-[#0b0f17] border border-slate-700/80 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition"
               disabled={isScanning}
             />
@@ -68,12 +70,12 @@ export const ScannerBar: React.FC<ScannerBarProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onLoadEsoctrilihum}
+              onClick={onResetInitialUrl || onLoadEsoctrilihum}
               disabled={isScanning}
               className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition whitespace-nowrap"
-              title="Reset URL to Esoctrilihum template page"
+              title="Reset URL to initial page"
             >
-              Esoctrilihum
+              ↺ Reset URL
             </button>
 
             <button

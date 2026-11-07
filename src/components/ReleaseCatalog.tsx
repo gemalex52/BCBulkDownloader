@@ -29,6 +29,8 @@ interface ReleaseCatalogProps {
   onDeselectAll: () => void;
   onDownloadSingle: (release: ScannedRelease) => void;
   onRetryItem?: (releaseId: string) => void;
+  onSetReleaseScope?: (id: string, scope: 'both' | 'audio' | 'info') => void;
+  onSetBatchScope?: (scope: 'both' | 'audio' | 'info') => void;
 }
 
 export function getReleaseBadgeInfo(r: ScannedRelease) {
@@ -84,6 +86,8 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   onDeselectAll,
   onDownloadSingle,
   onRetryItem,
+  onSetReleaseScope,
+  onSetBatchScope,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'free' | 'email' | 'paid' | 'own'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -213,6 +217,35 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
             >
               Deselect All
             </button>
+
+            {selectedCount > 0 && onSetBatchScope && (
+              <div className="flex items-center gap-1.5 pl-2 border-l border-slate-700/80">
+                <span className="text-[11px] text-slate-400">Target for selected:</span>
+                <div className="flex items-center bg-[#0b0f17] border border-slate-700 rounded-lg p-0.5 text-[11px]">
+                  <button
+                    onClick={() => onSetBatchScope('both')}
+                    className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 font-medium transition"
+                    title="Set selected to download both audio and info archive"
+                  >
+                    Both
+                  </button>
+                  <button
+                    onClick={() => onSetBatchScope('audio')}
+                    className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 font-medium transition"
+                    title="Set selected to download audio master only"
+                  >
+                    Audio only
+                  </button>
+                  <button
+                    onClick={() => onSetBatchScope('info')}
+                    className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 font-medium transition"
+                    title="Set selected to download companion info archive only"
+                  >
+                    Info only
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Search and View Mode Switch */}
@@ -458,6 +491,49 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                         ))}
                       </div>
                     )}
+
+                    {/* Download Target Scope Selector */}
+                    <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                      <span className="text-slate-400 font-medium">Download:</span>
+                      <div className="inline-flex items-center bg-[#0b0f17] border border-slate-700/80 rounded-lg p-0.5 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => onSetReleaseScope?.(release.id, 'both')}
+                          className={`px-2 py-0.5 rounded transition ${
+                            (release.downloadScope || 'both') === 'both'
+                              ? 'bg-cyan-500/20 text-cyan-300 font-semibold'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                          title="Download studio audio + companion info ZIP"
+                        >
+                          Both
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onSetReleaseScope?.(release.id, 'audio')}
+                          className={`px-2 py-0.5 rounded transition ${
+                            release.downloadScope === 'audio'
+                              ? 'bg-cyan-500/20 text-cyan-300 font-semibold'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                          title="Download studio audio only (FLAC / MP3)"
+                        >
+                          Audio
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onSetReleaseScope?.(release.id, 'info')}
+                          className={`px-2 py-0.5 rounded transition ${
+                            release.downloadScope === 'info'
+                              ? 'bg-cyan-500/20 text-cyan-300 font-semibold'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                          title="Download companion info archive only (info.txt, cover, artist, photos, lyrics)"
+                        >
+                          Info
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Actions & Tracklist Accordion */}
@@ -549,6 +625,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                   <th className="p-3 w-14">Cover</th>
                   <th className="p-3">Title & Artist</th>
                   <th className="p-3">Pricing Status</th>
+                  <th className="p-3">Target</th>
                   <th className="p-3">Queue Status</th>
                   <th className="p-3 text-right">Tracks</th>
                   <th className="p-3">Date</th>
@@ -603,6 +680,46 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                             </span>
                           );
                         })()}
+                      </td>
+                      <td className="p-3">
+                        <div className="inline-flex items-center bg-[#0b0f17] border border-slate-700/80 rounded-lg p-0.5 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => onSetReleaseScope?.(release.id, 'both')}
+                            className={`px-1.5 py-0.5 rounded transition ${
+                              (release.downloadScope || 'both') === 'both'
+                                ? 'bg-cyan-500/20 text-cyan-300 font-semibold'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                            title="Audio + Info"
+                          >
+                            Both
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onSetReleaseScope?.(release.id, 'audio')}
+                            className={`px-1.5 py-0.5 rounded transition ${
+                              release.downloadScope === 'audio'
+                                ? 'bg-cyan-500/20 text-cyan-300 font-semibold'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                            title="Audio only"
+                          >
+                            Audio
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onSetReleaseScope?.(release.id, 'info')}
+                            className={`px-1.5 py-0.5 rounded transition ${
+                              release.downloadScope === 'info'
+                                ? 'bg-cyan-500/20 text-cyan-300 font-semibold'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                            title="Info only"
+                          >
+                            Info
+                          </button>
+                        </div>
                       </td>
                       <td className="p-3">
                         {renderStageBadge(qItem) || <span className="text-slate-500">—</span>}
