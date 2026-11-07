@@ -32,11 +32,21 @@ import {
   sleep,
 } from './services/queueManager';
 
+import { storage, apiClient, isExtension } from './services/unifiedClient';
+import { setDebugLogging, debugLog } from './services/bandcampCore';
+
 const DEFAULT_URL = 'https://esoctrilihum.bandcamp.com/music';
 const SETTINGS_STORAGE_KEY = 'bc_app_settings_v2';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<'scanner' | 'extension' | 'guide' | 'settings'>('scanner');
+
+  useEffect(() => {
+    if (isExtension && (currentTab === 'extension' || currentTab === 'guide')) {
+      setCurrentTab('scanner');
+    }
+  }, [currentTab]);
+
   const [url, setUrl] = useState(DEFAULT_URL);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgressText, setScanProgressText] = useState('');
@@ -52,35 +62,53 @@ export default function App() {
   const [pacingNotice, setPacingNotice] = useState<string>('');
   const isCancelledRef = useRef(false);
 
-  // App Settings with localStorage persistence
+  // App Settings with storage adapter persistence (chrome.storage.local & localStorage)
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
-      const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      if (saved) {
-        return { ...DEFAULT_APP_SETTINGS, ...JSON.parse(saved) };
+      if (typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
+        if (saved) {
+          const parsed = { ...DEFAULT_APP_SETTINGS, ...JSON.parse(saved) };
+          setDebugLogging(Boolean(parsed.debugLogging));
+          return parsed;
+        }
       }
     } catch (e) {}
     return { ...DEFAULT_APP_SETTINGS };
   });
 
+  // Sync debug logging flag whenever settings change
   useEffect(() => {
+    setDebugLogging(Boolean(settings.debugLogging));
+    storage.set(SETTINGS_STORAGE_KEY, settings);
     try {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+      }
     } catch (e) {}
   }, [settings]);
 
+  // Load async settings from chrome.storage.local on mount
+  useEffect(() => {
+    (async () => {
+      const asyncSettings = await storage.get<AppSettings>(SETTINGS_STORAGE_KEY);
+      if (asyncSettings) {
+        setSettings((prev) => ({ ...prev, ...asyncSettings }));
+        setDebugLogging(Boolean(asyncSettings.debugLogging));
+      }
+    })();
+  }, []);
+
   // Extension mode: Auto-detect active Bandcamp tab URL if opened from browser extension
   useEffect(() => {
-    if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tabUrl = tabs?.[0]?.url;
-        if (tabUrl && tabUrl.includes('bandcamp.com')) {
-          const cleanUrl = tabUrl.includes('/music') ? tabUrl : (tabUrl.replace(/\/+$/, '') + '/music');
-          setUrl(cleanUrl);
-          loadFromLocalCache(cleanUrl);
-        }
-      });
-    }
+    (async () => {
+      const activeUrl = await apiClient.fetchActiveTabUrl();
+      if (activeUrl) {
+        const cleanUrl = activeUrl.includes('/music') ? activeUrl : (activeUrl.replace(/\/+$/, '') + '/music');
+        setUrl(cleanUrl);
+        loadFromLocalCache(cleanUrl);
+      }
+    })();
   }, []);
 
   const activeEventSourceRef = useRef<EventSource | null>(null);
@@ -88,66 +116,93 @@ export default function App() {
   // Synchronize or load session whenever URL or releases change
   const currentHostname = getDomainHostname(url);
 
-  const syncSessionFromStorage = (hostname: string) => {
+  const syncSessionFromStorage = (hostname: string): SiteQueueSession | null => {
     const sess = loadSiteSession(hostname);
     if (sess) {
       setCurrentSession(sess);
+      return sess;
     }
-    return sess;
+    if (isExtension) {
+      const key = `bc_session_v2_${hostname.toLowerCase()}`;
+      storage.get<SiteQueueSession>(key).then((extSess) => {
+        if (extSess) {
+          setCurrentSession(extSess);
+        }
+      });
+    }
+    return null;
   };
 
-  // Helper to load cached catalog from localStorage
+  // Helper to load cached catalog from localStorage or chrome.storage.local
   const loadFromLocalCache = (targetUrl: string): boolean => {
     try {
       const hName = getDomainHostname(targetUrl);
       const sess = syncSessionFromStorage(hName);
 
       const cacheKey = `bc_cache_v7_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
-      const cachedRaw = localStorage.getItem(cacheKey);
-      if (cachedRaw) {
-        const cached = JSON.parse(cachedRaw);
-        if (cached.releases && Array.isArray(cached.releases) && cached.releases.length > 0) {
-          setReleases(cached.releases);
-          setScanMeta({
-            source: 'local_cache',
-            timestamp: new Date(cached.scannedAt).toLocaleTimeString(),
-          });
-          setScanProgressText(
-            `Loaded ${cached.releases.length} releases from cache (${cached.releases.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
-          );
-
-          if (!sess) {
-            const newSess = initSiteSession(hName, new URL(targetUrl).origin, cached.artist || 'Artist', targetUrl, cached.releases);
-            setCurrentSession(newSess);
-          }
-          return true;
+      let cached: any = null;
+      if (typeof localStorage !== 'undefined') {
+        const cachedRaw = localStorage.getItem(cacheKey);
+        if (cachedRaw) {
+          try { cached = JSON.parse(cachedRaw); } catch (e) {}
         }
       }
+
+      if (cached && cached.releases && Array.isArray(cached.releases) && cached.releases.length > 0) {
+        setReleases(cached.releases);
+        setScanMeta({
+          source: 'local_cache',
+          timestamp: new Date(cached.scannedAt).toLocaleTimeString(),
+        });
+        setScanProgressText(
+          `Loaded ${cached.releases.length} releases from cache (${cached.releases.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
+        );
+
+        if (!sess) {
+          const newSess = initSiteSession(hName, new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`).origin, cached.artist || 'Artist', targetUrl, cached.releases);
+          setCurrentSession(newSess);
+        }
+        return true;
+      } else if (isExtension) {
+        storage.get<any>(cacheKey).then((asyncCached) => {
+          if (asyncCached?.releases && Array.isArray(asyncCached.releases) && asyncCached.releases.length > 0) {
+            setReleases(asyncCached.releases);
+            setScanMeta({
+              source: 'local_cache',
+              timestamp: new Date(asyncCached.scannedAt).toLocaleTimeString(),
+            });
+            setScanProgressText(
+              `Loaded ${asyncCached.releases.length} releases from cache (${asyncCached.releases.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
+            );
+          }
+        });
+      }
     } catch (e) {
-      console.warn('Failed to read from localStorage cache:', e);
+      console.warn('Failed to read from cache:', e);
     }
     return false;
   };
 
-  // Helper to save catalog to localStorage
+  // Helper to save catalog to storage
   const saveToLocalCache = (targetUrl: string, artist: string, items: ScannedRelease[]) => {
     try {
       const cacheKey = `bc_cache_v7_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
-      localStorage.setItem(
-        cacheKey,
-        JSON.stringify({
-          scannedAt: new Date().toISOString(),
-          artist,
-          releases: items,
-        })
-      );
+      const cacheObj = {
+        scannedAt: new Date().toISOString(),
+        artist,
+        releases: items,
+      };
+      storage.set(cacheKey, cacheObj);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(cacheKey, JSON.stringify(cacheObj));
+      }
 
       const hName = getDomainHostname(targetUrl);
       const origin = targetUrl.startsWith('http') ? new URL(targetUrl).origin : `https://${hName}`;
       const sess = initSiteSession(hName, origin, artist, targetUrl, items);
       setCurrentSession(sess);
     } catch (e) {
-      console.warn('Failed to write to localStorage cache:', e);
+      console.warn('Failed to write to cache:', e);
     }
   };
 
@@ -168,6 +223,60 @@ export default function App() {
     setIsScanning(true);
     setScanProgressText('Connecting to Bandcamp discography...');
 
+    // Extension Mode: Scan directly through background worker (bypasses CORS and Fastly bot challenge)
+    if (isExtension) {
+      try {
+        debugLog('scanner', 'Starting extension background scan for:', targetUrl);
+        const catRes = await apiClient.discoverCatalog(targetUrl, skipTrackSubpages);
+        if (!catRes || !catRes.success) {
+          throw new Error(catRes?.error || 'Failed to fetch artist catalog');
+        }
+
+        const items = catRes.items || [];
+        const origin = catRes.origin || (targetUrl.startsWith('http') ? new URL(targetUrl).origin : `https://${getDomainHostname(targetUrl)}`);
+        const artistName = catRes.artistName || 'Artist';
+        const artistBioPicUrl = catRes.artistBioPicUrl;
+
+        setScanProgressText(`Discovered ${items.length} releases in catalog. Inspecting metadata...`);
+
+        const inspected: ScannedRelease[] = [];
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          setScanProgressText(`Inspecting release ${i + 1}/${items.length}: ${item.title}...`);
+          try {
+            const inspRes = await apiClient.inspectRelease(origin, artistName, item, artistBioPicUrl);
+            if (inspRes && inspRes.success && inspRes.release) {
+              const rel = {
+                ...inspRes.release,
+                selected: inspRes.release.badgeType !== 'paid',
+              };
+              inspected.push(rel);
+              setReleases([...inspected]);
+            }
+          } catch (itemErr) {
+            console.warn(`Failed inspecting subpage ${item.title}:`, itemErr);
+          }
+        }
+
+        setReleases(inspected);
+        setScanMeta({
+          source: 'extension_live_crawl',
+          timestamp: new Date().toLocaleTimeString(),
+        });
+        saveToLocalCache(targetUrl, artistName, inspected);
+        setScanProgressText(
+          `Finished: ${inspected.length} releases discovered (${inspected.filter((r) => r.badgeType !== 'paid').length} free/email)`
+        );
+      } catch (extErr: any) {
+        console.error('Extension scan error:', extErr);
+        setScanProgressText(`Scan failed: ${extErr.message || 'Unknown error'}`);
+      } finally {
+        setIsScanning(false);
+      }
+      return;
+    }
+
+    // Standalone Web Server Mode: Use SSE stream or batch fallback
     try {
       const streamUrl = `/api/bandcamp/scan-stream?url=${encodeURIComponent(
         targetUrl
@@ -353,6 +462,58 @@ export default function App() {
     completedItems.length > 0 &&
     (pendingItems.length > 0 || failedItems.length > 0);
 
+  // Helper to build QueueItems from selected releases reliably in any environment
+  const buildQueueItemsForReleases = (releasesToRun: ScannedRelease[], session: SiteQueueSession | null): QueueItem[] => {
+    const queueMap = session?.items || {};
+    return releasesToRun.map((r) => {
+      const existing = queueMap[r.id];
+      if (existing) {
+        return {
+          ...existing,
+          stage: existing.stage === 'completed' ? 'completed' : 'pending',
+          error: undefined,
+        };
+      }
+
+      const isEmailEligible = Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
+      const isDirectFree = Boolean(r.freeDownloadPageUrl || r.isPurchased || r.badgeType === 'own' || (!isEmailEligible && (r.isFree || r.badgeType === 'free')));
+      const isPaid = Boolean(
+        r.badgeType === 'paid' ||
+        (!isDirectFree && !isEmailEligible && ((r.minPrice || 0) > 0 || (r as any).isPaid))
+      );
+
+      return {
+        id: r.id,
+        itemId: r.itemId,
+        itemType: r.itemType,
+        title: r.title,
+        artist: r.artist,
+        url: r.url,
+        artUrl: r.artUrl,
+        artistBioPicUrl: r.artistBioPicUrl,
+        extraImages: r.extraImages,
+        releaseDate: r.releaseDate,
+        isoDate: r.isoDate,
+        isFree: r.isFree,
+        isNameYourPrice: r.isNameYourPrice,
+        isPurchased: r.isPurchased,
+        isPaid,
+        badgeType: r.badgeType || (isPaid ? 'paid' : (isDirectFree ? 'free' : 'email')),
+        minPrice: r.minPrice,
+        requiresEmail: r.requiresEmail,
+        stage: 'pending',
+        stageProgress: 0,
+        statusText: r.priceFormatted || 'Pending',
+        audioDownloaded: false,
+        infoZipDownloaded: false,
+        freeDownloadPageUrl: r.freeDownloadPageUrl,
+        retryCount: 0,
+        lastUpdated: new Date().toISOString(),
+        logs: [],
+      };
+    });
+  };
+
   // 1-Click Retry an individual item
   const handleRetryItem = (releaseId: string) => {
     const rel = releases.find((r) => r.id === releaseId);
@@ -367,20 +528,30 @@ export default function App() {
 
   // Execute multi-stage pipeline for a list of queue items
   const runQueuePipeline = async (itemsToProcess: QueueItem[]) => {
+    debugLog('pipeline', `=== Starting queue pipeline: ${itemsToProcess.length} item(s) to process ===`);
+    if (itemsToProcess.length === 0) {
+      console.warn('[BandcampDL:pipeline] runQueuePipeline received 0 items to process.');
+      return;
+    }
+
     setIsDownloading(true);
     isCancelledRef.current = false;
     let successfulDownloadsCount = 0;
 
     for (let i = 0; i < itemsToProcess.length; i++) {
       if (isCancelledRef.current) {
+        debugLog('pipeline', 'Download pipeline cancelled by user.');
         break;
       }
 
       const qItem = itemsToProcess[i];
       const rel = releases.find((r) => r.id === qItem.id) || (qItem as any);
 
+      debugLog('pipeline', `[${i + 1}/${itemsToProcess.length}] Processing "${qItem.title}" (${qItem.itemType}, ID: ${qItem.itemId})...`);
+
       // Helper to update state and session storage
       const logAndSync = (stage: QueueItem['stage'], msg: string, err?: string) => {
+        debugLog('pipeline', `[${qItem.title}] [${stage}] ${msg}`, err || '');
         const updated = appendItemLog(currentHostname, qItem.id, stage, msg, err);
         if (updated) {
           setCurrentSession({ ...updated });
@@ -396,9 +567,11 @@ export default function App() {
           (!isDirectFree && !isEmailEligible && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0 || qItem.isPaid || rel.isPaid))
         );
 
+        const hasGasWatchdog = Boolean(settings.gasWebhookUrl && settings.gasWebhookUrl.trim());
+
         if (!isPaidOnly) {
           // Stage 1: Checking Mailbox via GAS watchdog if configured
-          if (!downloadPageUrl && settings.gasWebhookUrl.trim()) {
+          if (!downloadPageUrl && hasGasWatchdog) {
             logAndSync('checking_mail', 'Searching Gmail via GAS watchdog for existing download link...');
 
             let searchSinceEpoch = 0;
@@ -412,21 +585,15 @@ export default function App() {
             }
 
             try {
-              const checkRes = await fetch('/api/bandcamp/check-gas-webhook', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  webhookUrl: settings.gasWebhookUrl.trim(),
-                  gasUrl: settings.gasWebhookUrl.trim(),
-                  secret: settings.gasSecret.trim(),
-                  releaseId: qItem.itemId,
-                  title: qItem.title,
-                  since: searchSinceEpoch,
-                }),
+              const checkData = await apiClient.checkGasWebhook({
+                webhookUrl: settings.gasWebhookUrl.trim(),
+                secret: settings.gasSecret.trim(),
+                releaseId: qItem.itemId,
+                title: qItem.title,
+                since: searchSinceEpoch,
               });
 
-              const checkData = await checkRes.json();
-              if (checkData.found && checkData.downloadPageUrl) {
+              if (checkData && checkData.found && checkData.downloadPageUrl) {
                 downloadPageUrl = checkData.downloadPageUrl;
                 logAndSync('checking_mail', `Found existing signed download link in Gmail! Skipping new email dispatch.`);
               }
@@ -443,21 +610,14 @@ export default function App() {
             const triggerTime = Math.floor(Date.now() / 1000);
             let emailTriggerOk = false;
             try {
-              const trigRes = await fetch('/api/bandcamp/resolve-download', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  albumUrl: qItem.url,
-                  releaseId: qItem.id,
-                  format: selectedFormat,
-                  email: settings.fallbackEmail || 'listener@example.com',
-                  triggerEmailOnly: true,
-                }),
-              });
-              const trigData = await trigRes.json();
-              if (trigData.isPaid) {
-                emailTriggerOk = false;
-              } else {
+              const trigData = await apiClient.triggerEmailDownload(
+                url.startsWith('http') ? new URL(url).origin : `https://${currentHostname}`,
+                selectedFormat,
+                qItem.itemId,
+                qItem.itemType,
+                settings.fallbackEmail || 'listener@example.com'
+              );
+              if (trigData && !trigData.isPaid) {
                 emailTriggerOk = true;
               }
             } catch (trigErr) {
@@ -465,7 +625,7 @@ export default function App() {
             }
 
             // Stage 3: Polling GAS watchdog every 5s up to 3 min
-            if (emailTriggerOk && settings.gasWebhookUrl.trim()) {
+            if (emailTriggerOk && hasGasWatchdog) {
               logAndSync('polling_gas', 'Polling Gmail watchdog every 5s for incoming signed download link...');
 
               let foundFromPoll = false;
@@ -477,21 +637,15 @@ export default function App() {
                 logAndSync('polling_gas', `Polling mailbox for download link (attempt ${cycle + 1}/36)...`);
 
                 try {
-                  const pollRes = await fetch('/api/bandcamp/check-gas-webhook', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      webhookUrl: settings.gasWebhookUrl.trim(),
-                      gasUrl: settings.gasWebhookUrl.trim(),
-                      secret: settings.gasSecret.trim(),
-                      releaseId: qItem.itemId,
-                      title: qItem.title,
-                      since: triggerTime - 15,
-                    }),
+                  const pollData = await apiClient.checkGasWebhook({
+                    webhookUrl: settings.gasWebhookUrl.trim(),
+                    secret: settings.gasSecret.trim(),
+                    releaseId: qItem.itemId,
+                    title: qItem.title,
+                    since: triggerTime - 15,
                   });
 
-                  const pollData = await pollRes.json();
-                  if (pollData.found && pollData.downloadPageUrl) {
+                  if (pollData && pollData.found && pollData.downloadPageUrl) {
                     downloadPageUrl = pollData.downloadPageUrl;
                     foundFromPoll = true;
                     logAndSync('polling_gas', 'Received signed download link from Bandcamp email!');
@@ -510,27 +664,23 @@ export default function App() {
         // Stage 4: Resolving download stream (resolves true studio format FLAC / MP3-320)
         logAndSync('resolving_stat', `Resolving studio master download URL for format: ${selectedFormat.toUpperCase()}...`);
 
-        const resolveRes = await fetch('/api/bandcamp/resolve-download', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            albumUrl: qItem.url,
-            releaseId: qItem.id,
-            format: selectedFormat,
-            email: settings.fallbackEmail,
-            downloadPageUrl,
-            release: qItem,
-          }),
+        const resolveData = await apiClient.resolveDownload({
+          albumUrl: qItem.url,
+          releaseId: qItem.id,
+          itemId: qItem.itemId,
+          itemType: qItem.itemType,
+          format: selectedFormat,
+          email: settings.fallbackEmail,
+          downloadPageUrl,
+          release: qItem,
         });
-
-        const resolveData = await resolveRes.json();
 
         // Stage 5: Downloading Studio Audio
         logAndSync('downloading_audio', 'Downloading studio audio files...');
 
-        const effectiveArtist = resolveData.artist || qItem.artist;
-        const effectiveAlbum = resolveData.title || qItem.title;
-        const effectiveIsArchive = !!resolveData.isArchive || (qItem.itemType === 'album');
+        const effectiveArtist = resolveData?.artist || qItem.artist;
+        const effectiveAlbum = resolveData?.title || qItem.title;
+        const effectiveIsArchive = !!resolveData?.isArchive || (qItem.itemType === 'album');
 
         // Target studio audio filename (auto-drops %title% for album archives)
         const audioFilename = formatFilenameBySchema(
@@ -543,35 +693,23 @@ export default function App() {
             totalTracks: rel.trackCount || 1,
             date: qItem.isoDate || qItem.releaseDate,
             year: qItem.isoDate?.slice(0, 4) || qItem.releaseDate?.slice(-4),
-            format: resolveData.format || selectedFormat,
+            format: resolveData?.format || selectedFormat,
             type: qItem.itemType,
             isArchive: effectiveIsArchive,
           },
           { allowSubfolders: false }
         );
 
-        if (resolveData.isPaid && resolveData.skipAudio) {
+        if (resolveData?.isPaid && resolveData?.skipAudio) {
           logAndSync('downloading_audio', `Paid release (${resolveData.message || 'audio skipped per policy'}). Packaging companion info ZIP...`);
-        } else if (resolveData.success && resolveData.downloadUrl) {
+        } else if (resolveData?.success && resolveData?.downloadUrl) {
           // Direct studio archive or FLAC track
-          const audioRes = await fetch(
-            `/api/bandcamp/proxy-audio?url=${encodeURIComponent(resolveData.downloadUrl)}&filename=${encodeURIComponent(audioFilename)}&format=${selectedFormat}`
-          );
-
-          if (audioRes.ok) {
-            const blob = await audioRes.blob();
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = audioFilename;
-            a.click();
-            URL.revokeObjectURL(a.href);
-            successfulDownloadsCount++;
-          } else {
-            throw new Error(`Audio download failed: HTTP ${audioRes.status}`);
-          }
-        } else if (selectedFormat === 'mp3-128' && (resolveData.audioStreams || rel.audioStreams) && (resolveData.audioStreams || rel.audioStreams).length > 0) {
+          debugLog('pipeline', 'Downloading resolved studio audio:', resolveData.downloadUrl, 'as', audioFilename);
+          await apiClient.downloadAudioFile(resolveData.downloadUrl, audioFilename);
+          successfulDownloadsCount++;
+        } else if (selectedFormat === 'mp3-128' && (resolveData?.audioStreams || rel.audioStreams) && (resolveData?.audioStreams || rel.audioStreams).length > 0) {
           // Explicit mp3-128 stream collection fallback
-          const streamsToDl = resolveData.audioStreams || rel.audioStreams;
+          const streamsToDl = resolveData?.audioStreams || rel.audioStreams;
           for (const stream of streamsToDl) {
             const streamUrl = stream.streamUrl || stream.url;
             if (streamUrl) {
@@ -591,23 +729,13 @@ export default function App() {
                 { allowSubfolders: false }
               );
 
-              const sRes = await fetch(
-                `/api/bandcamp/proxy-audio?url=${encodeURIComponent(streamUrl)}&albumUrl=${encodeURIComponent(qItem.url)}&filename=${encodeURIComponent(streamName)}&title=${encodeURIComponent(stream.title)}&artist=${encodeURIComponent(effectiveArtist)}&album=${encodeURIComponent(effectiveAlbum)}&format=${selectedFormat}`
-              );
-              if (sRes.ok) {
-                const sBlob = await sRes.blob();
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(sBlob);
-                a.download = streamName;
-                a.click();
-                URL.revokeObjectURL(a.href);
-              }
+              await apiClient.downloadAudioFile(streamUrl, streamName);
               await sleep(600);
             }
           }
           successfulDownloadsCount++;
         } else {
-          logAndSync('downloading_audio', `Studio audio not resolved (${resolveData.error || 'signed download link required'}). Packaging companion info ZIP...`);
+          logAndSync('downloading_audio', `Studio audio not resolved (${resolveData?.error || 'signed download link required'}). Packaging companion info ZIP...`);
         }
 
         // Stage 6: Build and download companion (info).zip
@@ -616,19 +744,15 @@ export default function App() {
 
           const companionResult = await buildCompanionInfoZip({
             release: rel,
-            infoText: resolveData.infoText || rel.infoText,
-            artUrl: resolveData.artUrl || rel.artUrl,
-            artistBioPicUrl: resolveData.artistBioPicUrl || rel.artistBioPicUrl,
-            extraImages: resolveData.extraImages || rel.extraImages,
-            audioStreams: resolveData.audioStreams || rel.audioStreams,
+            infoText: resolveData?.infoText || rel.infoText,
+            artUrl: resolveData?.artUrl || rel.artUrl,
+            artistBioPicUrl: resolveData?.artistBioPicUrl || rel.artistBioPicUrl,
+            extraImages: resolveData?.extraImages || rel.extraImages,
+            audioStreams: resolveData?.audioStreams || rel.audioStreams,
           });
 
           const companionName = getCompanionInfoZipName(audioFilename);
-          const aInfo = document.createElement('a');
-          aInfo.href = URL.createObjectURL(companionResult.blob);
-          aInfo.download = companionName;
-          aInfo.click();
-          URL.revokeObjectURL(aInfo.href);
+          await apiClient.downloadBlob(companionResult.blob, companionName);
 
           logAndSync('packaging_info', `Created companion ZIP: ${companionName} (${companionResult.filesCount} files)`);
         }
@@ -656,14 +780,14 @@ export default function App() {
         }
 
         // Mark Completed
-        const doneStatus = resolveData.success && resolveData.downloadUrl
+        const doneStatus = resolveData?.success && resolveData?.downloadUrl
           ? 'Download completed successfully!'
-          : ((resolveData.isPaid && resolveData.skipAudio)
+          : ((resolveData?.isPaid && resolveData?.skipAudio)
               ? 'Packaging complete (Paid release - companion info ZIP created)'
               : 'Packaging complete (Companion info ZIP saved - audio requires email link)');
         logAndSync('completed', doneStatus);
         updateQueueItem(currentHostname, qItem.id, {
-          audioDownloaded: Boolean(resolveData.success && resolveData.downloadUrl),
+          audioDownloaded: Boolean(resolveData?.success && resolveData?.downloadUrl),
           infoZipDownloaded: settings.createCompanionInfoZip,
           stageProgress: 100,
         });
@@ -675,11 +799,13 @@ export default function App() {
 
     setIsDownloading(false);
     setPacingNotice('');
+    debugLog('pipeline', `=== Finished queue pipeline. Successful downloads: ${successfulDownloadsCount} ===`);
   };
 
   // Start Clean Bulk Download
   const handleStartBulkDownload = async () => {
     if (selectedReleases.length === 0) return;
+    debugLog('pipeline', `handleStartBulkDownload: ${selectedReleases.length} release(s) selected.`);
 
     // Ensure session is initialized
     let sess = currentSession;
@@ -702,19 +828,21 @@ export default function App() {
       });
     });
 
-    const refreshed = syncSessionFromStorage(currentHostname);
-    const items = selectedReleases.map((r) => refreshed?.items[r.id]).filter(Boolean) as QueueItem[];
+    const refreshed = syncSessionFromStorage(currentHostname) || sess;
+    const items = buildQueueItemsForReleases(selectedReleases, refreshed);
+    debugLog('pipeline', `Prepared ${items.length} items to run in pipeline.`);
     await runQueuePipeline(items);
   };
 
   // Resume Download (unfinished items only: pending + failed)
   const handleResumeBulkDownload = async () => {
-    const refreshed = syncSessionFromStorage(currentHostname);
-    if (!refreshed) return;
+    debugLog('pipeline', 'handleResumeBulkDownload clicked.');
+    const refreshed = syncSessionFromStorage(currentHostname) || currentSession;
+    const allQueueItems = buildQueueItemsForReleases(selectedReleases, refreshed);
+    const itemsToResume = allQueueItems.filter((item) => item.stage !== 'completed');
 
-    const itemsToResume = selectedReleases
-      .map((r) => refreshed.items[r.id])
-      .filter((item): item is QueueItem => !!item && item.stage !== 'completed');
+    debugLog('pipeline', `Found ${itemsToResume.length} uncompleted releases out of ${allQueueItems.length} selected.`);
+    if (itemsToResume.length === 0) return;
 
     // Auto-retry failed items
     itemsToResume.forEach((item) => {
@@ -727,13 +855,18 @@ export default function App() {
       }
     });
 
-    const finalSession = syncSessionFromStorage(currentHostname);
-    const runnable = itemsToResume.map((i) => finalSession?.items[i.id]).filter(Boolean) as QueueItem[];
+    const finalSession = syncSessionFromStorage(currentHostname) || refreshed;
+    const runnable = buildQueueItemsForReleases(
+      selectedReleases.filter(r => itemsToResume.some(i => i.id === r.id)),
+      finalSession
+    );
+    debugLog('pipeline', `Dispatching ${runnable.length} runnable items to pipeline.`);
     await runQueuePipeline(runnable);
   };
 
   // Download Single Release
   const handleDownloadSingle = async (release: ScannedRelease) => {
+    debugLog('pipeline', `handleDownloadSingle clicked for "${release.title}".`);
     let sess = currentSession;
     if (!sess) {
       sess = initSiteSession(
@@ -750,10 +883,10 @@ export default function App() {
       isPaid: Boolean((release as any).isPaid || (release.minPrice > 0 && !release.isPurchased && !release.freeDownloadPageUrl)),
       minPrice: release.minPrice,
     });
-    const refreshed = syncSessionFromStorage(currentHostname);
-    const item = refreshed?.items[release.id] || sess.items[release.id];
-    if (item) {
-      await runQueuePipeline([item]);
+    const refreshed = syncSessionFromStorage(currentHostname) || sess;
+    const items = buildQueueItemsForReleases([release], refreshed);
+    if (items.length > 0) {
+      await runQueuePipeline(items);
     }
   };
 
@@ -819,6 +952,13 @@ export default function App() {
         onSelectTab={setCurrentTab}
         onDownloadZip={handleDownloadExtensionZip}
         isDownloadingZip={isDownloadingZip}
+        debugLogging={Boolean(settings.debugLogging)}
+        onToggleDebugLogging={() => {
+          setSettings((prev) => ({
+            ...prev,
+            debugLogging: !prev.debugLogging,
+          }));
+        }}
       />
 
       {/* Main Content Area */}

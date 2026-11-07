@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AppSettings, AUDIO_FORMATS, DEFAULT_APP_SETTINGS, formatFilenameBySchema } from '../types/bandcamp';
 import { GAS_SCRIPT_TEMPLATE } from '../services/gasTemplate';
+import { apiClient } from '../services/unifiedClient';
 import {
   Save,
   Check,
@@ -18,6 +19,7 @@ import {
   Send,
   Sliders,
   AlertTriangle,
+  Terminal,
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -73,18 +75,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTestResult(null);
 
     try {
-      const res = await fetch('/api/bandcamp/test-gas-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          webhookUrl: formState.gasWebhookUrl.trim(),
-          gasUrl: formState.gasWebhookUrl.trim(),
-          secret: formState.gasSecret.trim(),
-        }),
+      const data = await apiClient.testGasWebhook({
+        webhookUrl: formState.gasWebhookUrl.trim(),
+        secret: formState.gasSecret.trim(),
       });
 
-      const data = await res.json();
-      if (res.ok && (data.success || data.ok)) {
+      if (data && (data.success || data.ok)) {
         setTestResult({
           success: true,
           message: data.message || 'Webhook responded successfully! Connection verified.',
@@ -92,7 +88,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       } else {
         setTestResult({
           success: false,
-          message: data.error || `Webhook test failed (HTTP ${res.status})`,
+          message: data?.error || 'Webhook test failed. Verify URL and secret.',
         });
       }
     } catch (err: any) {
@@ -192,6 +188,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <p className="text-xs text-slate-400">
               Used when Bandcamp requests an email address to send the download link token for email-walled Name Your Price ($0.00) releases.
             </p>
+          </div>
+
+          {/* Debug Console Logs Switch */}
+          <div className="p-3 bg-[#0b0f17] border border-slate-700 rounded-lg">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formState.debugLogging || false}
+                onChange={(e) =>
+                  setFormState((prev) => ({
+                    ...prev,
+                    debugLogging: e.target.checked,
+                  }))
+                }
+                className="mt-1 w-4 h-4 text-amber-400 bg-slate-900 border-slate-700 rounded focus:ring-amber-400 focus:ring-offset-0"
+              />
+              <div className="space-y-1">
+                <span className="text-sm font-semibold text-white flex items-center gap-1.5">
+                  <Terminal className="w-4 h-4 text-amber-400" />
+                  <span>Verbose Console Debug Logging</span>
+                </span>
+                <p className="text-xs text-slate-400">
+                  Outputs detailed <code className="text-amber-300">[BandcampDL:...]</code> diagnostic messages in DevTools Console during discography scanning, GAS mailbox queries, statdownload resolution, and audio streaming.
+                </p>
+              </div>
+            </label>
           </div>
         </div>
 

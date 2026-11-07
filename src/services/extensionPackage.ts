@@ -201,7 +201,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'INSPECT_RELEASE') {
     (async () => {
       try {
-        const { origin, artistName, item, globalBioUrl } = request;
+        const origin = request.origin || '';
+        const artistName = request.artistName || '';
+        const item = request.item || {};
+        const globalBioUrl = request.globalBioUrl || '';
+        if (!item.url) {
+          throw new Error('Missing release URL in item');
+        }
         const res = await fetch(item.url, {
           headers: {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
@@ -210,15 +216,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const subHtml = await res.text();
-        const tralbum = extractBandcampTralbum(subHtml);
-        const parsed = parseReleasePageData(subHtml, tralbum, item, origin, artistName, globalBioUrl);
+        const tralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(subHtml) : null;
+        const parsed = typeof parseReleasePageData === 'function'
+          ? parseReleasePageData(subHtml, tralbum, item, origin, artistName, globalBioUrl)
+          : {
+              releaseTitle: item.title || 'Release',
+              artist: artistName,
+              artUrl: item.artUrl || '',
+              artistBioPicUrl: globalBioUrl,
+              allImages: [],
+              isFree: true,
+              isNyp: false,
+              isPurchased: false,
+              isPaid: false,
+              badgeType: 'free',
+              minPrice: 0,
+              priceFormatted: 'Free',
+              requireEmail: false,
+              freeDlPage: null,
+              trackListFormatted: [item.title || 'Track 1'],
+              audioStreams: [],
+              aboutText: '',
+              creditsText: '',
+              infoText: '',
+              tagsMatches: []
+            };
 
         sendResponse({
           success: true,
           release: {
             id: item.id,
-            itemId: tralbum?.current?.id || item.itemId,
-            itemType: item.type,
+            itemId: tralbum?.current?.id || item.itemId || 0,
+            itemType: item.type || 'album',
             title: parsed.releaseTitle,
             artist: parsed.artist,
             artistUrl: origin,
@@ -259,9 +288,54 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'RESOLVE_DOWNLOAD') {
     (async () => {
       try {
-        const { downloadPageUrl, format } = request;
-        const resolved = await resolveBandcampDownload(downloadPageUrl, format || 'flac');
-        sendResponse(resolved);
+        const { downloadPageUrl, format, albumUrl, release } = request;
+        let effectivePageUrl = downloadPageUrl || release?.freeDownloadPageUrl;
+
+        // If no downloadPageUrl but albumUrl is present, fetch album page to see if freeDownloadPage is available
+        if (!effectivePageUrl && albumUrl) {
+          try {
+            const pageRes = await fetch(albumUrl, {
+              headers: {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+              }
+            });
+            if (pageRes.ok) {
+              const pageHtml = await pageRes.text();
+              const tralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(pageHtml) : null;
+              if (tralbum && tralbum.freeDownloadPage) {
+                effectivePageUrl = tralbum.freeDownloadPage;
+              }
+            }
+          } catch (pageErr) {}
+        }
+
+        if (effectivePageUrl) {
+          const resolved = await resolveBandcampDownload(effectivePageUrl, format || 'flac');
+          sendResponse({
+            ...resolved,
+            infoText: release?.infoText,
+            artUrl: release?.artUrl,
+            artistBioPicUrl: release?.artistBioPicUrl,
+            extraImages: release?.extraImages,
+            audioStreams: release?.audioStreams,
+          });
+        } else {
+          const isPaid = Boolean(release?.badgeType === 'paid' || release?.isPaid);
+          sendResponse({
+            success: false,
+            isPaid,
+            skipAudio: isPaid,
+            message: isPaid ? 'Paid release: audio skipped per policy. Packaging companion info ZIP.' : 'Direct download link not yet resolved from mailbox.',
+            title: release?.title,
+            artist: release?.artist,
+            artUrl: release?.artUrl,
+            artistBioPicUrl: release?.artistBioPicUrl,
+            extraImages: release?.extraImages,
+            infoText: release?.infoText,
+            audioStreams: release?.audioStreams,
+          });
+        }
       } catch (err) {
         sendResponse({ success: false, error: err.message });
       }
@@ -318,6 +392,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           headers: { 'Accept': 'application/json, text/plain, */*' }
         });
         const text = await res.text();
+        if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
+          sendResponse({
+            found: false,
+            error: 'Google Login required: In Google Apps Script, click Deploy -> Manage deployments -> Edit (pencil icon), and set "Who has access" to "Anyone" (currently set to "Only myself").',
+            raw: text.slice(0, 300)
+          });
+          return;
+        }
         try {
           const data = JSON.parse(text);
           if (data && data.downloadPageUrl) {
@@ -329,6 +411,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
       } catch (err) {
         sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // 5b. Test Google Apps Script Webhook connection
+  if (request.action === 'TEST_GAS_WEBHOOK') {
+    (async () => {
+      try {
+        const { webhookUrl, secret } = request;
+        if (!webhookUrl || !secret) {
+          sendResponse({ success: false, ok: false, error: 'Missing webhookUrl or secret' });
+          return;
+        }
+        const url = new URL(webhookUrl);
+        url.searchParams.set('secret', secret);
+        url.searchParams.set('test', 'true');
+
+        const res = await fetch(url.toString(), {
+          redirect: 'follow',
+          headers: { 'Accept': 'application/json, text/plain, */*' }
+        });
+        const text = await res.text();
+        if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
+          sendResponse({
+            success: false,
+            ok: false,
+            error: 'Google Login required: In Google Apps Script, click Deploy -> Manage deployments -> Edit (pencil icon), and set "Who has access" to "Anyone" (currently set to "Only myself").'
+          });
+          return;
+        }
+        try {
+          const data = JSON.parse(text);
+          if (data.test || data.ok || data.success) {
+            sendResponse({ success: true, ok: true, message: data.message || 'Connected successfully! Webhook verified.' });
+          } else if (data.error) {
+            sendResponse({ success: false, ok: false, error: data.error });
+          } else {
+            sendResponse({ success: true, ok: true, message: 'Connected to Webhook!' });
+          }
+        } catch(e) {
+          sendResponse({
+            success: false,
+            ok: false,
+            error: 'Non-JSON response from Google Apps Script. Ensure "Who has access" is set to "Anyone" in Web App deployment settings.',
+            raw: text.slice(0, 300)
+          });
+        }
+      } catch (err) {
+        sendResponse({ success: false, ok: false, error: err.message });
       }
     })();
     return true;
@@ -1073,7 +1205,10 @@ export async function createExtensionZip(): Promise<Blob> {
   for (const file of EXTENSION_FILES) {
     if (file.path === 'dashboard.bundle.js') {
       try {
-        const res = await fetch('/public/extension-dist/dashboard.bundle.js');
+        let res = await fetch('/extension-dist/dashboard.bundle.js');
+        if (!res.ok) {
+          res = await fetch('/public/extension-dist/dashboard.bundle.js');
+        }
         if (res.ok) {
           const txt = await res.text();
           zip.file(file.path, txt);
@@ -1083,7 +1218,10 @@ export async function createExtensionZip(): Promise<Blob> {
     }
     if (file.path === 'dashboard.css') {
       try {
-        const res = await fetch('/public/extension-dist/dashboard.css');
+        let res = await fetch('/extension-dist/dashboard.css');
+        if (!res.ok) {
+          res = await fetch('/public/extension-dist/dashboard.css');
+        }
         if (res.ok) {
           const txt = await res.text();
           zip.file(file.path, txt);

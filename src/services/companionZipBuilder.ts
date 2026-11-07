@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { QueueItem, ScannedRelease, TrackAudioStream } from '../types/bandcamp';
+import { isExtension, apiClient } from './unifiedClient';
 
 export interface CompanionZipOptions {
   release: ScannedRelease | QueueItem;
@@ -20,8 +21,16 @@ export async function buildCompanionInfoZip(options: CompanionZipOptions): Promi
   const zip = new JSZip();
   let filesCount = 0;
 
-  // Default fetch handler (uses proxy to avoid CORS when available)
+  // Default fetch handler (uses extension background RPC or proxy to avoid CORS)
   const doFetch = proxyFetch || (async (u: string) => {
+    if (isExtension) {
+      try {
+        const b = await apiClient.fetchBinaryAsBlob(u);
+        if (b) {
+          return new Response(b);
+        }
+      } catch (e) {}
+    }
     try {
       const pUrl = `/api/bandcamp/proxy-image?url=${encodeURIComponent(u)}`;
       const res = await fetch(pUrl);

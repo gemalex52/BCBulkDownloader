@@ -1,3 +1,5 @@
+declare const chrome: any;
+
 // Unified Client & Storage Adapter for both Web App and Chrome Extension
 import { ScannedRelease } from '../types/bandcamp';
 
@@ -10,7 +12,7 @@ export const storage = {
   async get<T = any>(key: string, defaultValue?: T): Promise<T> {
     if (isExtension && chrome.storage?.local) {
       return new Promise<T>((resolve) => {
-        chrome.storage.local.get([key], (res) => {
+        chrome.storage.local.get([key], (res: any) => {
           if (chrome.runtime.lastError || res[key] === undefined) {
             resolve(defaultValue as T);
           } else {
@@ -64,7 +66,7 @@ function sendExtensionMessage<T = any>(message: any): Promise<T> {
     if (!chrome.runtime?.sendMessage) {
       return reject(new Error('chrome.runtime.sendMessage is not available'));
     }
-    chrome.runtime.sendMessage(message, (response) => {
+    chrome.runtime.sendMessage(message, (response: any) => {
       if (chrome.runtime.lastError) {
         return reject(new Error(chrome.runtime.lastError.message));
       }
@@ -82,7 +84,7 @@ export const apiClient = {
   async fetchActiveTabUrl(): Promise<string | null> {
     if (isExtension && chrome.tabs?.query) {
       return new Promise((resolve) => {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any) => {
           const tabUrl = tabs?.[0]?.url;
           if (tabUrl && tabUrl.includes('bandcamp.com')) {
             resolve(tabUrl);
@@ -142,7 +144,7 @@ export const apiClient = {
     email?: string;
     downloadPageUrl?: string;
     triggerEmailOnly?: boolean;
-    release?: ScannedRelease;
+    release?: ScannedRelease | any;
   }): Promise<any> {
     if (isExtension) {
       return sendExtensionMessage({
@@ -183,6 +185,22 @@ export const apiClient = {
       body: JSON.stringify(params),
     });
     if (!res.ok) throw new Error(`GAS check HTTP ${res.status}`);
+    return res.json();
+  },
+
+  async testGasWebhook(params: { webhookUrl: string; secret: string }): Promise<any> {
+    if (isExtension) {
+      return sendExtensionMessage({
+        action: 'TEST_GAS_WEBHOOK',
+        ...params,
+      });
+    }
+
+    const res = await fetch('/api/bandcamp/test-gas-webhook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
     return res.json();
   },
 

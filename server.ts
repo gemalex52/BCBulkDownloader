@@ -728,17 +728,31 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
     return res.status(400).send('Missing audio URL');
   }
 
+  console.log(`[BandcampDL:proxy-audio] Request: filename=${filename}, format=${targetFormat}, audioUrl=${audioUrl?.slice(0, 80)}...`);
+
   try {
     let audioRes: any = null;
     if (audioUrl) {
+      let referer = 'https://bandcamp.com/';
+      try {
+        const u = new URL(audioUrl);
+        referer = u.origin + '/';
+      } catch (e) {}
+
       audioRes = await fetch(audioUrl, {
-        headers: BANDCAMP_FETCH_HEADERS,
+        headers: {
+          ...BANDCAMP_FETCH_HEADERS,
+          Referer: referer,
+        },
+        redirect: 'follow',
       });
+      console.log(`[BandcampDL:proxy-audio] Fetch status: ${audioRes.status}, Content-Type: ${audioRes.headers.get('content-type')}`);
     }
 
     // Auto-refresh expired stream URL from Bandcamp album page if 403 or missing
     if ((!audioRes || !audioRes.ok) && albumUrl) {
       try {
+        console.log(`[BandcampDL:proxy-audio] Stream link expired (${audioRes?.status}), attempting refresh from ${albumUrl}...`);
         const pageRes = await fetch(albumUrl, {
           headers: BANDCAMP_FETCH_HEADERS,
         });
@@ -750,8 +764,13 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
           const freshStreamUrl = tInfo?.file?.['mp3-128'];
           if (freshStreamUrl) {
             audioRes = await fetch(freshStreamUrl, {
-              headers: BANDCAMP_FETCH_HEADERS,
+              headers: {
+                ...BANDCAMP_FETCH_HEADERS,
+                Referer: albumUrl,
+              },
+              redirect: 'follow',
             });
+            console.log(`[BandcampDL:proxy-audio] Refreshed stream fetch status: ${audioRes.status}`);
           }
         }
       } catch (refreshErr) {
@@ -760,7 +779,9 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
     }
 
     if (!audioRes || !audioRes.ok) {
-      return res.status(audioRes ? audioRes.status : 500).send('Failed to fetch audio stream');
+      const errStatus = audioRes ? audioRes.status : 500;
+      console.error(`[BandcampDL:proxy-audio] Failed to fetch audio stream. Status: ${errStatus}`);
+      return res.status(errStatus).send(`Failed to fetch audio stream: HTTP ${errStatus}`);
     }
 
     const contentType = audioRes.headers.get('content-type') || '';
@@ -774,6 +795,14 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+      const cl = audioRes.headers.get('content-length');
+      if (cl) res.setHeader('Content-Length', cl);
+
+      if (audioRes.body) {
+        const { Readable } = await import('stream');
+        const nodeStream = Readable.fromWeb(audioRes.body as any);
+        return nodeStream.pipe(res);
+      }
       const buffer = Buffer.from(await audioRes.arrayBuffer());
       return res.send(buffer);
     }
@@ -787,6 +816,14 @@ app.get('/api/bandcamp/proxy-audio', async (req: Request, res: Response) => {
       res.setHeader('Content-Type', mime);
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+      const cl = audioRes.headers.get('content-length');
+      if (cl) res.setHeader('Content-Length', cl);
+
+      if (audioRes.body) {
+        const { Readable } = await import('stream');
+        const nodeStream = Readable.fromWeb(audioRes.body as any);
+        return nodeStream.pipe(res);
+      }
       const buffer = Buffer.from(await audioRes.arrayBuffer());
       return res.send(buffer);
     }

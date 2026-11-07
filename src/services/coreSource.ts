@@ -397,7 +397,24 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
 
   requestedFormat = requestedFormat || 'flac';
   try {
+    if (!downloadPageUrl || typeof downloadPageUrl !== 'string' || !downloadPageUrl.trim()) {
+      return { success: false, error: 'Valid download page URL is required' };
+    }
     var cleanUrl = String(downloadPageUrl || '').replace(/&amp;/g, '&').trim();
+    if (!cleanUrl.startsWith('http')) {
+      return { success: false, error: 'Invalid download page URL protocol' };
+    }
+
+    if (cleanUrl.indexOf('bcbits.com/download/') !== -1 || cleanUrl.indexOf('popplers') !== -1) {
+      return {
+        success: true,
+        downloadUrl: cleanUrl,
+        format: requestedFormat,
+        isArchive: cleanUrl.indexOf('/album/') !== -1,
+        itemType: cleanUrl.indexOf('/album/') !== -1 ? 'album' : 'track'
+      };
+    }
+
     var dlRes = await fetch(cleanUrl, {
       headers: getSafeHeaders(cleanUrl),
     });
@@ -418,33 +435,86 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
     } catch(e) {}
 
     var dlHtml = await dlRes.text();
-    var blob = null;
-    var doubleQuoteMatch = dlHtml.match(/data-blob="([^"]+)"/);
-    var singleQuoteMatch = dlHtml.match(/data-blob='([^']+)'/);
-    if (doubleQuoteMatch) {
-      try {
-        blob = JSON.parse(doubleQuoteMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'"));
-      } catch(e) {}
-    } else if (singleQuoteMatch) {
-      try {
-        blob = JSON.parse(singleQuoteMatch[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
-      } catch(e) {}
+
+    if (dlHtml.indexOf('<title>Client Challenge</title>') !== -1 || dlHtml.indexOf('_fs-ch-') !== -1) {
+      return {
+        success: false,
+        error: 'Bandcamp Cloudflare Bot Challenge active on datacenter IP. Please use the Chrome Extension to download this release directly through your local browser session.'
+      };
     }
 
-    if (!blob) {
-      var pagedataMatch = dlHtml.match(/var\\s+pagedata\\s*=\\s*(\\{[\\s\\S]*?\\})\\s*;/);
-      if (pagedataMatch) {
+    // Direct Extraction: Match any direct https://p*.bcbits.com/download/(album|track)/... links in HTML
+    var bcbitsMatches = Array.from(
+      dlHtml.matchAll(/https?:\\/\\/[a-z0-9.]*bcbits\\.com\\/download\\/(?:album|track)\\/[^\\s"'<>]+/gi)
+    ).map(function(m) { return m[0].replace(/&amp;/g, '&'); });
+
+    var directFormatUrl = '';
+    if (bcbitsMatches.length > 0) {
+      var matchForFormat = bcbitsMatches.find(function(u) { return u.toLowerCase().indexOf('/' + requestedFormat.toLowerCase() + '/') !== -1; }) ||
+                           bcbitsMatches.find(function(u) { return u.toLowerCase().indexOf(requestedFormat.toLowerCase()) !== -1; }) ||
+                           bcbitsMatches.find(function(u) { return u.toLowerCase().indexOf('/flac/') !== -1; }) ||
+                           bcbitsMatches.find(function(u) { return u.toLowerCase().indexOf('/mp3-320/') !== -1; }) ||
+                           bcbitsMatches[0];
+      if (matchForFormat) {
+        directFormatUrl = matchForFormat;
+      }
+    }
+
+    var blob = null;
+    var blobRegexes = [
+      /data-blob=["']([\\s\\S]*?)["']\\s*(?:>|class|id)/i,
+      /id=["']pagedata["'][^>]*data-blob=["']([\\s\\S]*?)["']/i,
+      /<div[^>]*data-blob=["']([\\s\\S]*?)["']/i,
+      /data-blob="([^"]+)"/i,
+      /data-blob='([^']+)'/i,
+      /var\\s+pagedata\\s*=\\s*(\\{[\\s\\S]*?\\})\\s*;/i,
+      /window\\.pagedata\\s*=\\s*(\\{[\\s\\S]*?\\})\\s*;/i
+    ];
+
+    for (var i = 0; i < blobRegexes.length; i++) {
+      var m = dlHtml.match(blobRegexes[i]);
+      if (m && m[1]) {
         try {
-          blob = JSON.parse(pagedataMatch[1]);
+          var decoded = m[1]
+            .replace(/&quot;/g, '"')
+            .replace(/&amp;/g, '&')
+            .replace(/&#39;/g, "'")
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>');
+          blob = JSON.parse(decoded);
+          if (blob && (blob.digital_items || blob.downloads)) break;
         } catch(e) {}
       }
     }
 
-    if (!blob) throw new Error('No data-blob found on download page. Please verify that the download link is active.');
+    if (!blob) {
+      var diMatch = dlHtml.match(/\\{[\\s\\S]*?"digital_items"\\s*:\\s*\\[[\\s\\S]*?\\}\\s*;/);
+      if (diMatch) {
+        try {
+          blob = JSON.parse(diMatch[0].replace(/;\\s*$/, ''));
+        } catch(e) {}
+      }
+    }
 
-    var digitalItem = blob && blob.digital_items && blob.digital_items[0];
+    var digitalItem = blob && (blob.digital_items ? blob.digital_items[0] : blob);
     var downloads = digitalItem && digitalItem.downloads;
-    if (!downloads) throw new Error('No downloads object found in digital_items');
+
+    if (!downloads && directFormatUrl) {
+      var titleMatch = dlHtml.match(/<title>([^<]+)<\\/title>/i);
+      var titleFromHtml = titleMatch ? cleanHtmlText(titleMatch[1].replace(/\\|\\s*Bandcamp/i, '')) : 'Album';
+      return {
+        success: true,
+        downloadUrl: directFormatUrl,
+        format: requestedFormat,
+        description: requestedFormat.toUpperCase(),
+        isArchive: directFormatUrl.indexOf('/album/') !== -1,
+        itemType: directFormatUrl.indexOf('/album/') !== -1 ? 'album' : 'track',
+        title: titleFromHtml,
+        artist: 'Artist'
+      };
+    }
+
+    if (!downloads) throw new Error('No download links or data-blob found on download page. Please verify that the download link is active.');
 
     var itemType = (digitalItem.item_type || digitalItem.type || 'album');
     var releaseTitle = cleanHtmlText(digitalItem.title);
@@ -458,7 +528,21 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
       downloads['wav'] ||
       Object.values(downloads)[0];
 
-    if (!target || !target.url) throw new Error('No target download URL available');
+    if (!target || !target.url) {
+      if (directFormatUrl) {
+        return {
+          success: true,
+          downloadUrl: directFormatUrl,
+          format: requestedFormat,
+          description: requestedFormat.toUpperCase(),
+          isArchive: directFormatUrl.indexOf('/album/') !== -1,
+          itemType: itemType,
+          title: releaseTitle,
+          artist: releaseArtist
+        };
+      }
+      throw new Error('No target download URL available');
+    }
 
     var finalUrl = '';
 
@@ -669,8 +753,9 @@ function getCompanionInfoZipName(audioFilename) {
   return audioFilename + ' (info).zip';
 }
 
-if (typeof globalThis !== 'undefined') {
-  globalThis.BandcampCore = {
+var _targetGlobal = typeof globalThis !== 'undefined' ? globalThis : (typeof self !== 'undefined' ? self : (typeof window !== 'undefined' ? window : this));
+if (_targetGlobal) {
+  _targetGlobal.BandcampCore = {
     cleanHtmlText: cleanHtmlText,
     formatDateToDotString: formatDateToDotString,
     extractBandcampTralbum: extractBandcampTralbum,
@@ -680,13 +765,13 @@ if (typeof globalThis !== 'undefined') {
     formatFilenameBySchema: formatFilenameBySchema,
     getCompanionInfoZipName: getCompanionInfoZipName,
   };
-  globalThis.cleanHtmlText = cleanHtmlText;
-  globalThis.formatDateToDotString = formatDateToDotString;
-  globalThis.extractBandcampTralbum = extractBandcampTralbum;
-  globalThis.extractArtistBioPicUrl = extractArtistBioPicUrl;
-  globalThis.parseReleasePageData = parseReleasePageData;
-  globalThis.resolveBandcampDownload = resolveBandcampDownload;
-  globalThis.formatFilenameBySchema = formatFilenameBySchema;
-  globalThis.getCompanionInfoZipName = getCompanionInfoZipName;
+  _targetGlobal.cleanHtmlText = cleanHtmlText;
+  _targetGlobal.formatDateToDotString = formatDateToDotString;
+  _targetGlobal.extractBandcampTralbum = extractBandcampTralbum;
+  _targetGlobal.extractArtistBioPicUrl = extractArtistBioPicUrl;
+  _targetGlobal.parseReleasePageData = parseReleasePageData;
+  _targetGlobal.resolveBandcampDownload = resolveBandcampDownload;
+  _targetGlobal.formatFilenameBySchema = formatFilenameBySchema;
+  _targetGlobal.getCompanionInfoZipName = getCompanionInfoZipName;
 }
 `;

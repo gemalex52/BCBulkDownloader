@@ -1,3 +1,5 @@
+declare const chrome: any;
+
 import {
   QueueItem,
   QueueItemStage,
@@ -27,19 +29,38 @@ export function getSessionKey(hostname: string): string {
 // 1. Settings persistence
 export function loadAppSettings(): AppSettings {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) {
-      return { ...DEFAULT_APP_SETTINGS, ...JSON.parse(raw) };
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) {
+        return { ...DEFAULT_APP_SETTINGS, ...JSON.parse(raw) };
+      }
     }
   } catch (e) {
-    console.warn('Failed to load app settings:', e);
+    console.warn('Failed to load app settings from localStorage:', e);
   }
   return { ...DEFAULT_APP_SETTINGS };
 }
 
+export async function loadAppSettingsAsync(): Promise<AppSettings> {
+  if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+    return new Promise<AppSettings>((resolve) => {
+      chrome.storage.local.get([SETTINGS_KEY], (res: any) => {
+        if (res && res[SETTINGS_KEY]) {
+          resolve({ ...DEFAULT_APP_SETTINGS, ...res[SETTINGS_KEY] });
+        } else {
+          resolve(loadAppSettings());
+        }
+      });
+    });
+  }
+  return loadAppSettings();
+}
+
 export function saveAppSettings(settings: AppSettings): void {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ [SETTINGS_KEY]: settings });
     }
@@ -51,9 +72,11 @@ export function saveAppSettings(settings: AppSettings): void {
 // 2. Multi-site session tracking
 export function getStoredSessionHostnames(): string[] {
   try {
-    const raw = localStorage.getItem(SESSIONS_INDEX_KEY);
-    if (raw) {
-      return JSON.parse(raw);
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(SESSIONS_INDEX_KEY);
+      if (raw) {
+        return JSON.parse(raw);
+      }
     }
   } catch (e) {}
   return [];
@@ -64,7 +87,9 @@ export function registerSessionHostname(hostname: string): void {
     const current = getStoredSessionHostnames();
     if (!current.includes(hostname)) {
       current.unshift(hostname);
-      localStorage.setItem(SESSIONS_INDEX_KEY, JSON.stringify(current.slice(0, 30)));
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(SESSIONS_INDEX_KEY, JSON.stringify(current.slice(0, 30)));
+      }
       if (typeof chrome !== 'undefined' && chrome.storage?.local) {
         chrome.storage.local.set({ [SESSIONS_INDEX_KEY]: current.slice(0, 30) });
       }
@@ -74,10 +99,12 @@ export function registerSessionHostname(hostname: string): void {
 
 export function loadSiteSession(hostname: string): SiteQueueSession | null {
   try {
-    const key = getSessionKey(hostname);
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      return JSON.parse(raw);
+    if (typeof localStorage !== 'undefined') {
+      const key = getSessionKey(hostname);
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        return JSON.parse(raw);
+      }
     }
   } catch (e) {
     console.warn(`Failed loading session for ${hostname}:`, e);
@@ -85,11 +112,29 @@ export function loadSiteSession(hostname: string): SiteQueueSession | null {
   return null;
 }
 
+export async function loadSiteSessionAsync(hostname: string): Promise<SiteQueueSession | null> {
+  if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+    const key = getSessionKey(hostname);
+    return new Promise<SiteQueueSession | null>((resolve) => {
+      chrome.storage.local.get([key], (res: any) => {
+        if (res && res[key]) {
+          resolve(res[key]);
+        } else {
+          resolve(loadSiteSession(hostname));
+        }
+      });
+    });
+  }
+  return loadSiteSession(hostname);
+}
+
 export function saveSiteSession(session: SiteQueueSession): void {
   try {
     const key = getSessionKey(session.hostname);
     session.updatedAt = new Date().toISOString();
-    localStorage.setItem(key, JSON.stringify(session));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, JSON.stringify(session));
+    }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ [key]: session });
     }

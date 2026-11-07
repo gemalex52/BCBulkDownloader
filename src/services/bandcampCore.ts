@@ -13,6 +13,21 @@ export const BANDCAMP_FETCH_HEADERS: Record<string, string> = {
   'Upgrade-Insecure-Requests': '1',
 };
 
+let _debugLoggingEnabled = false;
+export function setDebugLogging(enabled: boolean): void {
+  _debugLoggingEnabled = enabled;
+}
+
+export function isDebugLogging(): boolean {
+  return _debugLoggingEnabled;
+}
+
+export function debugLog(module: string, ...args: any[]): void {
+  if (_debugLoggingEnabled) {
+    console.log(`[BandcampDL:${module}]`, ...args);
+  }
+}
+
 export interface ParsedReleaseDetails {
   releaseTitle: string;
   artist: string;
@@ -447,7 +462,33 @@ export async function resolveBandcampDownload(
   error?: string;
 }> {
   try {
+    if (!downloadPageUrl || typeof downloadPageUrl !== 'string' || !downloadPageUrl.trim()) {
+      return {
+        success: false,
+        error: 'Valid download page URL is required',
+      };
+    }
     const cleanUrl = downloadPageUrl.replace(/&amp;/g, '&').trim();
+    if (!cleanUrl.startsWith('http')) {
+      return {
+        success: false,
+        error: 'Invalid download page URL protocol',
+      };
+    }
+
+    // Direct check: If cleanUrl is already a direct bcbits/popplers CDN download URL
+    if (cleanUrl.includes('bcbits.com/download/') || cleanUrl.includes('popplers')) {
+      debugLog('resolver', 'cleanUrl is already a direct bcbits download URL:', cleanUrl);
+      return {
+        success: true,
+        downloadUrl: cleanUrl,
+        format: requestedFormat,
+        isArchive: cleanUrl.includes('/album/'),
+        itemType: cleanUrl.includes('/album/') ? 'album' : 'track',
+      };
+    }
+
+    debugLog('resolver', 'Fetching Bandcamp download page:', cleanUrl);
     const dlRes = await fetch(cleanUrl, {
       headers: {
         ...BANDCAMP_FETCH_HEADERS,
@@ -470,33 +511,93 @@ export async function resolveBandcampDownload(
     }
 
     const dlHtml = await dlRes.text();
-    let blob: any = null;
-    const doubleQuoteMatch = dlHtml.match(/data-blob="([^"]+)"/);
-    const singleQuoteMatch = dlHtml.match(/data-blob='([^']+)'/);
-    if (doubleQuoteMatch) {
-      try {
-        blob = JSON.parse(doubleQuoteMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'"));
-      } catch (e) {}
-    } else if (singleQuoteMatch) {
-      try {
-        blob = JSON.parse(singleQuoteMatch[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
-      } catch (e) {}
+
+    // Fastly / Cloudflare Bot Challenge Check
+    if (dlHtml.includes('<title>Client Challenge</title>') || dlHtml.includes('_fs-ch-')) {
+      debugLog('resolver', 'Bandcamp Cloudflare Bot Challenge triggered on server IP.');
+      return {
+        success: false,
+        error: 'Bandcamp Cloudflare Bot Challenge active on datacenter IP. Please use the Chrome Extension to download this email-walled release directly via your local browser session.',
+      };
     }
 
-    if (!blob) {
-      const pagedataMatch = dlHtml.match(/var\s+pagedata\s*=\s*(\{[\s\S]*?\})\s*;/);
-      if (pagedataMatch) {
+    // Direct Extraction: Match any direct https://p*.bcbits.com/download/(album|track)/... links in HTML
+    const bcbitsMatches = Array.from(
+      dlHtml.matchAll(/https?:\/\/[a-z0-9.]*bcbits\.com\/download\/(?:album|track)\/[^\s"'<>]+/gi)
+    ).map(m => m[0].replace(/&amp;/g, '&'));
+
+    let directFormatUrl = '';
+    if (bcbitsMatches.length > 0) {
+      debugLog('resolver', `Found ${bcbitsMatches.length} direct bcbits download link(s) in HTML:`, bcbitsMatches);
+      const matchForFormat = bcbitsMatches.find(u => u.toLowerCase().includes(`/${requestedFormat.toLowerCase()}/`)) ||
+                             bcbitsMatches.find(u => u.toLowerCase().includes(requestedFormat.toLowerCase())) ||
+                             bcbitsMatches.find(u => u.toLowerCase().includes('/flac/')) ||
+                             bcbitsMatches.find(u => u.toLowerCase().includes('/mp3-320/')) ||
+                             bcbitsMatches[0];
+      if (matchForFormat) {
+        directFormatUrl = matchForFormat;
+      }
+    }
+
+    // Tolerant Data-Blob Extraction
+    let blob: any = null;
+    const blobRegexes = [
+      /data-blob=["']([\s\S]*?)["']\s*(?:>|class|id)/i,
+      /id=["']pagedata["'][^>]*data-blob=["']([\s\S]*?)["']/i,
+      /<div[^>]*data-blob=["']([\s\S]*?)["']/i,
+      /data-blob="([^"]+)"/i,
+      /data-blob='([^']+)'/i,
+      /var\s+pagedata\s*=\s*(\{[\s\S]*?\})\s*;/i,
+      /window\.pagedata\s*=\s*(\{[\s\S]*?\})\s*;/i,
+    ];
+
+    for (const rx of blobRegexes) {
+      const m = dlHtml.match(rx);
+      if (m && m[1]) {
         try {
-          blob = JSON.parse(pagedataMatch[1]);
+          const decoded = m[1]
+            .replace(/&quot;/g, '"')
+            .replace(/&amp;/g, '&')
+            .replace(/&#39;/g, "'")
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>');
+          blob = JSON.parse(decoded);
+          if (blob && (blob.digital_items || blob.downloads)) break;
         } catch (e) {}
       }
     }
 
-    if (!blob) throw new Error('No data-blob found on download page. Please verify that the download link is active.');
+    if (!blob) {
+      const diMatch = dlHtml.match(/\{[\s\S]*?"digital_items"\s*:\s*\[[\s\S]*?\}\s*;/);
+      if (diMatch) {
+        try {
+          blob = JSON.parse(diMatch[0].replace(/;\s*$/, ''));
+        } catch (e) {}
+      }
+    }
 
-    const digitalItem = blob?.digital_items?.[0];
+    const digitalItem = blob?.digital_items?.[0] || blob;
     const downloads = digitalItem?.downloads;
-    if (!downloads) throw new Error('No downloads object found in digital_items');
+
+    // If no blob but we have a direct bcbits link in the HTML, return it!
+    if (!downloads && directFormatUrl) {
+      debugLog('resolver', 'Resolved via direct HTML bcbits link:', directFormatUrl);
+      const titleFromHtml = cleanHtmlText(dlHtml.match(/<title>([^<]+)<\/title>/i)?.[1]?.replace(/\|\s*Bandcamp/i, ''));
+      return {
+        success: true,
+        downloadUrl: directFormatUrl,
+        format: requestedFormat,
+        description: requestedFormat.toUpperCase(),
+        isArchive: directFormatUrl.includes('/album/'),
+        itemType: directFormatUrl.includes('/album/') ? 'album' : 'track',
+        title: titleFromHtml || 'Album',
+        artist: 'Artist',
+      };
+    }
+
+    if (!downloads) {
+      throw new Error('No download links or data-blob found on download page. Please verify that the download link is active.');
+    }
 
     const itemType = (digitalItem.item_type || digitalItem.type || 'album') as 'album' | 'track';
     const releaseTitle = cleanHtmlText(digitalItem.title);
@@ -511,7 +612,21 @@ export async function resolveBandcampDownload(
       downloads['wav'] ||
       Object.values(downloads)[0];
 
-    if (!target?.url) throw new Error('No target download URL available');
+    if (!target?.url) {
+      if (directFormatUrl) {
+        return {
+          success: true,
+          downloadUrl: directFormatUrl,
+          format: requestedFormat,
+          description: requestedFormat.toUpperCase(),
+          isArchive: directFormatUrl.includes('/album/'),
+          itemType,
+          title: releaseTitle,
+          artist: releaseArtist,
+        };
+      }
+      throw new Error('No target download URL available');
+    }
 
     let finalUrl = '';
 
@@ -586,7 +701,11 @@ export async function resolveBandcampDownload(
       }
     }
 
-    // Final attempt if still no URL: check target.url redirect once more
+    // Final attempt if still no URL: check target.url redirect once more or use directFormatUrl
+    if (!finalUrl && directFormatUrl) {
+      finalUrl = directFormatUrl;
+    }
+
     if (!finalUrl) {
       try {
         const retryCheck = await fetch(target.url, {

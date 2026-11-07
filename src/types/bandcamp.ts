@@ -1,3 +1,5 @@
+declare const chrome: any;
+
 export interface TrackAudioStream {
   trackNum: number;
   title: string;
@@ -164,6 +166,8 @@ export interface AppSettings {
   pacingJitterPercent: number; // default: 40 (meaning 2.5 +/- 1.0s)
   cooldownBatchInterval: number; // default: 5 (pause every 5 downloads)
   cooldownDurationSeconds: number; // default: 12
+  // Verbose debug logging switch
+  debugLogging?: boolean; // default: false
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -185,6 +189,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   pacingJitterPercent: 40,
   cooldownBatchInterval: 5,
   cooldownDurationSeconds: 12,
+  debugLogging: false,
 };
 
 export function formatDateToDotString(raw?: string): string {
