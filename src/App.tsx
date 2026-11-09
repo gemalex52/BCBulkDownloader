@@ -7,6 +7,7 @@ import {
   AUDIO_FORMATS,
   DEFAULT_APP_SETTINGS,
   QueueItem,
+  QueueItemStage,
   ItemStageLog,
   SiteQueueSession,
   formatFilenameBySchema,
@@ -645,131 +646,15 @@ export default function App() {
         const shouldDownloadAudio = effectiveScope !== 'info';
         const shouldDownloadInfo = effectiveScope !== 'audio' && settings.createCompanionInfoZip;
 
-        if (!isPaidOnly && shouldDownloadAudio) {
-          // Stage 1: Checking Mailbox via GAS watchdog if configured
-          if (!downloadPageUrl && hasGasWatchdog) {
-            logAndSync('checking_mail', 'Searching Gmail via GAS watchdog for existing download link...');
-
-            let searchSinceEpoch = 0;
-            if (settings.gasSearchFilterType === 'start_date' && settings.gasSearchStartDate) {
-              const d = new Date(settings.gasSearchStartDate);
-              if (!isNaN(d.getTime())) searchSinceEpoch = Math.floor(d.getTime() / 1000);
-            }
-            if (!searchSinceEpoch) {
-              const offsetHours = settings.gasSearchOffsetHours || 72;
-              searchSinceEpoch = Math.floor(Date.now() / 1000) - (offsetHours * 3600);
-            }
-
-            try {
-              const checkData = await apiClient.checkGasWebhook({
-                webhookUrl: settings.gasWebhookUrl.trim(),
-                secret: settings.gasSecret.trim(),
-                releaseId: qItem.itemId,
-                title: qItem.title,
-                since: searchSinceEpoch,
-              });
-              debugLog('gas', 'Initial GAS check response:', checkData);
-
-              if (checkData && checkData.found && checkData.downloadPageUrl) {
-                downloadPageUrl = checkData.downloadPageUrl;
-                logAndSync('checking_mail', `Found existing signed download link in Gmail! Skipping new email dispatch.`);
-              }
-            } catch (gasErr: any) {
-              debugLog('gas', 'Initial GAS check error:', gasErr);
-              console.warn('GAS check warning:', gasErr);
-            }
-          }
-
-          // Stage 2: Trigger Email on Bandcamp if still needed
-          const isEmailWalled = (qItem.requiresEmail || qItem.isNameYourPrice) && !downloadPageUrl;
-          if (!downloadPageUrl && isEmailWalled) {
-            logAndSync('triggering_email', `Triggering Bandcamp email dispatch to ${settings.fallbackEmail || 'listener'}...`);
-
-            const triggerTime = Math.floor(Date.now() / 1000);
-            let emailTriggerOk = false;
-            try {
-              const itemOrigin = qItem.url.startsWith('http')
-                ? new URL(qItem.url).origin
-                : (url.startsWith('http') ? new URL(url).origin : `https://${currentHostname}`);
-
-              const trigData = await apiClient.triggerEmailDownload(
-                itemOrigin,
-                selectedFormat,
-                qItem.itemId,
-                qItem.itemType,
-                settings.fallbackEmail || 'listener@example.com',
-                qItem.url
-              );
-              debugLog('pipeline', 'triggerEmailDownload response:', trigData);
-              if (trigData && (trigData.ok || trigData.success)) {
-                emailTriggerOk = true;
-              }
-            } catch (trigErr) {
-              debugLog('pipeline', 'triggerEmailDownload error:', trigErr);
-              console.warn('Email trigger warning:', trigErr);
-            }
-
-            // Stage 3: Polling GAS watchdog every 5s up to 3 min
-            if (emailTriggerOk && hasGasWatchdog) {
-              logAndSync('polling_gas', 'Polling Gmail watchdog every 5s for incoming signed download link...');
-
-              let foundFromPoll = false;
-              // Poll for up to 36 cycles (180s = 3 minutes)
-              for (let cycle = 0; cycle < 36; cycle++) {
-                if (isCancelledRef.current) break;
-
-                await sleep(5000);
-                logAndSync('polling_gas', `Polling mailbox for download link (attempt ${cycle + 1}/36)...`);
-
-                try {
-                  const pollData = await apiClient.checkGasWebhook({
-                    webhookUrl: settings.gasWebhookUrl.trim(),
-                    secret: settings.gasSecret.trim(),
-                    releaseId: qItem.itemId,
-                    title: qItem.title,
-                    since: triggerTime - 15,
-                  });
-                  debugLog('gas', `Polling attempt ${cycle + 1}/36 response:`, pollData);
-
-                  if (pollData && pollData.found && pollData.downloadPageUrl) {
-                    downloadPageUrl = pollData.downloadPageUrl;
-                    foundFromPoll = true;
-                    logAndSync('polling_gas', 'Received signed download link from Bandcamp email!');
-                    break;
-                  }
-                } catch (pollErr: any) {
-                  debugLog('gas', `Polling attempt ${cycle + 1}/36 error:`, pollErr);
-                }
-              }
-
-              if (!foundFromPoll && !downloadPageUrl) {
-                logAndSync('polling_gas', 'Notice: Signed Bandcamp download link not detected in Gmail yet.');
-              }
-            }
-          }
-        }
-
+        let audioSuccess = false;
+        let audioError: string | undefined = undefined;
+        let infoSuccess = false;
+        let infoError: string | undefined = undefined;
         let resolveData: any = null;
 
-        if (shouldDownloadAudio) {
-          // Stage 4: Resolving download stream (resolves true studio format FLAC / MP3-320)
-          logAndSync('resolving_stat', `Resolving studio master download URL for format: ${selectedFormat.toUpperCase()}...`);
-
-          resolveData = await apiClient.resolveDownload({
-            albumUrl: qItem.url,
-            releaseId: qItem.id,
-            itemId: qItem.itemId,
-            itemType: qItem.itemType,
-            format: selectedFormat,
-            email: settings.fallbackEmail,
-            downloadPageUrl,
-            release: qItem,
-          });
-        }
-
-        const effectiveArtist = resolveData?.artist || qItem.artist;
-        const effectiveAlbum = resolveData?.title || qItem.title;
-        const effectiveIsArchive = !!resolveData?.isArchive || (qItem.itemType === 'album');
+        const effectiveArtist = rel.artist || qItem.artist;
+        const effectiveAlbum = rel.title || qItem.title;
+        const effectiveIsArchive = qItem.itemType === 'album';
 
         // Target studio audio filename (auto-drops %title% for album archives)
         const audioFilename = formatFilenameBySchema(
@@ -782,82 +667,218 @@ export default function App() {
             totalTracks: rel.trackCount || 1,
             date: qItem.isoDate || qItem.releaseDate,
             year: qItem.isoDate?.slice(0, 4) || qItem.releaseDate?.slice(-4),
-            format: resolveData?.format || selectedFormat,
+            format: selectedFormat,
             type: qItem.itemType,
             isArchive: effectiveIsArchive,
           },
           { allowSubfolders: false }
         );
 
-        // Stage 5: Downloading Studio Audio
+        // --- SECTION 1: Audio Resolution & Download ---
         if (shouldDownloadAudio) {
-          logAndSync('downloading_audio', 'Downloading studio audio files...');
+          if (!isPaidOnly) {
+            try {
+              // Stage 1: Checking Mailbox via GAS watchdog if configured
+              if (!downloadPageUrl && hasGasWatchdog) {
+                logAndSync('checking_mail', 'Searching Gmail via GAS watchdog for existing download link...');
 
-          if (resolveData?.isPaid && resolveData?.skipAudio) {
-            logAndSync('downloading_audio', `Paid release (${resolveData.message || 'audio skipped per policy'}).`);
-          } else if (resolveData?.success && resolveData?.downloadUrl) {
-            // Direct studio archive or FLAC track
-            debugLog('pipeline', 'Downloading resolved studio audio:', resolveData.downloadUrl, 'as', audioFilename);
-            await apiClient.downloadAudioFile(resolveData.downloadUrl, audioFilename);
-            successfulDownloadsCount++;
-          } else if (selectedFormat === 'mp3-128' && (resolveData?.audioStreams || rel.audioStreams) && (resolveData?.audioStreams || rel.audioStreams).length > 0) {
-            // Explicit mp3-128 stream collection fallback
-            const streamsToDl = resolveData?.audioStreams || rel.audioStreams;
-            for (const stream of streamsToDl) {
-              const streamUrl = stream.streamUrl || stream.url;
-              if (streamUrl) {
-                const streamName = formatFilenameBySchema(
-                  settings.namingSchema,
-                  {
-                    artist: effectiveArtist,
-                    album: effectiveAlbum,
-                    title: stream.title,
-                    trackNum: stream.trackNum,
-                    totalTracks: streamsToDl.length,
-                    date: qItem.isoDate || qItem.releaseDate,
-                    year: qItem.isoDate?.slice(0, 4) || qItem.releaseDate?.slice(-4),
-                    format: selectedFormat,
-                    type: 'track',
-                  },
-                  { allowSubfolders: false }
-                );
+                let searchSinceEpoch = 0;
+                if (settings.gasSearchFilterType === 'start_date' && settings.gasSearchStartDate) {
+                  const d = new Date(settings.gasSearchStartDate);
+                  if (!isNaN(d.getTime())) searchSinceEpoch = Math.floor(d.getTime() / 1000);
+                }
+                if (!searchSinceEpoch) {
+                  const offsetHours = settings.gasSearchOffsetHours || 72;
+                  searchSinceEpoch = Math.floor(Date.now() / 1000) - (offsetHours * 3600);
+                }
 
-                await apiClient.downloadAudioFile(streamUrl, streamName);
-                await sleep(600);
+                try {
+                  const checkData = await apiClient.checkGasWebhook({
+                    webhookUrl: settings.gasWebhookUrl.trim(),
+                    secret: settings.gasSecret.trim(),
+                    releaseId: qItem.itemId,
+                    title: qItem.title,
+                    since: searchSinceEpoch,
+                  });
+                  debugLog('gas', 'Initial GAS check response:', checkData);
+
+                  if (checkData && checkData.found && checkData.downloadPageUrl) {
+                    downloadPageUrl = checkData.downloadPageUrl;
+                    logAndSync('checking_mail', `Found existing signed download link in Gmail! Skipping new email dispatch.`);
+                  }
+                } catch (gasErr: any) {
+                  debugLog('gas', 'Initial GAS check error:', gasErr);
+                  console.warn('GAS check warning:', gasErr);
+                }
               }
+
+              // Stage 2: Trigger Email on Bandcamp if still needed
+              const isEmailWalled = (qItem.requiresEmail || qItem.isNameYourPrice) && !downloadPageUrl;
+              if (!downloadPageUrl && isEmailWalled) {
+                logAndSync('triggering_email', `Triggering Bandcamp email dispatch to ${settings.fallbackEmail || 'listener'}...`);
+
+                const triggerTime = Math.floor(Date.now() / 1000);
+                let emailTriggerOk = false;
+                try {
+                  const itemOrigin = qItem.url.startsWith('http')
+                    ? new URL(qItem.url).origin
+                    : (url.startsWith('http') ? new URL(url).origin : `https://${currentHostname}`);
+
+                  const trigData = await apiClient.triggerEmailDownload(
+                    itemOrigin,
+                    selectedFormat,
+                    qItem.itemId,
+                    qItem.itemType,
+                    settings.fallbackEmail || 'listener@example.com',
+                    qItem.url
+                  );
+                  debugLog('pipeline', 'triggerEmailDownload response:', trigData);
+                  if (trigData && (trigData.ok || trigData.success)) {
+                    emailTriggerOk = true;
+                  }
+                } catch (trigErr) {
+                  debugLog('pipeline', 'triggerEmailDownload error:', trigErr);
+                  console.warn('Email trigger warning:', trigErr);
+                }
+
+                // Stage 3: Polling GAS watchdog every 5s up to maxGasPollCycles (default 10 = 50s)
+                if (emailTriggerOk && hasGasWatchdog) {
+                  const maxGasCycles = settings.gasMaxPollCycles || 10;
+                  logAndSync('polling_gas', `Polling Gmail watchdog every 5s for incoming signed download link (max ${maxGasCycles} attempts)...`);
+
+                  let foundFromPoll = false;
+                  for (let cycle = 0; cycle < maxGasCycles; cycle++) {
+                    if (isCancelledRef.current) break;
+
+                    await sleep(5000);
+                    logAndSync('polling_gas', `Polling mailbox for download link (attempt ${cycle + 1}/${maxGasCycles})...`);
+
+                    try {
+                      const pollData = await apiClient.checkGasWebhook({
+                        webhookUrl: settings.gasWebhookUrl.trim(),
+                        secret: settings.gasSecret.trim(),
+                        releaseId: qItem.itemId,
+                        title: qItem.title,
+                        since: triggerTime - 15,
+                      });
+                      debugLog('gas', `Polling attempt ${cycle + 1}/${maxGasCycles} response:`, pollData);
+
+                      if (pollData && pollData.found && pollData.downloadPageUrl) {
+                        downloadPageUrl = pollData.downloadPageUrl;
+                        foundFromPoll = true;
+                        logAndSync('polling_gas', 'Received signed download link from Bandcamp email!');
+                        break;
+                      }
+                    } catch (pollErr: any) {
+                      debugLog('gas', `Polling attempt ${cycle + 1}/${maxGasCycles} error:`, pollErr);
+                    }
+                  }
+
+                  if (!foundFromPoll && !downloadPageUrl) {
+                    logAndSync('polling_gas', 'Notice: Signed Bandcamp download link not detected in Gmail yet.');
+                  }
+                }
+              }
+
+              // Stage 4: Resolving download stream (resolves true studio format FLAC / MP3-320 with up to 60s+ wait)
+              logAndSync('resolving_stat', `Resolving studio master download URL for format: ${selectedFormat.toUpperCase()}...`);
+
+              resolveData = await apiClient.resolveDownload({
+                albumUrl: qItem.url,
+                releaseId: qItem.id,
+                itemId: qItem.itemId,
+                itemType: qItem.itemType,
+                format: selectedFormat,
+                email: settings.fallbackEmail,
+                downloadPageUrl,
+                release: qItem,
+              });
+
+              // Stage 5: Downloading Studio Audio
+              logAndSync('downloading_audio', 'Downloading studio audio files...');
+
+              if (resolveData?.isPaid && resolveData?.skipAudio) {
+                logAndSync('downloading_audio', `Paid release (${resolveData.message || 'audio skipped per policy'}).`);
+              } else if (resolveData?.success && resolveData?.downloadUrl) {
+                debugLog('pipeline', 'Downloading resolved studio audio:', resolveData.downloadUrl, 'as', audioFilename);
+                await apiClient.downloadAudioFile(resolveData.downloadUrl, audioFilename);
+                audioSuccess = true;
+                successfulDownloadsCount++;
+              } else if (selectedFormat === 'mp3-128' && (resolveData?.audioStreams || rel.audioStreams) && (resolveData?.audioStreams || rel.audioStreams).length > 0) {
+                const streamsToDl = resolveData?.audioStreams || rel.audioStreams;
+                for (const stream of streamsToDl) {
+                  const streamUrl = stream.streamUrl || stream.url;
+                  if (streamUrl) {
+                    const streamName = formatFilenameBySchema(
+                      settings.namingSchema,
+                      {
+                        artist: effectiveArtist,
+                        album: effectiveAlbum,
+                        title: stream.title,
+                        trackNum: stream.trackNum,
+                        totalTracks: streamsToDl.length,
+                        date: qItem.isoDate || qItem.releaseDate,
+                        year: qItem.isoDate?.slice(0, 4) || qItem.releaseDate?.slice(-4),
+                        format: selectedFormat,
+                        type: 'track',
+                      },
+                      { allowSubfolders: false }
+                    );
+
+                    await apiClient.downloadAudioFile(streamUrl, streamName);
+                    await sleep(600);
+                  }
+                }
+                audioSuccess = true;
+                successfulDownloadsCount++;
+              } else {
+                audioError = resolveData?.error || 'Studio audio download link required or timed out on server';
+                logAndSync('downloading_audio', `Studio audio not resolved: ${audioError}`, audioError);
+              }
+            } catch (aErr: any) {
+              audioError = aErr.message || 'Audio processing failed';
+              debugLog('pipeline', `Audio error for "${qItem.title}":`, audioError);
+              logAndSync('downloading_audio', `Audio download failed: ${audioError}`, audioError);
             }
-            successfulDownloadsCount++;
           } else {
-            logAndSync('downloading_audio', `Studio audio not resolved (${resolveData?.error || 'signed download link required'}).`);
+            logAndSync('downloading_audio', 'Paid release (audio skipped per policy). Packaging companion info ZIP.');
           }
         }
 
-        // Stage 6: Build and download companion (info).zip
+        // --- SECTION 2: Companion Info Archive Packaging ---
+        // Runs whenever shouldDownloadInfo is enabled, REGARDLESS of whether audio failed or succeeded!
         if (shouldDownloadInfo) {
-          logAndSync('packaging_info', 'Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)...');
+          try {
+            logAndSync('packaging_info', 'Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)...');
 
-          const companionResult = await buildCompanionInfoZip({
-            release: rel,
-            infoText: resolveData?.infoText || rel.infoText,
-            artUrl: resolveData?.artUrl || rel.artUrl,
-            artistBioPicUrl: resolveData?.artistBioPicUrl || rel.artistBioPicUrl,
-            extraImages: resolveData?.extraImages || rel.extraImages,
-            extraPhotos: resolveData?.extraPhotos || rel.extraPhotos,
-            audioStreams: resolveData?.audioStreams || rel.audioStreams,
-          });
+            const companionResult = await buildCompanionInfoZip({
+              release: rel,
+              infoText: resolveData?.infoText || rel.infoText,
+              artUrl: resolveData?.artUrl || rel.artUrl,
+              artistBioPicUrl: resolveData?.artistBioPicUrl || rel.artistBioPicUrl,
+              extraImages: resolveData?.extraImages || rel.extraImages,
+              extraPhotos: resolveData?.extraPhotos || rel.extraPhotos,
+              audioStreams: resolveData?.audioStreams || rel.audioStreams,
+            });
 
-          const companionName = getCompanionInfoZipName(audioFilename);
-          await apiClient.downloadBlob(companionResult.blob, companionName);
-
-          logAndSync('packaging_info', `Created companion ZIP: ${companionName} (${companionResult.filesCount} files)`);
+            const companionName = getCompanionInfoZipName(audioFilename);
+            await apiClient.downloadBlob(companionResult.blob, companionName);
+            infoSuccess = true;
+            logAndSync('packaging_info', `Created companion ZIP: ${companionName} (${companionResult.filesCount} files)`);
+          } catch (iErr: any) {
+            infoError = iErr.message || 'Failed packaging info archive';
+            debugLog('pipeline', `Info archive error for "${qItem.title}":`, infoError);
+            logAndSync('packaging_info', `Info ZIP failed: ${infoError}`, infoError);
+          }
         }
 
-        // Stage 7: Anti-Captcha Jitter Pacing & Cool-Down
+        // --- SECTION 3: Anti-Captcha Jitter Pacing & Cool-Down ---
         if (i < itemsToProcess.length - 1 && !isCancelledRef.current) {
           logAndSync('pacing', 'Applying anti-captcha pacing delay...');
 
           if (
             settings.cooldownBatchInterval > 0 &&
+            successfulDownloadsCount > 0 &&
             successfulDownloadsCount % settings.cooldownBatchInterval === 0
           ) {
             setPacingNotice(`Batch interval reached: Cooling down for ${settings.cooldownDurationSeconds}s...`);
@@ -874,27 +895,55 @@ export default function App() {
           }
         }
 
-        // Mark Completed
-        let doneStatus = 'Completed!';
-        if (shouldDownloadAudio && !shouldDownloadInfo) {
-          doneStatus = resolveData?.success && resolveData?.downloadUrl
-            ? 'Download completed (Audio only)!'
-            : 'Audio download completed / requires attention';
+        // --- SECTION 4: Composite Outcome & Status Reflection ---
+        let finalStage: QueueItemStage = 'completed';
+        let finalStatusText = '';
+
+        if (shouldDownloadAudio && shouldDownloadInfo) {
+          if (isPaidOnly) {
+            finalStage = infoSuccess ? 'completed' : 'failed';
+            finalStatusText = infoSuccess
+              ? 'Packaging complete (Paid release - companion info ZIP created)'
+              : `Paid release (Info ZIP failed: ${infoError || 'error'})`;
+          } else if (audioSuccess && infoSuccess) {
+            finalStage = 'completed';
+            finalStatusText = 'Download completed successfully!';
+          } else if (!audioSuccess && infoSuccess) {
+            finalStage = 'completed';
+            finalStatusText = `Audio error (${audioError || 'preparation timeout'}) · Info archive complete`;
+          } else if (audioSuccess && !infoSuccess) {
+            finalStage = 'completed';
+            finalStatusText = `Audio complete · Info archive failed (${infoError || 'error'})`;
+          } else {
+            finalStage = 'failed';
+            finalStatusText = `Audio failed (${audioError || 'unknown'}) · Info failed (${infoError || 'unknown'})`;
+          }
+        } else if (shouldDownloadAudio && !shouldDownloadInfo) {
+          if (audioSuccess) {
+            finalStage = 'completed';
+            finalStatusText = 'Audio download completed (Audio only)!';
+          } else {
+            finalStage = 'failed';
+            finalStatusText = `Audio failed: ${audioError || 'download failed'}`;
+          }
         } else if (!shouldDownloadAudio && shouldDownloadInfo) {
-          doneStatus = 'Packaging complete (Companion info archive saved)!';
-        } else {
-          doneStatus = resolveData?.success && resolveData?.downloadUrl
-            ? 'Download completed successfully!'
-            : ((resolveData?.isPaid && resolveData?.skipAudio)
-                ? 'Packaging complete (Paid release - companion info ZIP created)'
-                : 'Packaging complete (Companion info ZIP saved - audio requires email link)');
+          if (infoSuccess) {
+            finalStage = 'completed';
+            finalStatusText = 'Companion info archive saved (Info only)!';
+          } else {
+            finalStage = 'failed';
+            finalStatusText = `Info archive failed: ${infoError || 'packaging failed'}`;
+          }
         }
 
-        logAndSync('completed', doneStatus);
+        logAndSync(finalStage, finalStatusText, audioError || infoError || undefined);
         updateQueueItem(currentHostname, qItem.id, {
-          audioDownloaded: shouldDownloadAudio && Boolean(resolveData?.success && resolveData?.downloadUrl),
-          infoZipDownloaded: shouldDownloadInfo,
+          audioDownloaded: audioSuccess,
+          infoZipDownloaded: infoSuccess,
+          stage: finalStage,
+          statusText: finalStatusText,
           stageProgress: 100,
+          error: audioError ? `Audio: ${audioError}` : (infoError ? `Info: ${infoError}` : undefined),
         });
       } catch (itemErr: any) {
         console.error(`Error processing ${qItem.title}:`, itemErr);

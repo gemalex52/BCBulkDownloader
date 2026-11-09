@@ -175,16 +175,28 @@ export const apiClient = {
       return sendExtensionMessage({
         action: 'RESOLVE_DOWNLOAD',
         ...params,
-      });
+      }, 90000);
     }
 
-    const res = await fetch('/api/bandcamp/resolve-download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    if (!res.ok) throw new Error(`Resolve download HTTP ${res.status}`);
-    return res.json();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90000);
+    try {
+      const res = await fetch('/api/bandcamp/resolve-download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) throw new Error(`Resolve download HTTP ${res.status}`);
+      return res.json();
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        throw new Error('Download resolution timed out after 90s on Bandcamp server');
+      }
+      throw err;
+    }
   },
 
   async checkGasWebhook(params: {

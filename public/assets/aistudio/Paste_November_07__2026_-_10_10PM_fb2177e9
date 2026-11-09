@@ -1,0 +1,1243 @@
+[BandcampDL:pipeline] handleStartBulkDownload: 36 release(s) selected.
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Prepared 36 items to run in pipeline.
+dashboard.bundle.js:2305 [BandcampDL:pipeline] === Starting queue pipeline: 36 item(s) to process ===
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [1/36] Processing "Red Ring" (track, ID: 3751895310)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: false, ok: false, error: 'Sorry, this item is no longer available for free.', data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [downloading_audio] Paid release (Paid release: audio skipped per policy. Packaging companion info ZIP.). 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [packaging_info] Created companion ZIP: Othaliël - 2026.11.06 - Red Ring (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Red Ring] [completed] Packaging complete (Paid release - companion info ZIP created) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [2/36] Processing "Cancer" (track, ID: 3974777727)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=397477…9&sig=987c430aa3f1252006dfcadc91a91c4a&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Downloading resolved studio audio: https://p4.bcbits.com/download/track/174447fa436f7ba8dd655ca1932dd5a62/flac/3974777727?id=3974777727&payment_id=2721884939&sig=987c430aa3f1252006dfcadc91a91c4a&token=1794688573_069c46c3a9cb5c064a0204ec1d65cd948d287b2f as Esoctrilihum - 2026.04.15 - Cancer.flac
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [packaging_info] Created companion ZIP: Esoctrilihum - 2026.04.15 - Cancer (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Cancer] [completed] Download completed successfully! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [3/36] Processing "Ealubaal (archive album, 2020-2022)" (album, ID: 2176466721)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=217646…6&sig=3f8117aa9b0561de31626d69aa9cc20c&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Downloading resolved studio audio: https://p4.bcbits.com/download/album/132f3e39a9ce3170eb073429013b41551/flac/2176466721?id=2176466721&payment_id=3081331596&sig=3f8117aa9b0561de31626d69aa9cc20c&token=1794688590_5ac6a196449b90fa1bcb51ba36462145712b3165 as Esoctrilihum - 2025.12.16 - Ealubaal (archive album, 2020-2022).zip
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [packaging_info] Created companion ZIP: Esoctrilihum - 2025.12.16 - Ealubaal (archive album, 2020-2022) (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ealubaal (archive album, 2020-2022)] [completed] Download completed successfully! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [4/36] Processing "Lumière Avortée" (album, ID: 2990932348)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 2/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 2/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 3/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 3/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 4/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 4/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 5/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 5/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 6/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 6/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 7/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 7/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 8/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 8/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 9/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 9/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 10/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 10/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 11/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 11/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 12/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 12/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 13/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 13/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 14/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 14/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 15/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 15/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 16/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 16/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 17/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 17/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 18/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 18/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 19/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 19/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 20/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 20/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 21/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 21/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 22/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 22/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 23/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 23/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 24/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 24/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 25/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 25/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 26/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 26/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 27/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 27/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 28/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 28/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 29/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 29/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 30/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 30/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 31/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 31/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 32/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 32/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 33/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 33/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 34/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 34/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 35/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 35/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Polling mailbox for download link (attempt 36/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 36/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [polling_gas] Notice: Signed Bandcamp download link not detected in Gmail yet. 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [downloading_audio] Paid release (Paid release: audio skipped per policy. Packaging companion info ZIP.). 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [packaging_info] Created companion ZIP: Esoctrilihum - 2025.11.26 - Lumière Avortée (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lumière Avortée] [completed] Packaging complete (Paid release - companion info ZIP created) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [5/36] Processing "Monarchy of Terror on the Broken Mind by Voorh's Disease" (album, ID: 3562716801)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=356271…8&sig=dea984f7a432100f683ea975125109de&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Downloading resolved studio audio: https://p4.bcbits.com/download/album/1f6e99007c802492f8e96421368f3cb64/flac/3562716801?id=3562716801&payment_id=724317448&sig=dea984f7a432100f683ea975125109de&token=1794688854_3c8572d8b86308215afaec152ffe8743e75ed1f5 as Esoctrilihum - 2025.11.26 - Monarchy of Terror on the Broken Mind by Voorh's Disease.zip
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [packaging_info] Created companion ZIP: Esoctrilihum - 2025.11.26 - Monarchy of Terror on the Broken Mind by Voorh's Disease (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Monarchy of Terror on the Broken Mind by Voorh's Disease] [completed] Download completed successfully! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [6/36] Processing "Funeral (Remastered Version)" (album, ID: 3857658082)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=385765…2&sig=56cb085669e1ead3ff51f4dd1c7fe275&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Downloading resolved studio audio: https://p4.bcbits.com/download/album/1693a67d09d7ff4d7f1b7a071cbebfe18/flac/3857658082?id=3857658082&payment_id=3557143432&sig=56cb085669e1ead3ff51f4dd1c7fe275&token=1794688870_9ee81eb428d2ec6fe07bcc0cb50d78c17b855844 as Esoctrilihum - 2025.11.09 - Funeral (Remastered Version).zip
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [packaging_info] Created companion ZIP: Esoctrilihum - 2025.11.09 - Funeral (Remastered Version) (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral (Remastered Version)] [completed] Download completed successfully! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [7/36] Processing "Drilhius Fustus" (album, ID: 3948516644)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=394851…6&sig=459808d0a60cf44b89b81490465b83ea&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Downloading resolved studio audio: https://p4.bcbits.com/download/album/196aab1af88fc2a1219d24d174387b460/flac/3948516644?id=3948516644&payment_id=4123160766&sig=459808d0a60cf44b89b81490465b83ea&token=1794688892_43da0d39c210f5d38f7f36172d0f3b8b049384b9 as Othaliël - 2025.09.23 - Drilhius Fustus.zip
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [packaging_info] Created companion ZIP: Othaliël - 2025.09.23 - Drilhius Fustus (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Drilhius Fustus] [completed] Download completed successfully! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [8/36] Processing "Almost Dead" (album, ID: 855398130)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=855398…0&sig=67e6ab82b3b3c383feb32483821f750b&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Downloading resolved studio audio: https://p4.bcbits.com/download/album/18e378c92e737f8b420106511ecd772ac/flac/855398130?id=855398130&payment_id=288076180&sig=67e6ab82b3b3c383feb32483821f750b&token=1794688917_8442a280f1738092fbcea177dc7d25837e00cbee as Esoctrilihum - 2025.06.16 - Almost Dead.zip
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [packaging_info] Created companion ZIP: Esoctrilihum - 2025.06.16 - Almost Dead (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Almost Dead] [completed] Download completed successfully! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [9/36] Processing "Thürldaesu (alternative ending)" (track, ID: 951339734)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=951339…1&sig=b9a077350e21ac3bcefe43d71a159273&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Thürldaesu (alternative ending): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+O @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [10/36] Processing "Ialzalkaarza" (album, ID: 2269840795)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=226984…0&sig=c4ef266b1cfa9f6b1580ccb3ba756ee6&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Ialzalkaarza: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+O @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [11/36] Processing "Life of Terror" (track, ID: 3166573169)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=316657…7&sig=39dc6b30c9a23ce2db21eb8915f708af&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Life of Terror: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+O @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [12/36] Processing "Ectrülhys" (album, ID: 2642869648)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=264286…8&sig=ad934d6ed3c1d53dadc11469a8b34e54&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Ectrülhys: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+O @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [13/36] Processing "Vulwh Suidarl" (track, ID: 3548527562)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=354852…9&sig=56fd0f33423f948a39b89c5b06c1c68a&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Vulwh Suidarl: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+O @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Download pipeline cancelled by user.
+dashboard.bundle.js:2305 [BandcampDL:pipeline] === Finished queue pipeline. Successful downloads: 6 ===
+dashboard.bundle.js:2305 [BandcampDL:pipeline] handleResumeBulkDownload clicked.
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Found 28 uncompleted releases out of 36 selected.
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Dispatching 28 runnable items to pipeline.
+dashboard.bundle.js:2305 [BandcampDL:pipeline] === Starting queue pipeline: 28 item(s) to process ===
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [1/28] Processing "Thürldaesu (alternative ending)" (track, ID: 951339734)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=951339…4&sig=964440a1f45ae6e2c7bd569586b73007&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Thürldaesu (alternative ending): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thürldaesu (alternative ending)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [2/28] Processing "Ialzalkaarza" (album, ID: 2269840795)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=226984…2&sig=a12b1aabc9841cc25d6262116d4c4aed&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Ialzalkaarza: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ialzalkaarza] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [3/28] Processing "Life of Terror" (track, ID: 3166573169)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=316657…1&sig=454629689a601ea30748758af7292c7a&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Life of Terror: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Life of Terror] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [4/28] Processing "Ectrülhys" (album, ID: 2642869648)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=264286…3&sig=e53404ef1f7d30022cba7b21050d782f&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Ectrülhys: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ectrülhys] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [5/28] Processing "Vulwh Suidarl" (track, ID: 3548527562)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=354852…6&sig=67f4eab65ab756bb24cc7acc69775cb7&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Vulwh Suidarl: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Vulwh Suidarl] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [6/28] Processing "Hopeless" (track, ID: 3540178894)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Hopeless] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Hopeless] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Hopeless] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Hopeless] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=354017…8&sig=e91cc08130ea4a5444e53a9481893e6b&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Hopeless] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Hopeless] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Hopeless: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Hopeless] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [7/28] Processing "Act Of Madness (2015)" (track, ID: 904197527)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Act Of Madness (2015)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Act Of Madness (2015)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Act Of Madness (2015)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Act Of Madness (2015)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=904197…2&sig=fa3a4cf1882fe2fa68989162ed4c8b38&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Act Of Madness (2015)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Act Of Madness (2015)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Act Of Madness (2015): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Act Of Madness (2015)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [8/28] Processing "Rêve Défiguré" (track, ID: 1487198231)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Rêve Défiguré] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Rêve Défiguré] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Rêve Défiguré] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Rêve Défiguré] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=148719…0&sig=ab49287ff1b45011429afb0dc7248c83&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Rêve Défiguré] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Rêve Défiguré] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Rêve Défiguré: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Rêve Défiguré] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [9/28] Processing "Sörsthÿlias (Distress Signal)" (track, ID: 2752628695)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Sörsthÿlias (Distress Signal)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Sörsthÿlias (Distress Signal)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Sörsthÿlias (Distress Signal)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Sörsthÿlias (Distress Signal)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=275262…2&sig=e76e5b0040d6a17a52804821f06f0548&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Sörsthÿlias (Distress Signal)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Sörsthÿlias (Distress Signal)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Sörsthÿlias (Distress Signal): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Sörsthÿlias (Distress Signal)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [10/28] Processing "Y'hytwh (Immeasurable Confusion)" (track, ID: 3799040094)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Y'hytwh (Immeasurable Confusion)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Y'hytwh (Immeasurable Confusion)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Y'hytwh (Immeasurable Confusion)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Y'hytwh (Immeasurable Confusion)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=379904…9&sig=087c94c6fa2122f698dd5ff73492222b&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Y'hytwh (Immeasurable Confusion)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Y'hytwh (Immeasurable Confusion)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Y'hytwh (Immeasurable Confusion): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Y'hytwh (Immeasurable Confusion)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [11/28] Processing "Iyaszülh (These Thoughts Are Killing Me)" (track, ID: 4219304511)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Iyaszülh (These Thoughts Are Killing Me)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Iyaszülh (These Thoughts Are Killing Me)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Iyaszülh (These Thoughts Are Killing Me)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Iyaszülh (These Thoughts Are Killing Me)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=421930…5&sig=4ca0d08369ac2b5d6c6f37c3afa735f3&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Iyaszülh (These Thoughts Are Killing Me)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Iyaszülh (These Thoughts Are Killing Me)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Iyaszülh (These Thoughts Are Killing Me): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Iyaszülh (These Thoughts Are Killing Me)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [12/28] Processing "Ulthysiur Tsörth (Rising)" (track, ID: 989893410)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ulthysiur Tsörth (Rising)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ulthysiur Tsörth (Rising)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ulthysiur Tsörth (Rising)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ulthysiur Tsörth (Rising)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=989893…0&sig=41420aee445c6d95dd0a376e5901a74a&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ulthysiur Tsörth (Rising)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ulthysiur Tsörth (Rising)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Ulthysiur Tsörth (Rising): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Ulthysiur Tsörth (Rising)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [13/28] Processing "Attempt Of Suicide" (track, ID: 2616455429)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Attempt Of Suicide] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Attempt Of Suicide] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Attempt Of Suicide] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Attempt Of Suicide] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=261645…8&sig=b897cbefbce0edd380b3256d7c263d2c&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Attempt Of Suicide] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Attempt Of Suicide] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Attempt Of Suicide: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Attempt Of Suicide] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [14/28] Processing "Xe Gh'arth (2017)" (album, ID: 1467410559)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Xe Gh'arth (2017)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Xe Gh'arth (2017)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Xe Gh'arth (2017)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Xe Gh'arth (2017)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=146741…3&sig=3c9dcad4a270cc5c389a6f2ebb6cb341&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Xe Gh'arth (2017)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Xe Gh'arth (2017)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Xe Gh'arth (2017): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Xe Gh'arth (2017)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [15/28] Processing "Kondimnis (Condemned)" (track, ID: 1310202301)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Kondimnis (Condemned)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Kondimnis (Condemned)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Kondimnis (Condemned)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Kondimnis (Condemned)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=131020…4&sig=9af29621a39c339350c553e14900bc68&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Kondimnis (Condemned)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Kondimnis (Condemned)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Kondimnis (Condemned): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Kondimnis (Condemned)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [16/28] Processing "Thirsys (The Last Suffering)" (track, ID: 2983996198)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thirsys (The Last Suffering)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thirsys (The Last Suffering)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thirsys (The Last Suffering)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thirsys (The Last Suffering)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=298399…8&sig=5b917cfa93257cccc938f88a92d66a63&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thirsys (The Last Suffering)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thirsys (The Last Suffering)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Thirsys (The Last Suffering): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Thirsys (The Last Suffering)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [17/28] Processing "Lüthirkys Spasmuldis (Near Death)" (track, ID: 2787940524)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lüthirkys Spasmuldis (Near Death)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lüthirkys Spasmuldis (Near Death)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lüthirkys Spasmuldis (Near Death)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lüthirkys Spasmuldis (Near Death)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=278794…8&sig=fa7ab9d14b2cb5ab8b24061b88bad84c&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lüthirkys Spasmuldis (Near Death)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lüthirkys Spasmuldis (Near Death)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Lüthirkys Spasmuldis (Near Death): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lüthirkys Spasmuldis (Near Death)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [18/28] Processing "Funeral" (album, ID: 2140742191)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=214074…7&sig=d97e0054bcaa3bf15d1edbc4176b3e47&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Funeral: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Funeral] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [19/28] Processing "Yiähleïf'äm" (track, ID: 4021331759)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 2/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 2/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 3/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 3/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 4/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 4/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 5/36)... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 5/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 6/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 6/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 7/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 7/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 8/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 8/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 9/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 9/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 10/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 10/36 response: {success: true, found: false}
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 11/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 11/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 12/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 12/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 13/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 13/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 14/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 14/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 15/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 15/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 16/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 16/36 response: {success: true, found: false}
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 17/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 17/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 18/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 18/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 19/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 19/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 20/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 20/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 21/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 21/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 22/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 22/36 response: {success: true, found: false}
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 23/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 23/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 24/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 24/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 25/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 25/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 26/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 26/36 response: {success: true, found: false}
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 27/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 27/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 28/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 28/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 29/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 29/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 30/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 30/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 31/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 31/36 response: {success: true, found: false}
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 32/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 32/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 33/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 33/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 34/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 34/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 35/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 35/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Polling mailbox for download link (attempt 36/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 36/36 response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [polling_gas] Notice: Signed Bandcamp download link not detected in Gmail yet. 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [downloading_audio] Paid release (Paid release: audio skipped per policy. Packaging companion info ZIP.). 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [packaging_info] Created companion ZIP: Esoctrilihum - 2022.10.31 - Yiähleïf'äm (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [pacing] Applying anti-captcha pacing delay... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Yiähleïf'äm] [completed] Packaging complete (Paid release - companion info ZIP created) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [20/28] Processing "Saopth's" (album, ID: 1868004751)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Saopth's] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Saopth's] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Saopth's] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Saopth's] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=186800…9&sig=722113ef6e3a5880c6e2db6a5fac0625&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Saopth's] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Saopth's] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Saopth's: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Saopth's] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [21/28] Processing "Luadimmerantia" (album, ID: 3072903004)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Luadimmerantia] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Luadimmerantia] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Luadimmerantia] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Luadimmerantia] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=307290…1&sig=4f2d7c80bdbf2044c1680f07fa195f05&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Luadimmerantia] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Luadimmerantia] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2320 Error processing Luadimmerantia: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Luadimmerantia] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [22/28] Processing "Inhüma (Remastered Version)" (album, ID: 1307634646)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Inhüma (Remastered Version)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Inhüma (Remastered Version)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Inhüma (Remastered Version)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Inhüma (Remastered Version)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=130763…8&sig=56c0190a6df1235360fc9140e0847c9e&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Inhüma (Remastered Version)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Inhüma (Remastered Version)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Inhüma (Remastered Version): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Inhüma (Remastered Version)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [23/28] Processing "Lugalanhath" (track, ID: 3615302339)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lugalanhath] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lugalanhath] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lugalanhath] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28
+callStat @ core.js:717
+await in callStat
+resolveBandcampDownload @ core.js:723
+await in resolveBandcampDownload
+(anonymous) @ background.js:267
+(anonymous) @ background.js:295
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lugalanhath] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=361530…3&sig=95be6bcc3abc920076b763594c1c95a6&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lugalanhath] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lugalanhath] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Lugalanhath: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Lugalanhath] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [24/28] Processing "Riyrsg (Perpetual Failure)" (track, ID: 3650109989)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Riyrsg (Perpetual Failure)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Riyrsg (Perpetual Failure)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Riyrsg (Perpetual Failure)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Riyrsg (Perpetual Failure)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=365010…1&sig=3959e240e054769291f3145a2b02a5a2&type=track'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Riyrsg (Perpetual Failure)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Riyrsg (Perpetual Failure)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Riyrsg (Perpetual Failure): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Riyrsg (Perpetual Failure)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [25/28] Processing "Urionhsol (Seven Demons)" (album, ID: 3279050209)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=327905…0&sig=083f91b96994741de9df3cb4697b6a0a&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [downloading_audio] Downloading studio audio files... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] Downloading resolved studio audio: https://p4.bcbits.com/download/album/1549ef557731985a0c826b8addc337baf/flac/3279050209?id=3279050209&payment_id=333607550&sig=083f91b96994741de9df3cb4697b6a0a&token=1794690143_918ac371708c8c1df04e0f4dfa2317fa4a0adf84 as Esoctrilihum - 2021.08.29 - Urionhsol (Seven Demons).zip
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [packaging_info] Packaging companion (info).zip (untruncated info.txt, cover.jpg, artist.jpg, photos/, .lrc)... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [packaging_info] Created companion ZIP: Esoctrilihum - 2021.08.29 - Urionhsol (Seven Demons) (info).zip (3 files) 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [pacing] Applying anti-captcha pacing delay... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Urionhsol (Seven Demons)] [completed] Download completed successfully! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [26/28] Processing "Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version)" (album, ID: 2289892931)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=228989…7&sig=f83dc41e8b3e31d57acd7b9898391235&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Pandaemorthium (Forbidden Formulas To Awaken The Blind Sovereigns Of Nothingness) (Remastered Version)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [27/28] Processing "Mystic Echo From A Funeral Dimension (Remastered Version)" (album, ID: 552717486)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Mystic Echo From A Funeral Dimension (Remastered Version)] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Mystic Echo From A Funeral Dimension (Remastered Version)] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Mystic Echo From A Funeral Dimension (Remastered Version)] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Mystic Echo From A Funeral Dimension (Remastered Version)] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=552717…0&sig=c84bdfd99ec3390051d4b5dc490ef3ba&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Mystic Echo From A Funeral Dimension (Remastered Version)] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Mystic Echo From A Funeral Dimension (Remastered Version)] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing Mystic Echo From A Funeral Dimension (Remastered Version): Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+q @ dashboard.bundle.js:2320
+await in q
+L @ dashboard.bundle.js:2320
+onClick @ dashboard.bundle.js:18
+l0 @ dashboard.bundle.js:8
+(anonymous) @ dashboard.bundle.js:8
+lh @ dashboard.bundle.js:8
+qu @ dashboard.bundle.js:8
+$c @ dashboard.bundle.js:9
+Hy @ dashboard.bundle.js:9
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [Mystic Echo From A Funeral Dimension (Remastered Version)] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [28/28] Processing "F'htansg" (album, ID: 2338635590)...
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [F'htansg] [checking_mail] Searching Gmail via GAS watchdog for existing download link... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Initial GAS check response: {success: true, found: false}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [F'htansg] [triggering_email] Triggering Bandcamp email dispatch to for.snatch+bcbulk@gmail.com... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] triggerEmailDownload response: {success: true, ok: true, data: {…}}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [F'htansg] [polling_gas] Polling Gmail watchdog every 5s for incoming signed download link... 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [F'htansg] [polling_gas] Polling mailbox for download link (attempt 1/36)... 
+dashboard.bundle.js:2305 [BandcampDL:gas] Polling attempt 1/36 response: {success: true, found: true, downloadPageUrl: 'https://bandcamp.com/download?from=email&id=233863…3&sig=cbcc3607493265bf111698e8cd92d511&type=album'}
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [F'htansg] [polling_gas] Received signed download link from Bandcamp email! 
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [F'htansg] [resolving_stat] Resolving studio master download URL for format: FLAC... 
+dashboard.bundle.js:2320 Error processing F'htansg: Error: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+    at dashboard.bundle.js:11:103247
+dashboard.bundle.js:2305 [BandcampDL:pipeline] [F'htansg] [failed] Failed: Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD) Extension background worker timed out after 25s (action: RESOLVE_DOWNLOAD)
+dashboard.bundle.js:2305 [BandcampDL:pipeline] === Finished queue pipeline. Successful downloads: 1 ===
+4core.js:717 callStat error: TypeError: Failed to fetch
+    at callStat (core.js:709:25)
+    at resolveBandcampDownload (core.js:723:24)
+    at async background.js:267:28

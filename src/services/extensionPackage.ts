@@ -39,10 +39,10 @@ export const EXTENSION_FILES: ExtensionFileItem[] = [
     "scripting"
   ],
   "host_permissions": [
-    "https://*.bandcamp.com/*",
-    "https://*.bcbits.com/*",
-    "https://script.google.com/*",
-    "https://script.googleusercontent.com/*"
+    "*://*.bandcamp.com/*",
+    "*://*.bcbits.com/*",
+    "*://script.google.com/*",
+    "*://script.googleusercontent.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -330,8 +330,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           try {
             const pageRes = await fetch(albumUrl, {
               headers: {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
               }
             });
             if (pageRes.ok) {

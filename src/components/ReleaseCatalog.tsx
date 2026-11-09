@@ -135,13 +135,38 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
     if (!qItem || qItem.stage === 'pending') return null;
 
     switch (qItem.stage) {
-      case 'completed':
+      case 'completed': {
+        if (qItem.audioDownloaded && qItem.infoZipDownloaded) {
+          return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/80 border border-emerald-500/50 text-emerald-300">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Both Complete</span>
+            </span>
+          );
+        }
+        if (qItem.infoZipDownloaded && !qItem.audioDownloaded) {
+          return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-950/80 border border-indigo-500/50 text-indigo-300">
+              <FolderArchive className="w-3 h-3" />
+              <span>{qItem.error ? 'Info OK (Audio Err)' : 'Info Complete'}</span>
+            </span>
+          );
+        }
+        if (qItem.audioDownloaded && !qItem.infoZipDownloaded) {
+          return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-950/80 border border-cyan-500/50 text-cyan-300">
+              <Music className="w-3 h-3" />
+              <span>{qItem.error ? 'Audio OK (Info Err)' : 'Audio Complete'}</span>
+            </span>
+          );
+        }
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/80 border border-emerald-500/50 text-emerald-300">
             <CheckCircle2 className="w-3 h-3" />
             <span>Completed</span>
           </span>
         );
+      }
       case 'failed':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-red-950/80 border border-red-500/50 text-red-300">

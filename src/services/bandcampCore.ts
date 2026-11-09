@@ -813,13 +813,10 @@ export async function resolveBandcampDownload(
     async function callStat(urlToStat: string): Promise<any> {
       try {
         const parsed = new URL(urlToStat);
-        const statUrl =
-          parsed.origin +
-          parsed.pathname.replace('/download/', '/statdownload/') +
-          parsed.search +
-          '&.rand=' +
-          Math.floor(Math.random() * 1000000) +
-          '&.vrs=1';
+        parsed.pathname = parsed.pathname.replace('/download/', '/statdownload/');
+        parsed.searchParams.set('.rand', String(Math.floor(Math.random() * 1000000)));
+        parsed.searchParams.set('.vrs', '1');
+        const statUrl = parsed.toString();
 
         const res = await fetch(statUrl, {
           headers: {
@@ -829,9 +826,13 @@ export async function resolveBandcampDownload(
           },
         });
 
+        if (!res.ok) return null;
         const text = await res.text();
         const jsonMatch = text.match(/Downloads\.statResult\s*\(\s*(\{[\s\S]*?\})\s*\)/);
         if (jsonMatch) return JSON.parse(jsonMatch[1]);
+        try {
+          return JSON.parse(text);
+        } catch (pe) {}
       } catch (e) {
         console.warn('callStat error:', e);
       }
@@ -839,25 +840,32 @@ export async function resolveBandcampDownload(
     }
 
     if (!finalUrl) {
-      let stat = await callStat(target.url);
-
-      // Poll statdownload when Bandcamp is preparing archive ("busy") or following retry_url
       let attempts = 0;
-      while (
-        stat &&
-        (stat.result === 'busy' || (!stat.download_url && stat.retry_url)) &&
-        attempts < 25
-      ) {
+      const maxAttempts = 32; // 32 attempts * 2s = ~64s max waiting for Bandcamp to prepare audio
+      let nextStatUrl = target.url;
+      let lastStat: any = null;
+
+      while (attempts < maxAttempts) {
         attempts++;
-        await new Promise(r => setTimeout(r, 1500));
-        stat = await callStat(stat.retry_url || target.url);
-        if (stat?.result === 'ok' && stat?.download_url) {
-          break;
+        const stat = await callStat(nextStatUrl);
+        if (stat) {
+          lastStat = stat;
+          if (stat.result === 'ok' && stat.download_url) {
+            finalUrl = stat.download_url;
+            break;
+          }
+          if (stat.result === 'err') {
+            break;
+          }
+          if (stat.retry_url) {
+            nextStatUrl = stat.retry_url;
+          }
         }
+        await new Promise(r => setTimeout(r, 2000));
       }
 
-      if (stat?.download_url) {
-        finalUrl = stat.download_url;
+      if (!finalUrl && lastStat?.download_url) {
+        finalUrl = lastStat.download_url;
       }
     }
 

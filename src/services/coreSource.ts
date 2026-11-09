@@ -525,9 +525,10 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9'
     };
-    if (ref) h['Referer'] = ref;
-    if (cookieHeader) h['Cookie'] = cookieHeader;
-    if (typeof window === 'undefined') {
+    var isNode = typeof process !== 'undefined' && process.versions && !!process.versions.node && typeof chrome === 'undefined';
+    if (isNode) {
+      if (ref) h['Referer'] = ref;
+      if (cookieHeader) h['Cookie'] = cookieHeader;
       h['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
     }
     return h;
@@ -700,21 +701,22 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
     async function callStat(urlToStat) {
       try {
         var parsed = new URL(urlToStat);
-        var statUrl =
-          parsed.origin +
-          parsed.pathname.replace('/download/', '/statdownload/') +
-          parsed.search +
-          '&.rand=' +
-          Math.floor(Math.random() * 1000000) +
-          '&.vrs=1';
+        parsed.pathname = parsed.pathname.replace('/download/', '/statdownload/');
+        parsed.searchParams.set('.rand', String(Math.floor(Math.random() * 1000000)));
+        parsed.searchParams.set('.vrs', '1');
+        var statUrl = parsed.toString();
 
         var res = await fetch(statUrl, {
           headers: getSafeHeaders(cleanUrl, cookieHeader),
         });
 
+        if (!res.ok) return null;
         var text = await res.text();
         var jsonMatch = text.match(/Downloads\\.statResult\\s*\\(\\s*(\\{[\\s\\S]*?\\})\\s*\\)/);
         if (jsonMatch) return JSON.parse(jsonMatch[1]);
+        try {
+          return JSON.parse(text);
+        } catch (pe) {}
       } catch (e) {
         console.warn('callStat error:', e);
       }
@@ -722,24 +724,32 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
     }
 
     if (!finalUrl) {
-      var stat = await callStat(target.url);
-
       var attempts = 0;
-      while (
-        stat &&
-        (stat.result === 'busy' || (!stat.download_url && stat.retry_url)) &&
-        attempts < 25
-      ) {
+      var maxAttempts = 32; // 32 attempts * 2s = ~64s max waiting for Bandcamp to prepare audio
+      var nextStatUrl = target.url;
+      var lastStat = null;
+
+      while (attempts < maxAttempts) {
         attempts++;
-        await new Promise(function(r) { setTimeout(r, 1500); });
-        stat = await callStat(stat.retry_url || target.url);
-        if (stat && stat.result === 'ok' && stat.download_url) {
-          break;
+        var stat = await callStat(nextStatUrl);
+        if (stat) {
+          lastStat = stat;
+          if (stat.result === 'ok' && stat.download_url) {
+            finalUrl = stat.download_url;
+            break;
+          }
+          if (stat.result === 'err') {
+            break;
+          }
+          if (stat.retry_url) {
+            nextStatUrl = stat.retry_url;
+          }
         }
+        await new Promise(function(r) { setTimeout(r, 2000); });
       }
 
-      if (stat && stat.download_url) {
-        finalUrl = stat.download_url;
+      if (!finalUrl && lastStat && lastStat.download_url) {
+        finalUrl = lastStat.download_url;
       }
     }
 
@@ -759,9 +769,9 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
 
     if (!finalUrl) {
       throw new Error(
-        (stat && stat.result === 'err')
-          ? ('Bandcamp error: ' + (stat.errortype || 'Download link preparation failed'))
-          : 'Archive preparation timed out on Bandcamp server. Please retry.'
+        (lastStat && lastStat.result === 'err')
+          ? ('Bandcamp error: ' + (lastStat.errortype || 'Download link preparation failed'))
+          : 'Archive / audio preparation timed out on Bandcamp server (waited >60s). Please retry.'
       );
     }
 
