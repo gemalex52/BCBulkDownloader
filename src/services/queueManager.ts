@@ -205,8 +205,8 @@ export function initSiteSession(
       isFree: rel.isFree,
       isNameYourPrice: rel.isNameYourPrice,
       isPurchased: rel.isPurchased,
-      isPaid: Boolean(rel.badgeType === 'paid' || (!rel.isPurchased && !rel.freeDownloadPageUrl && !rel.requiresEmail && !rel.isNameYourPrice && (rel.minPrice || 0) > 0)),
-      badgeType: rel.badgeType || (rel.isPurchased ? 'own' : (rel.freeDownloadPageUrl || (!rel.requiresEmail && !rel.isNameYourPrice && (rel.minPrice === 0 || rel.isFree)) ? 'free' : ((rel.requiresEmail || rel.isNameYourPrice) ? 'email' : 'paid'))),
+      isPaid: Boolean(rel.badgeType === 'paid' || rel.isPaid || (!rel.isPurchased && !rel.freeDownloadPageUrl && !rel.requiresEmail && !rel.isNameYourPrice && (rel.minPrice || 0) > 0)),
+      badgeType: rel.badgeType || ((rel.badgeType === 'paid' || rel.isPaid) ? 'paid' : (rel.isPurchased ? 'own' : (rel.freeDownloadPageUrl || (!rel.requiresEmail && !rel.isNameYourPrice && (rel.minPrice === 0 || rel.isFree)) ? 'free' : ((rel.requiresEmail || rel.isNameYourPrice) ? 'email' : 'paid')))),
       minPrice: rel.minPrice,
       requiresEmail: rel.requiresEmail,
       stage: prev ? prev.stage : 'pending',
@@ -308,6 +308,54 @@ export function resetItemForRetry(
     timestamp: new Date().toLocaleTimeString(),
     stage: 'pending',
     message: `Manual retry requested (Attempt #${item.retryCount + 1})`,
+  });
+
+  saveSiteSession(session);
+  return session;
+}
+
+/**
+ * Resets download state flags (audioDownloaded, infoZipDownloaded) and stage for a specific release
+ */
+export function resetItemState(
+  hostname: string,
+  itemId: string
+): SiteQueueSession | null {
+  const session = loadSiteSession(hostname);
+  if (!session || !session.items[itemId]) return null;
+
+  const item = session.items[itemId];
+  item.audioDownloaded = false;
+  item.infoZipDownloaded = false;
+  item.stage = 'pending';
+  item.stageProgress = 0;
+  item.statusText = 'State reset';
+  item.error = undefined;
+  item.retryCount = 0;
+  item.logs = [];
+
+  saveSiteSession(session);
+  return session;
+}
+
+/**
+ * Resets download state flags and queue stages for all releases in the session
+ */
+export function resetAllItemsState(
+  hostname: string
+): SiteQueueSession | null {
+  const session = loadSiteSession(hostname);
+  if (!session) return null;
+
+  Object.values(session.items).forEach((item) => {
+    item.audioDownloaded = false;
+    item.infoZipDownloaded = false;
+    item.stage = 'pending';
+    item.stageProgress = 0;
+    item.statusText = 'State reset';
+    item.error = undefined;
+    item.retryCount = 0;
+    item.logs = [];
   });
 
   saveSiteSession(session);

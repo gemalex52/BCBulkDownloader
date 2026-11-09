@@ -175,11 +175,11 @@ export const apiClient = {
       return sendExtensionMessage({
         action: 'RESOLVE_DOWNLOAD',
         ...params,
-      }, 90000);
+      }, 120000);
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 90000);
+    const timeout = setTimeout(() => controller.abort(), 120000);
     try {
       const res = await fetch('/api/bandcamp/resolve-download', {
         method: 'POST',
@@ -208,16 +208,21 @@ export const apiClient = {
     hours?: number;
     days?: number;
     startDate?: string;
+    timeoutSeconds?: number;
   }): Promise<any> {
+    const timeoutSec = params.timeoutSeconds || 90;
+    const timeoutMs = timeoutSec * 1000;
+
     if (isExtension) {
       return sendExtensionMessage({
         action: 'CHECK_GAS_WEBHOOK',
         ...params,
-      }, 15000);
+        timeoutMs,
+      }, timeoutMs + 10000);
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch('/api/bandcamp/check-gas-webhook', {
         method: 'POST',
@@ -231,7 +236,7 @@ export const apiClient = {
     } catch (err: any) {
       clearTimeout(timeout);
       if (err.name === 'AbortError') {
-        return { found: false, error: 'GAS check timed out after 12s' };
+        return { found: false, error: `GAS check timed out after ${timeoutSec}s` };
       }
       throw err;
     }

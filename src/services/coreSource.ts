@@ -294,10 +294,23 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
   );
 
   var minPrice = (current && current.minimum_price != null) ? current.minimum_price : 0;
-  var freeDlPage = (tralbum && tralbum.freeDownloadPage) ? tralbum.freeDownloadPage : null;
-  var hasFreeButton = /free\\s+download/i.test(subHtml) || (minPrice === 0 && current && current.download_pref === 1);
-  var hasNypText = /name\\s+your\\s+price/i.test(subHtml) || (current && current.download_pref === 2);
-  var requireEmail = Boolean(current && (current.require_email || current.require_email_0));
+  var isSetPrice = Boolean(current && current.is_set_price);
+  var hasFreeButton = /free\\s+download/i.test(subHtml);
+  var hasNypText = /name\\s+your\\s+price/i.test(subHtml) || /buyItemNyp/i.test(subHtml) || (minPrice === 0 && current && current.download_pref === 2);
+  var requireEmailFlag = Boolean(current && (current.require_email === 1 || current.require_email_0 === 1 || (current.require_email && !isSetPrice)));
+  var isNypEligible = !isSetPrice && (hasNypText || hasFreeButton || (current && current.require_email_0 === 1));
+
+  // If Name Your Price is present without a direct "free download" button, Bandcamp requires an email address for $0 checkout
+  var isEmailWalled = Boolean(
+    requireEmailFlag ||
+    (current && current.require_email_0 === 1) ||
+    (!isSetPrice && hasNypText && !hasFreeButton)
+  );
+
+  // freeDownloadPage is ONLY a direct download link if the release is NOT email-walled and has a direct free download button
+  var rawFreeDlPage = (tralbum && tralbum.freeDownloadPage) ? tralbum.freeDownloadPage : null;
+  var freeDlPage = (!isEmailWalled && hasFreeButton) ? rawFreeDlPage : null;
+  var requireEmail = isEmailWalled;
 
   var isFree = false;
   var isNyp = false;
@@ -307,11 +320,27 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
   if (isPurchased) {
     isFree = true;
     badgeType = 'own';
-  } else if (Boolean(freeDlPage) || (minPrice === 0 && current && current.download_pref === 1 && !requireEmail) || (hasFreeButton && !requireEmail)) {
+  } else if (isEmailWalled) {
+    // Free download via email / Name Your Price email gate
+    isNyp = true;
+    isFree = true;
+    badgeType = 'email';
+  } else if (Boolean(freeDlPage)) {
     isFree = true;
     badgeType = 'free';
-  } else if (requireEmail || hasNypText) {
-    isNyp = Boolean(hasNypText);
+  } else if (isSetPrice || (!hasFreeButton && (!current || current.require_email_0 !== 1) && minPrice > 0)) {
+    // Strictly paid-only: requires payment, no email or free download option
+    isPaid = true;
+    isFree = false;
+    isNyp = false;
+    badgeType = 'paid';
+  } else if (hasFreeButton || (minPrice === 0 && current && current.download_pref === 1)) {
+    // Direct free download without email
+    isFree = true;
+    badgeType = 'free';
+  } else if (isNypEligible) {
+    // Free download via Name Your Price
+    isNyp = true;
     badgeType = 'email';
   } else if (minPrice > 0) {
     isPaid = true;
@@ -521,17 +550,21 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
  */
 async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
   function getSafeHeaders(ref, cookieHeader) {
-    var h = {
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9'
-    };
     var isNode = typeof process !== 'undefined' && process.versions && !!process.versions.node && typeof chrome === 'undefined';
     if (isNode) {
+      var h = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9'
+      };
       if (ref) h['Referer'] = ref;
       if (cookieHeader) h['Cookie'] = cookieHeader;
       h['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+      return h;
     }
-    return h;
+    // Browser / Chrome Extension context: minimal header to avoid CORS preflight on CDNs
+    return {
+      'Accept': '*/*'
+    };
   }
 
   requestedFormat = requestedFormat || 'flac';
@@ -685,28 +718,46 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
 
     var finalUrl = '';
 
-    // Direct check: Bandcamp single tracks and ready archives often return HTTP 302 redirect
+    // Direct check: Bandcamp single tracks and ready archives often return HTTP 302 redirect or direct 200 zip stream
     try {
+      var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       var directCheck = await fetch(target.url, {
         method: 'GET',
         headers: getSafeHeaders(cleanUrl, cookieHeader),
         redirect: 'manual',
+        signal: controller ? controller.signal : undefined,
       });
+
+      var contentType = (directCheck.headers.get('content-type') || '').toLowerCase();
       if ([301, 302, 303, 307, 308].indexOf(directCheck.status) !== -1) {
         var loc = directCheck.headers.get('location');
-        if (loc) finalUrl = loc;
+        if (loc) finalUrl = loc.startsWith('http') ? loc : (loc.startsWith('//') ? ('https:' + loc) : ('https://' + loc));
+      } else if (directCheck.status === 200 && (
+        contentType.indexOf('application/zip') !== -1 ||
+        contentType.indexOf('application/octet-stream') !== -1 ||
+        contentType.indexOf('audio/') !== -1
+      )) {
+        finalUrl = target.url;
       }
-    } catch (e) {}
+      if (controller) {
+        controller.abort(); // Immediately release socket so we do not stream the 500MB zip into memory during resolution!
+      }
+    } catch (e) {
+      // Aborting throws AbortError which is expected
+    }
 
     async function callStat(urlToStat) {
       try {
-        var parsed = new URL(urlToStat);
+        if (!urlToStat) return null;
+        var fullUrl = urlToStat.startsWith('//') ? ('https:' + urlToStat) : (urlToStat.startsWith('http') ? urlToStat : ('https://' + urlToStat));
+        var parsed = new URL(fullUrl);
         parsed.pathname = parsed.pathname.replace('/download/', '/statdownload/');
         parsed.searchParams.set('.rand', String(Math.floor(Math.random() * 1000000)));
         parsed.searchParams.set('.vrs', '1');
         var statUrl = parsed.toString();
 
         var res = await fetch(statUrl, {
+          method: 'GET',
           headers: getSafeHeaders(cleanUrl, cookieHeader),
         });
 
@@ -725,7 +776,7 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
 
     if (!finalUrl) {
       var attempts = 0;
-      var maxAttempts = 32; // 32 attempts * 2s = ~64s max waiting for Bandcamp to prepare audio
+      var maxAttempts = 45; // 45 attempts * 2s = ~90s max waiting for Bandcamp to prepare audio
       var nextStatUrl = target.url;
       var lastStat = null;
 
@@ -735,21 +786,21 @@ async function resolveBandcampDownload(downloadPageUrl, requestedFormat) {
         if (stat) {
           lastStat = stat;
           if (stat.result === 'ok' && stat.download_url) {
-            finalUrl = stat.download_url;
+            finalUrl = stat.download_url.startsWith('http') ? stat.download_url : (stat.download_url.startsWith('//') ? ('https:' + stat.download_url) : ('https://' + stat.download_url));
             break;
           }
           if (stat.result === 'err') {
             break;
           }
           if (stat.retry_url) {
-            nextStatUrl = stat.retry_url;
+            nextStatUrl = stat.retry_url.startsWith('http') ? stat.retry_url : (stat.retry_url.startsWith('//') ? ('https:' + stat.retry_url) : ('https://' + stat.retry_url));
           }
         }
         await new Promise(function(r) { setTimeout(r, 2000); });
       }
 
       if (!finalUrl && lastStat && lastStat.download_url) {
-        finalUrl = lastStat.download_url;
+        finalUrl = lastStat.download_url.startsWith('http') ? lastStat.download_url : (lastStat.download_url.startsWith('//') ? ('https:' + lastStat.download_url) : ('https://' + lastStat.download_url));
       }
     }
 

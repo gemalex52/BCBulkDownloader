@@ -377,10 +377,23 @@ export function parseReleasePageData(
   );
 
   const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
-  const freeDlPage = tralbum?.freeDownloadPage || null;
-  const hasFreeButton = /free\s+download/i.test(subHtml) || (minPrice === 0 && current?.download_pref === 1);
-  const hasNypText = /name\s+your\s+price/i.test(subHtml) || current?.download_pref === 2;
-  const requireEmail = Boolean(current?.require_email || current?.require_email_0);
+  const isSetPrice = Boolean(current?.is_set_price);
+  const hasFreeButton = /free\s+download/i.test(subHtml);
+  const hasNypText = /name\s+your\s+price/i.test(subHtml) || /buyItemNyp/i.test(subHtml) || (minPrice === 0 && current?.download_pref === 2);
+  const requireEmailFlag = Boolean(current?.require_email === 1 || current?.require_email_0 === 1 || (current?.require_email && !isSetPrice));
+  const isNypEligible = !isSetPrice && (hasNypText || hasFreeButton || current?.require_email_0 === 1);
+
+  // If Name Your Price is present without a direct "free download" button, Bandcamp requires an email address for $0 checkout
+  const isEmailWalled = Boolean(
+    requireEmailFlag ||
+    current?.require_email_0 === 1 ||
+    (!isSetPrice && hasNypText && !hasFreeButton)
+  );
+
+  // freeDownloadPage is ONLY a direct download link if the release is NOT email-walled and has a direct free download button
+  const rawFreeDlPage = tralbum?.freeDownloadPage || null;
+  const freeDlPage = (!isEmailWalled && hasFreeButton) ? rawFreeDlPage : null;
+  const requireEmail = isEmailWalled;
 
   let isFree = false;
   let isNyp = false;
@@ -390,16 +403,29 @@ export function parseReleasePageData(
   if (isPurchased) {
     isFree = true;
     badgeType = 'own';
-  } else if (Boolean(freeDlPage) || (minPrice === 0 && current?.download_pref === 1 && !requireEmail) || (hasFreeButton && !requireEmail)) {
+  } else if (isEmailWalled) {
+    // Free download via email / Name Your Price email gate
+    isNyp = true;
+    isFree = true;
+    badgeType = 'email';
+  } else if (Boolean(freeDlPage)) {
+    isFree = true;
+    badgeType = 'free';
+  } else if (isSetPrice || (!hasFreeButton && current?.require_email_0 !== 1 && minPrice > 0)) {
+    // Strictly paid-only: requires payment, no email or free download option
+    isPaid = true;
+    isFree = false;
+    isNyp = false;
+    badgeType = 'paid';
+  } else if (hasFreeButton || (minPrice === 0 && current?.download_pref === 1)) {
     // Direct free download without email
     isFree = true;
     badgeType = 'free';
-  } else if (requireEmail || hasNypText) {
-    // Email is sufficient for download (even if minPrice > 0, paying is optional)
-    isNyp = hasNypText;
+  } else if (isNypEligible) {
+    // Free download via Name Your Price
+    isNyp = true;
     badgeType = 'email';
   } else if (minPrice > 0) {
-    // Strictly paid-only: requires payment, no email or free download option
     isPaid = true;
     badgeType = 'paid';
   } else {
@@ -790,8 +816,9 @@ export async function resolveBandcampDownload(
 
     let finalUrl = '';
 
-    // Direct check: Bandcamp single tracks and prepared archives often return immediate HTTP 302 redirect
+    // Direct check: Bandcamp single tracks and prepared archives often return immediate HTTP 302 redirect or direct 200 zip stream
     try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const directCheck = await fetch(target.url, {
         method: 'GET',
         headers: {
@@ -800,25 +827,42 @@ export async function resolveBandcampDownload(
           ...(cookieHeader ? { Cookie: cookieHeader } : {}),
         },
         redirect: 'manual',
+        signal: controller ? controller.signal : undefined,
       });
+
+      const contentType = (directCheck.headers.get('content-type') || '').toLowerCase();
       if ([301, 302, 303, 307, 308].includes(directCheck.status)) {
         const loc = directCheck.headers.get('location');
         if (loc) {
-          finalUrl = loc;
+          finalUrl = loc.startsWith('http') ? loc : (loc.startsWith('//') ? `https:${loc}` : `https://${loc}`);
         }
+      } else if (directCheck.status === 200 && (
+        contentType.includes('application/zip') ||
+        contentType.includes('application/octet-stream') ||
+        contentType.includes('audio/')
+      )) {
+        finalUrl = target.url;
       }
-    } catch (e) {}
+      if (controller) {
+        controller.abort(); // Immediately release socket so we do not stream the 500MB zip into memory during resolution!
+      }
+    } catch (e) {
+      // Aborting throws AbortError which is expected
+    }
 
     // Helper to call statdownload
     async function callStat(urlToStat: string): Promise<any> {
       try {
-        const parsed = new URL(urlToStat);
+        if (!urlToStat) return null;
+        const fullUrl = urlToStat.startsWith('//') ? `https:${urlToStat}` : (urlToStat.startsWith('http') ? urlToStat : `https://${urlToStat}`);
+        const parsed = new URL(fullUrl);
         parsed.pathname = parsed.pathname.replace('/download/', '/statdownload/');
         parsed.searchParams.set('.rand', String(Math.floor(Math.random() * 1000000)));
         parsed.searchParams.set('.vrs', '1');
         const statUrl = parsed.toString();
 
         const res = await fetch(statUrl, {
+          method: 'GET',
           headers: {
             ...BANDCAMP_FETCH_HEADERS,
             Referer: cleanUrl,
@@ -841,7 +885,7 @@ export async function resolveBandcampDownload(
 
     if (!finalUrl) {
       let attempts = 0;
-      const maxAttempts = 32; // 32 attempts * 2s = ~64s max waiting for Bandcamp to prepare audio
+      const maxAttempts = 45; // 45 attempts * 2s = ~90s max waiting for Bandcamp to prepare audio
       let nextStatUrl = target.url;
       let lastStat: any = null;
 
@@ -851,14 +895,19 @@ export async function resolveBandcampDownload(
         if (stat) {
           lastStat = stat;
           if (stat.result === 'ok' && stat.download_url) {
-            finalUrl = stat.download_url;
+            debugLog('resolver', `Statdownload ready on attempt ${attempts}:`, stat.download_url);
+            finalUrl = stat.download_url.startsWith('http') ? stat.download_url : (stat.download_url.startsWith('//') ? `https:${stat.download_url}` : `https://${stat.download_url}`);
             break;
           }
           if (stat.result === 'err') {
+            debugLog('resolver', `Statdownload error on attempt ${attempts}:`, stat);
             break;
           }
+          if (stat.result === 'busy') {
+            debugLog('resolver', `Statdownload busy (attempt ${attempts}/${maxAttempts}), waiting 2s...`);
+          }
           if (stat.retry_url) {
-            nextStatUrl = stat.retry_url;
+            nextStatUrl = stat.retry_url.startsWith('http') ? stat.retry_url : (stat.retry_url.startsWith('//') ? `https:${stat.retry_url}` : `https://${stat.retry_url}`);
           }
         }
         await new Promise(r => setTimeout(r, 2000));

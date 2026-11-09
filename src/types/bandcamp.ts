@@ -47,6 +47,8 @@ export interface ScannedRelease {
   description?: string;
   tags?: string[];
   selected?: boolean;
+  audioDownloaded?: boolean;
+  infoZipDownloaded?: boolean;
 }
 
 export interface AudioFormat {
@@ -171,7 +173,8 @@ export interface AppSettings {
   gasSearchFilterType: 'offset_hours' | 'start_date'; // filter mode
   gasSearchOffsetHours: number; // e.g. 1, 6, 24, 72, 168 (7d), 720 (30d)
   gasSearchStartDate: string; // e.g. "2026-01-01"
-  gasMaxPollCycles?: number; // max watchdog poll attempts (default: 10, 50s total)
+  gasMailCheckTimeoutSeconds?: number; // wait timeout for incoming email link via GAS (default: 90s)
+  gasMaxPollCycles?: number; // max watchdog poll attempts (default: 18, 90s total)
   // Anti-captcha & rate-limit pacing
   pacingBaseDelaySeconds: number; // default: 2.5
   pacingJitterPercent: number; // default: 40 (meaning 2.5 +/- 1.0s)
@@ -197,7 +200,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   gasSearchFilterType: 'offset_hours',
   gasSearchOffsetHours: 72, // default: past 3 days
   gasSearchStartDate: '',
-  gasMaxPollCycles: 10, // default 10 cycles (50s)
+  gasMailCheckTimeoutSeconds: 90, // default 90s wait
+  gasMaxPollCycles: 18, // default 18 cycles (18 * 5s = 90s)
   pacingBaseDelaySeconds: 2.5,
   pacingJitterPercent: 40,
   cooldownBatchInterval: 5,

@@ -31,6 +31,8 @@ interface ReleaseCatalogProps {
   onRetryItem?: (releaseId: string) => void;
   onSetReleaseScope?: (id: string, scope: 'both' | 'audio' | 'info') => void;
   onSetBatchScope?: (scope: 'both' | 'audio' | 'info') => void;
+  onResetReleaseState?: (releaseId: string) => void;
+  onToggleGroupSelect?: (group: 'both' | 'audio' | 'info' | 'failed' | 'none') => void;
 }
 
 export function getReleaseBadgeInfo(r: ScannedRelease) {
@@ -40,6 +42,18 @@ export function getReleaseBadgeInfo(r: ScannedRelease) {
       label: 'Own',
       badgeClass: 'bg-purple-950/90 text-purple-300 border-purple-500/40',
       textClass: 'text-purple-400 font-semibold',
+    };
+  }
+
+  // Strictly paid releases must never be converted to email
+  if (r.badgeType === 'paid' || r.isPaid) {
+    const cur = r.currency === 'EUR' ? '€' : (r.currency === 'USD' ? '$' : (r.currency === 'GBP' ? '£' : r.currency || '€'));
+    const label = r.minPrice > 0 ? `Paid (${cur}${r.minPrice})` : (r.priceFormatted || 'Paid');
+    return {
+      type: 'paid' as const,
+      label,
+      badgeClass: 'bg-amber-950/90 text-amber-300 border-amber-500/40',
+      textClass: 'text-amber-400 font-medium',
     };
   }
 
@@ -66,7 +80,7 @@ export function getReleaseBadgeInfo(r: ScannedRelease) {
     };
   }
 
-  // Strictly paid
+  // Strictly paid fallback
   const cur = r.currency === 'EUR' ? '€' : (r.currency === 'USD' ? '$' : (r.currency === 'GBP' ? '£' : r.currency || '€'));
   const label = r.minPrice > 0 ? `Paid (${cur}${r.minPrice})` : (r.priceFormatted || 'Paid');
   return {
@@ -88,6 +102,8 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   onRetryItem,
   onSetReleaseScope,
   onSetBatchScope,
+  onResetReleaseState,
+  onToggleGroupSelect,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'free' | 'email' | 'paid' | 'own'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -130,6 +146,34 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   const allEligibleSelected =
     releases.length > 0 &&
     releases.filter((r) => getReleaseBadgeInfo(r).type !== 'paid').every((r) => r.selected);
+
+  // Group status computation for selection toggles
+  const bothDownloadedReleases = releases.filter((r) => {
+    const q = queueItems?.[r.id];
+    return Boolean((r.audioDownloaded || q?.audioDownloaded) && (r.infoZipDownloaded || q?.infoZipDownloaded));
+  });
+  const audioOnlyReleases = releases.filter((r) => {
+    const q = queueItems?.[r.id];
+    return Boolean((r.audioDownloaded || q?.audioDownloaded) && !(r.infoZipDownloaded || q?.infoZipDownloaded));
+  });
+  const infoOnlyReleases = releases.filter((r) => {
+    const q = queueItems?.[r.id];
+    return Boolean((r.infoZipDownloaded || q?.infoZipDownloaded) && !(r.audioDownloaded || q?.audioDownloaded));
+  });
+  const notDownloadedReleases = releases.filter((r) => {
+    const q = queueItems?.[r.id];
+    return !r.audioDownloaded && !q?.audioDownloaded && !r.infoZipDownloaded && !q?.infoZipDownloaded;
+  });
+  const failedReleases = releases.filter((r) => {
+    const q = queueItems?.[r.id];
+    return Boolean(q && (q.stage === 'failed' || Boolean(q.error) || (q.logs && q.logs.some((l) => Boolean(l.error)))));
+  });
+
+  const isBothSelected = bothDownloadedReleases.length > 0 && bothDownloadedReleases.every((r) => r.selected);
+  const isAudioOnlySelected = audioOnlyReleases.length > 0 && audioOnlyReleases.every((r) => r.selected);
+  const isInfoOnlySelected = infoOnlyReleases.length > 0 && infoOnlyReleases.every((r) => r.selected);
+  const isFailedSelected = failedReleases.length > 0 && failedReleases.every((r) => r.selected);
+  const isNotDlSelected = notDownloadedReleases.length > 0 && notDownloadedReleases.every((r) => r.selected);
 
   const renderStageBadge = (qItem?: QueueItem) => {
     if (!qItem || qItem.stage === 'pending') return null;
@@ -242,6 +286,87 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
             >
               Deselect All
             </button>
+
+            {/* State-Based Group Selection Toggles */}
+            {onToggleGroupSelect && (
+              <div className="flex flex-wrap items-center gap-1.5 pl-2 border-l border-slate-800">
+                {bothDownloadedReleases.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleGroupSelect('both')}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+                      isBothSelected
+                        ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200'
+                        : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    }`}
+                    title="Toggle selection for releases with both audio & info downloaded"
+                  >
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    <span>Both ({bothDownloadedReleases.length})</span>
+                  </button>
+                )}
+                {audioOnlyReleases.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleGroupSelect('audio')}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+                      isAudioOnlySelected
+                        ? 'bg-cyan-950/80 border-cyan-500 text-cyan-200'
+                        : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    }`}
+                    title="Toggle selection for releases with audio only downloaded"
+                  >
+                    <Music className="w-3 h-3 text-cyan-400" />
+                    <span>Audio ({audioOnlyReleases.length})</span>
+                  </button>
+                )}
+                {infoOnlyReleases.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleGroupSelect('info')}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+                      isInfoOnlySelected
+                        ? 'bg-indigo-950/80 border-indigo-500 text-indigo-200'
+                        : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    }`}
+                    title="Toggle selection for releases with info archive only downloaded"
+                  >
+                    <FolderArchive className="w-3 h-3 text-indigo-400" />
+                    <span>Info ({infoOnlyReleases.length})</span>
+                  </button>
+                )}
+                {notDownloadedReleases.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleGroupSelect('none')}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+                      isNotDlSelected
+                        ? 'bg-amber-950/80 border-amber-500 text-amber-200'
+                        : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    }`}
+                    title="Toggle selection for releases not yet downloaded"
+                  >
+                    <Square className="w-3 h-3 text-amber-400" />
+                    <span>Not DL ({notDownloadedReleases.length})</span>
+                  </button>
+                )}
+                {failedReleases.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleGroupSelect('failed')}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+                      isFailedSelected
+                        ? 'bg-rose-950/80 border-rose-500 text-rose-200'
+                        : 'bg-slate-800/80 hover:bg-slate-700 text-rose-300 border-rose-900/60'
+                    }`}
+                    title="Toggle selection for releases that encountered download errors"
+                  >
+                    <AlertCircle className="w-3 h-3 text-rose-400" />
+                    <span>Failed ({failedReleases.length})</span>
+                  </button>
+                )}
+              </div>
+            )}
 
             {selectedCount > 0 && onSetBatchScope && (
               <div className="flex items-center gap-1.5 pl-2 border-l border-slate-700/80">
@@ -502,6 +627,39 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                             Error: {qItem.error}
                           </div>
                         )}
+                        {/* Monotonic Stage Progress Bar */}
+                        <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden mt-2">
+                          <div
+                            className={`h-full transition-all duration-300 ${
+                              qItem.stage === 'completed'
+                                ? 'bg-emerald-400'
+                                : qItem.stage === 'failed'
+                                ? 'bg-red-400'
+                                : 'bg-cyan-400'
+                            }`}
+                            style={{
+                              width: `${
+                                qItem.stage === 'completed' || qItem.stage === 'failed'
+                                  ? 100
+                                  : qItem.stage === 'pacing'
+                                  ? 95
+                                  : qItem.stage === 'packaging_info'
+                                  ? 85
+                                  : qItem.stage === 'downloading_audio'
+                                  ? 70
+                                  : qItem.stage === 'resolving_stat'
+                                  ? 55
+                                  : qItem.stage === 'polling_gas'
+                                  ? 40
+                                  : qItem.stage === 'triggering_email'
+                                  ? 25
+                                  : qItem.stage === 'checking_mail'
+                                  ? 15
+                                  : 10
+                              }%`,
+                            }}
+                          />
+                        </div>
                       </div>
                     )}
 
@@ -589,6 +747,18 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                         >
                           <RotateCcw className="w-3 h-3" />
                           <span>Retry</span>
+                        </button>
+                      )}
+
+                      {onResetReleaseState && (release.audioDownloaded || release.infoZipDownloaded || qItem?.audioDownloaded || qItem?.infoZipDownloaded || qItem?.stage === 'completed' || qItem?.stage === 'failed') && (
+                        <button
+                          type="button"
+                          onClick={() => onResetReleaseState(release.id)}
+                          className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-300 border border-slate-700 rounded transition"
+                          title="Reset downloaded state for this release"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Reset</span>
                         </button>
                       )}
 
@@ -753,6 +923,40 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                             {qItem.statusText}
                           </div>
                         )}
+                        {qItem && qItem.stage !== 'pending' && (
+                          <div className="w-28 bg-slate-800 h-1 rounded-full overflow-hidden mt-1.5">
+                            <div
+                              className={`h-full transition-all duration-300 ${
+                                qItem.stage === 'completed'
+                                  ? 'bg-emerald-400'
+                                  : qItem.stage === 'failed'
+                                  ? 'bg-red-400'
+                                  : 'bg-cyan-400'
+                              }`}
+                              style={{
+                                width: `${
+                                  qItem.stage === 'completed' || qItem.stage === 'failed'
+                                    ? 100
+                                    : qItem.stage === 'pacing'
+                                    ? 95
+                                    : qItem.stage === 'packaging_info'
+                                    ? 85
+                                    : qItem.stage === 'downloading_audio'
+                                    ? 70
+                                    : qItem.stage === 'resolving_stat'
+                                    ? 55
+                                    : qItem.stage === 'polling_gas'
+                                    ? 40
+                                    : qItem.stage === 'triggering_email'
+                                    ? 25
+                                    : qItem.stage === 'checking_mail'
+                                    ? 15
+                                    : 10
+                                }%`,
+                              }}
+                            />
+                          </div>
+                        )}
                       </td>
                       <td className="p-3 text-right font-mono tabular-nums text-slate-300">
                         {release.trackCount || 1}
@@ -768,6 +972,16 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                             className="px-2 py-1 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800 rounded font-medium text-xs"
                           >
                             Retry
+                          </button>
+                        )}
+                        {onResetReleaseState && (release.audioDownloaded || release.infoZipDownloaded || qItem?.audioDownloaded || qItem?.infoZipDownloaded || qItem?.stage === 'completed' || qItem?.stage === 'failed') && (
+                          <button
+                            type="button"
+                            onClick={() => onResetReleaseState(release.id)}
+                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-300 border border-slate-700 rounded font-medium text-xs"
+                            title="Reset download state"
+                          >
+                            Reset
                           </button>
                         )}
                         <a

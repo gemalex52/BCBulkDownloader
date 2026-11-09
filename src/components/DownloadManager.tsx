@@ -18,6 +18,7 @@ import {
   FileText,
   Play,
   RotateCcw,
+  Square,
   Clock,
   Mail,
   Shield,
@@ -43,6 +44,7 @@ interface DownloadManagerProps {
   isDownloading: boolean;
   downloadTasks: DownloadTask[];
   onCancelDownload: () => void;
+  onResetAllState?: () => void;
   onRetryTask: (taskId: string) => void;
   activePacingNotice?: string;
   createCompanionInfoZip?: boolean;
@@ -65,6 +67,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
   isDownloading,
   downloadTasks,
   onCancelDownload,
+  onResetAllState,
   onRetryTask,
   activePacingNotice,
   createCompanionInfoZip = true,
@@ -269,17 +272,28 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
               <FileCode className="w-4 h-4" />
             </button>
 
-            {/* Primary Action Button (Dynamic Resume vs Start) */}
+            {/* Primary Action Button (Dynamic Resume vs Start with Stop and Start Over controls) */}
             {isDownloading ? (
-              <button
-                onClick={() => setShowQueueModal(true)}
-                className="flex items-center gap-2 px-5 py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold rounded-lg transition shadow-md"
-              >
-                <RotateCw className="w-3.5 h-3.5 animate-spin" />
-                <span>
-                  Processing ({completedCount}/{totalTaskCount} · {overallProgress}%)
-                </span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowQueueModal(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold rounded-lg transition shadow-md"
+                >
+                  <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>
+                    Processing ({completedCount}/{totalTaskCount} · {overallProgress}%)
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancelDownload}
+                  className="flex items-center gap-1.5 px-3 py-2.5 bg-red-950/80 hover:bg-red-900 border border-red-500/60 text-red-300 hover:text-white text-xs font-bold rounded-lg transition shadow-md"
+                  title="Stop and cancel active download queue"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                  <span>Stop</span>
+                </button>
+              </div>
             ) : canResume && onResumeBulkDownload ? (
               <div className="flex items-center gap-2">
                 <button
@@ -305,19 +319,40 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Start Fresh</span>
                 </button>
+                {onResetAllState && (
+                  <button
+                    onClick={onResetAllState}
+                    className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white text-xs font-medium rounded-lg transition border border-slate-700"
+                    title="Reset all download flags and clear queue state"
+                  >
+                    <span>Start Over</span>
+                  </button>
+                )}
               </div>
             ) : (
-              <button
-                onClick={() => {
-                  onStartBulkDownload();
-                  setShowQueueModal(true);
-                }}
-                disabled={selectedCount === 0}
-                className="flex items-center gap-2 px-5 py-2.5 bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 disabled:opacity-50 text-slate-950 text-xs font-bold rounded-lg transition shadow-md"
-              >
-                <Download className="w-4 h-4" />
-                <span>Start Download ({selectedCount})</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    onStartBulkDownload();
+                    setShowQueueModal(true);
+                  }}
+                  disabled={selectedCount === 0}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 disabled:opacity-50 text-slate-950 text-xs font-bold rounded-lg transition shadow-md"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Start Download ({selectedCount})</span>
+                </button>
+                {onResetAllState && (completedCount > 0 || failedCount > 0) && (
+                  <button
+                    onClick={onResetAllState}
+                    className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xs font-medium rounded-lg transition border border-slate-700"
+                    title="Reset all download flags and clear queue state"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Start Over</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -353,14 +388,25 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                   {failedCount > 0 ? `, ${failedCount} failed` : ''})
                 </span>
               </div>
-              {isDownloading && (
-                <button
-                  onClick={onCancelDownload}
-                  className="text-red-400 hover:text-red-300 font-sans text-xs underline"
-                >
-                  Pause Queue
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {isDownloading ? (
+                  <button
+                    onClick={onCancelDownload}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-300 rounded font-sans text-xs font-semibold transition"
+                  >
+                    <Square className="w-3 h-3 fill-current" />
+                    <span>Stop Queue</span>
+                  </button>
+                ) : onResetAllState && (completedCount > 0 || failedCount > 0) ? (
+                  <button
+                    onClick={onResetAllState}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-sans text-xs font-medium border border-slate-700 transition"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Start Over</span>
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             {/* Task List */}

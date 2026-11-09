@@ -30,6 +30,8 @@ import {
   updateQueueItem,
   appendItemLog,
   resetItemForRetry,
+  resetItemState,
+  resetAllItemsState,
   calculatePacingDelayMs,
   sleep,
 } from './services/queueManager';
@@ -165,30 +167,47 @@ export default function App() {
       }
 
       if (cached && cached.releases && Array.isArray(cached.releases) && cached.releases.length > 0) {
-        setReleases(cached.releases);
+        const enriched = cached.releases.map((r: ScannedRelease) => {
+          const q = sess?.items?.[r.id];
+          return {
+            ...r,
+            audioDownloaded: Boolean(r.audioDownloaded || q?.audioDownloaded),
+            infoZipDownloaded: Boolean(r.infoZipDownloaded || q?.infoZipDownloaded),
+          };
+        });
+        setReleases(enriched);
         setScanMeta({
           source: 'local_cache',
           timestamp: new Date(cached.scannedAt).toLocaleTimeString(),
         });
         setScanProgressText(
-          `Loaded ${cached.releases.length} releases from cache (${cached.releases.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
+          `Loaded ${enriched.length} releases from cache (${enriched.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
         );
 
         if (!sess) {
-          const newSess = initSiteSession(hName, new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`).origin, cached.artist || 'Artist', targetUrl, cached.releases);
+          const newSess = initSiteSession(hName, new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`).origin, cached.artist || 'Artist', targetUrl, enriched);
           setCurrentSession(newSess);
         }
         return true;
       } else if (isExtension) {
         storage.get<any>(cacheKey).then((asyncCached) => {
           if (asyncCached?.releases && Array.isArray(asyncCached.releases) && asyncCached.releases.length > 0) {
-            setReleases(asyncCached.releases);
+            const currentS = loadSiteSession(hName);
+            const enriched = asyncCached.releases.map((r: ScannedRelease) => {
+              const q = currentS?.items?.[r.id];
+              return {
+                ...r,
+                audioDownloaded: Boolean(r.audioDownloaded || q?.audioDownloaded),
+                infoZipDownloaded: Boolean(r.infoZipDownloaded || q?.infoZipDownloaded),
+              };
+            });
+            setReleases(enriched);
             setScanMeta({
               source: 'local_cache',
               timestamp: new Date(asyncCached.scannedAt).toLocaleTimeString(),
             });
             setScanProgressText(
-              `Loaded ${asyncCached.releases.length} releases from cache (${asyncCached.releases.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
+              `Loaded ${enriched.length} releases from cache (${enriched.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
             );
           }
         });
@@ -468,6 +487,14 @@ export default function App() {
   const currentSessionItems = currentSession?.items || {};
   const selectedSessionItems = selectedReleases.map((r) => currentSessionItems[r.id]).filter(Boolean);
 
+  // Scope completion helper
+  const isItemCompleteForScope = (item: QueueItem, relScope?: 'both' | 'audio' | 'info') => {
+    const scope = relScope || item.downloadScope || settings.defaultDownloadScope || 'both';
+    if (scope === 'audio') return Boolean(item.audioDownloaded);
+    if (scope === 'info') return Boolean(item.infoZipDownloaded);
+    return Boolean(item.audioDownloaded && item.infoZipDownloaded);
+  };
+
   const pendingItems = selectedSessionItems.filter(
     (item) => item.stage === 'pending' || item.stage === 'skipped'
   );
@@ -485,19 +512,24 @@ export default function App() {
     return releasesToRun.map((r) => {
       const existing = queueMap[r.id];
       if (existing) {
+        const targetScope = r.downloadScope || existing.downloadScope || settings.defaultDownloadScope || 'both';
+        const isComplete = isItemCompleteForScope(existing, targetScope);
+
         return {
           ...existing,
-          stage: existing.stage === 'completed' ? 'completed' : 'pending',
+          downloadScope: targetScope,
+          stage: isComplete ? 'completed' : 'pending',
           error: undefined,
         };
       }
 
-      const isEmailEligible = Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
-      const isDirectFree = Boolean(r.freeDownloadPageUrl || r.isPurchased || r.badgeType === 'own' || (!isEmailEligible && (r.isFree || r.badgeType === 'free')));
       const isPaid = Boolean(
         r.badgeType === 'paid' ||
-        (!isDirectFree && !isEmailEligible && ((r.minPrice || 0) > 0 || (r as any).isPaid))
+        (r as any).isPaid ||
+        (!r.freeDownloadPageUrl && !r.isPurchased && (r.minPrice || 0) > 0 && !r.requiresEmail && !r.isNameYourPrice && r.badgeType !== 'email')
       );
+      const isEmailEligible = !isPaid && Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
+      const isDirectFree = !isPaid && Boolean(r.freeDownloadPageUrl || r.isPurchased || r.badgeType === 'own' || (!isEmailEligible && (r.isFree || r.badgeType === 'free')));
 
       return {
         id: r.id,
@@ -633,22 +665,23 @@ export default function App() {
 
       try {
         let downloadPageUrl = qItem.freeDownloadPageUrl || rel.freeDownloadPageUrl;
-        const isEmailEligible = Boolean(qItem.requiresEmail || rel.requiresEmail || qItem.isNameYourPrice || rel.isNameYourPrice || qItem.badgeType === 'email' || rel.badgeType === 'email');
-        const isDirectFree = Boolean(downloadPageUrl || qItem.isPurchased || rel.isPurchased || qItem.badgeType === 'own' || rel.badgeType === 'own' || (!isEmailEligible && (qItem.isFree || rel.isFree || qItem.badgeType === 'free' || rel.badgeType === 'free')));
         const isPaidOnly = Boolean(
           (qItem.badgeType === 'paid' || rel.badgeType === 'paid') ||
-          (!isDirectFree && !isEmailEligible && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0 || qItem.isPaid || rel.isPaid))
+          qItem.isPaid || rel.isPaid ||
+          (!downloadPageUrl && !qItem.isPurchased && !rel.isPurchased && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0) && !qItem.requiresEmail && !rel.requiresEmail && qItem.badgeType !== 'email')
         );
+        const isEmailEligible = !isPaidOnly && Boolean(qItem.requiresEmail || rel.requiresEmail || qItem.isNameYourPrice || rel.isNameYourPrice || qItem.badgeType === 'email' || rel.badgeType === 'email');
+        const isDirectFree = !isPaidOnly && Boolean(downloadPageUrl || qItem.isPurchased || rel.isPurchased || qItem.badgeType === 'own' || rel.badgeType === 'own' || (!isEmailEligible && (qItem.isFree || rel.isFree || qItem.badgeType === 'free' || rel.badgeType === 'free')));
 
         const hasGasWatchdog = Boolean(settings.gasWebhookUrl && settings.gasWebhookUrl.trim());
 
         const effectiveScope = qItem.downloadScope || rel.downloadScope || settings.defaultDownloadScope || 'both';
-        const shouldDownloadAudio = effectiveScope !== 'info';
-        const shouldDownloadInfo = effectiveScope !== 'audio' && settings.createCompanionInfoZip;
+        const shouldDownloadAudio = effectiveScope !== 'info' && !qItem.audioDownloaded;
+        const shouldDownloadInfo = effectiveScope !== 'audio' && settings.createCompanionInfoZip && !qItem.infoZipDownloaded;
 
-        let audioSuccess = false;
+        let audioSuccess = Boolean(qItem.audioDownloaded);
         let audioError: string | undefined = undefined;
-        let infoSuccess = false;
+        let infoSuccess = Boolean(qItem.infoZipDownloaded);
         let infoError: string | undefined = undefined;
         let resolveData: any = null;
 
@@ -699,6 +732,7 @@ export default function App() {
                     releaseId: qItem.itemId,
                     title: qItem.title,
                     since: searchSinceEpoch,
+                    timeoutSeconds: settings.gasMailCheckTimeoutSeconds || 90,
                   });
                   debugLog('gas', 'Initial GAS check response:', checkData);
 
@@ -741,10 +775,11 @@ export default function App() {
                   console.warn('Email trigger warning:', trigErr);
                 }
 
-                // Stage 3: Polling GAS watchdog every 5s up to maxGasPollCycles (default 10 = 50s)
+                // Stage 3: Polling GAS watchdog every 5s up to maxGasCycles
                 if (emailTriggerOk && hasGasWatchdog) {
-                  const maxGasCycles = settings.gasMaxPollCycles || 10;
-                  logAndSync('polling_gas', `Polling Gmail watchdog every 5s for incoming signed download link (max ${maxGasCycles} attempts)...`);
+                  const timeoutSeconds = settings.gasMailCheckTimeoutSeconds || 90;
+                  const maxGasCycles = settings.gasMaxPollCycles || Math.ceil(timeoutSeconds / 5);
+                  logAndSync('polling_gas', `Polling Gmail watchdog every 5s for incoming signed download link (up to ${timeoutSeconds}s wait)...`);
 
                   let foundFromPoll = false;
                   for (let cycle = 0; cycle < maxGasCycles; cycle++) {
@@ -936,15 +971,30 @@ export default function App() {
           }
         }
 
+        const finalAudioDl = Boolean(qItem.audioDownloaded || audioSuccess);
+        const finalInfoDl = Boolean(qItem.infoZipDownloaded || infoSuccess);
+
         logAndSync(finalStage, finalStatusText, audioError || infoError || undefined);
         updateQueueItem(currentHostname, qItem.id, {
-          audioDownloaded: audioSuccess,
-          infoZipDownloaded: infoSuccess,
+          audioDownloaded: finalAudioDl,
+          infoZipDownloaded: finalInfoDl,
           stage: finalStage,
           statusText: finalStatusText,
           stageProgress: 100,
           error: audioError ? `Audio: ${audioError}` : (infoError ? `Info: ${infoError}` : undefined),
         });
+
+        setReleases((prev) =>
+          prev.map((r) =>
+            r.id === qItem.id
+              ? {
+                  ...r,
+                  audioDownloaded: finalAudioDl,
+                  infoZipDownloaded: finalInfoDl,
+                }
+              : r
+          )
+        );
       } catch (itemErr: any) {
         console.error(`Error processing ${qItem.title}:`, itemErr);
         logAndSync('failed', `Failed: ${itemErr.message || 'Unknown error'}`, itemErr.message);
@@ -974,48 +1024,143 @@ export default function App() {
       setCurrentSession(sess);
     }
 
-    // Reset selected items to pending
+    // For each selected release, if not yet complete for its scope, reset it to pending
     selectedReleases.forEach((r) => {
-      resetItemForRetry(currentHostname, r.id, {
-        isPaid: Boolean((r as any).isPaid || (r.minPrice > 0 && !r.isPurchased && !r.freeDownloadPageUrl)),
-        minPrice: r.minPrice,
-      });
+      const existing = sess?.items?.[r.id];
+      const targetScope = r.downloadScope || settings.defaultDownloadScope || 'both';
+      const complete = existing ? isItemCompleteForScope(existing, targetScope) : false;
+      if (!complete) {
+        resetItemForRetry(currentHostname, r.id, {
+          isPaid: Boolean((r as any).isPaid || (r.minPrice > 0 && !r.isPurchased && !r.freeDownloadPageUrl)),
+          minPrice: r.minPrice,
+          downloadScope: targetScope,
+        });
+      }
     });
 
     const refreshed = syncSessionFromStorage(currentHostname) || sess;
-    const items = buildQueueItemsForReleases(selectedReleases, refreshed);
-    debugLog('pipeline', `Prepared ${items.length} items to run in pipeline.`);
-    await runQueuePipeline(items);
+    const allItems = buildQueueItemsForReleases(selectedReleases, refreshed);
+    const runnable = allItems.filter((item) => {
+      const rel = selectedReleases.find((r) => r.id === item.id);
+      return !isItemCompleteForScope(item, rel?.downloadScope || item.downloadScope);
+    });
+
+    debugLog('pipeline', `Prepared ${runnable.length} runnable items out of ${selectedReleases.length} selected.`);
+    if (runnable.length > 0) {
+      await runQueuePipeline(runnable);
+    } else {
+      // If all selected were already complete, re-run all selected
+      selectedReleases.forEach((r) => {
+        resetItemForRetry(currentHostname, r.id, {
+          isPaid: Boolean((r as any).isPaid || (r.minPrice > 0 && !r.isPurchased && !r.freeDownloadPageUrl)),
+          minPrice: r.minPrice,
+          downloadScope: r.downloadScope || settings.defaultDownloadScope || 'both',
+        });
+      });
+      const forceRefreshed = syncSessionFromStorage(currentHostname) || sess;
+      await runQueuePipeline(buildQueueItemsForReleases(selectedReleases, forceRefreshed));
+    }
   };
 
-  // Resume Download (unfinished items only: pending + failed)
+  // Resume Download (unfinished items only: pending + failed + incomplete for scope)
   const handleResumeBulkDownload = async () => {
     debugLog('pipeline', 'handleResumeBulkDownload clicked.');
     const refreshed = syncSessionFromStorage(currentHostname) || currentSession;
     const allQueueItems = buildQueueItemsForReleases(selectedReleases, refreshed);
-    const itemsToResume = allQueueItems.filter((item) => item.stage !== 'completed');
+    const itemsToResume = allQueueItems.filter((item) => {
+      const rel = selectedReleases.find((r) => r.id === item.id);
+      return !isItemCompleteForScope(item, rel?.downloadScope || item.downloadScope);
+    });
 
     debugLog('pipeline', `Found ${itemsToResume.length} uncompleted releases out of ${allQueueItems.length} selected.`);
     if (itemsToResume.length === 0) return;
 
     // Auto-retry failed items
     itemsToResume.forEach((item) => {
-      if (item.stage === 'failed') {
+      if (item.stage === 'failed' || item.stage === 'completed') {
         const rel = releases.find((r) => r.id === item.id);
         resetItemForRetry(currentHostname, item.id, {
           isPaid: Boolean((rel as any)?.isPaid || (rel && rel.minPrice > 0 && !rel.isPurchased && !rel.freeDownloadPageUrl)),
           minPrice: rel?.minPrice,
+          downloadScope: rel?.downloadScope || item.downloadScope || settings.defaultDownloadScope || 'both',
         });
       }
     });
 
     const finalSession = syncSessionFromStorage(currentHostname) || refreshed;
     const runnable = buildQueueItemsForReleases(
-      selectedReleases.filter(r => itemsToResume.some(i => i.id === r.id)),
+      selectedReleases.filter((r) => itemsToResume.some((i) => i.id === r.id)),
       finalSession
     );
     debugLog('pipeline', `Dispatching ${runnable.length} runnable items to pipeline.`);
     await runQueuePipeline(runnable);
+  };
+
+  // Stop active download queue
+  const handleCancelDownload = () => {
+    isCancelledRef.current = true;
+    setIsDownloading(false);
+    setPacingNotice('');
+    debugLog('pipeline', 'Download queue cancelled by user.');
+  };
+
+  // Reset state for an individual release
+  const handleResetReleaseState = (releaseId: string) => {
+    resetItemState(currentHostname, releaseId);
+    const refreshed = syncSessionFromStorage(currentHostname);
+    if (refreshed) setCurrentSession({ ...refreshed });
+    setReleases((prev) =>
+      prev.map((r) =>
+        r.id === releaseId
+          ? {
+              ...r,
+              audioDownloaded: false,
+              infoZipDownloaded: false,
+            }
+          : r
+      )
+    );
+  };
+
+  // Reset all items state and clear session progress (Start Over)
+  const handleResetAllState = () => {
+    resetAllItemsState(currentHostname);
+    const refreshed = syncSessionFromStorage(currentHostname);
+    if (refreshed) setCurrentSession({ ...refreshed });
+    setReleases((prev) =>
+      prev.map((r) => ({
+        ...r,
+        audioDownloaded: false,
+        infoZipDownloaded: false,
+      }))
+    );
+  };
+
+  // State-based group selection toggle
+  const handleToggleGroupSelect = (group: 'both' | 'audio' | 'info' | 'failed' | 'none') => {
+    const isMember = (r: ScannedRelease) => {
+      const q = currentSession?.items[r.id];
+      const audioDl = Boolean(r.audioDownloaded || q?.audioDownloaded);
+      const infoDl = Boolean(r.infoZipDownloaded || q?.infoZipDownloaded);
+      if (group === 'failed') return Boolean(q && (q.stage === 'failed' || Boolean(q.error) || (q.logs && q.logs.some((l) => Boolean(l.error)))));
+      if (group === 'both') return audioDl && infoDl;
+      if (group === 'audio') return audioDl && !infoDl;
+      if (group === 'info') return infoDl && !audioDl;
+      if (group === 'none') return !audioDl && !infoDl;
+      return false;
+    };
+
+    setReleases((prev) => {
+      const groupItems = prev.filter(isMember);
+      if (groupItems.length === 0) return prev;
+      const allSelected = groupItems.every((r) => r.selected);
+      return prev.map((r) => {
+        if (isMember(r)) {
+          return { ...r, selected: !allSelected };
+        }
+        return r;
+      });
+    });
   };
 
   // Download Single Release
@@ -1056,13 +1201,31 @@ export default function App() {
         progress = 100;
       } else if (q.stage === 'failed') {
         status = 'error';
-        progress = 0;
-      } else if (q.stage === 'downloading_audio' || q.stage === 'packaging_info') {
+        progress = 100;
+      } else if (q.stage === 'pacing') {
         status = 'downloading';
-        progress = 65;
+        progress = 95;
+      } else if (q.stage === 'packaging_info') {
+        status = 'downloading';
+        progress = 85;
+      } else if (q.stage === 'downloading_audio') {
+        status = 'downloading';
+        progress = 70;
+      } else if (q.stage === 'resolving_stat') {
+        status = 'resolving';
+        progress = 55;
+      } else if (q.stage === 'polling_gas') {
+        status = 'resolving';
+        progress = 40;
+      } else if (q.stage === 'triggering_email') {
+        status = 'resolving';
+        progress = 25;
+      } else if (q.stage === 'checking_mail') {
+        status = 'resolving';
+        progress = 15;
       } else if (q.stage !== 'pending') {
         status = 'resolving';
-        progress = 30;
+        progress = 10;
       }
     }
 
@@ -1191,6 +1354,8 @@ export default function App() {
               onRetryItem={handleRetryItem}
               onSetReleaseScope={handleSetReleaseScope}
               onSetBatchScope={handleSetBatchScope}
+              onResetReleaseState={handleResetReleaseState}
+              onToggleGroupSelect={handleToggleGroupSelect}
             />
           </div>
         )}
@@ -1242,11 +1407,8 @@ export default function App() {
           completedCount={completedItems.length}
           isDownloading={isDownloading}
           downloadTasks={downloadTasks}
-          onCancelDownload={() => {
-            isCancelledRef.current = true;
-            setIsDownloading(false);
-            setPacingNotice('');
-          }}
+          onCancelDownload={handleCancelDownload}
+          onResetAllState={handleResetAllState}
           onRetryTask={handleRetryItem}
           activePacingNotice={pacingNotice}
           createCompanionInfoZip={settings.createCompanionInfoZip}

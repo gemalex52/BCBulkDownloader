@@ -147,20 +147,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         const { url } = request;
         let targetUrl = typeof cleanBandcampUrl === 'function' ? cleanBandcampUrl(url) : url;
-        if (!targetUrl.includes('/music')) {
+        const parsedUrl = new URL(targetUrl);
+        const origin = parsedUrl.origin;
+        const isTrackOrAlbumPage = parsedUrl.pathname.startsWith('/track/') || parsedUrl.pathname.startsWith('/album/');
+
+        if (!isTrackOrAlbumPage && !targetUrl.includes('/music')) {
           while (targetUrl.endsWith('/')) targetUrl = targetUrl.slice(0, -1);
           targetUrl += '/music';
         }
+
         const res = await fetch(targetUrl, {
           headers: {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
           }
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const html = await res.text();
-        const parsedUrl = new URL(targetUrl);
-        const origin = parsedUrl.origin;
 
         const artistMatch = html.match(/id="band-name-location"[^>]*>[\\s\\S]*?class="title"[^>]*>([^<]+)/i) ||
                             html.match(/property="og:site_name"[^>]*content="([^"]+)"/i) ||
@@ -169,6 +171,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const artistBioPicUrl = extractArtistBioPicUrl(html);
 
         const itemsMap = new Map();
+
+        // 1. Single release detection: check if current page is an album or track release
+        const tralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(html) : null;
+        if (tralbum && tralbum.current) {
+          const isAlbum = tralbum.current.type === 'album' || parsedUrl.pathname.startsWith('/album/');
+          const releaseTitle = cleanHtmlText(tralbum.current.title) || 'Release';
+          const artUrl = tralbum.art_id ? ('https://f4.bcbits.com/img/a' + tralbum.art_id + '_10.jpg') : '';
+          const rawId = (tralbum.current.type || (isAlbum ? 'album' : 'track')) + '-' + tralbum.current.id;
+          itemsMap.set(parsedUrl.pathname || '/', {
+            id: rawId,
+            itemId: tralbum.current.id || 0,
+            url: targetUrl,
+            title: releaseTitle,
+            artUrl,
+            type: isAlbum ? 'album' : 'track'
+          });
+        }
         const liMatches = Array.from(html.matchAll(/<li[^>]*data-item-id="([^"]*)"[^>]*>([\\s\\S]*?)<\\/li>/gi));
         for (const m of liMatches) {
           const rawId = m[1];
@@ -424,7 +443,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'CHECK_GAS_WEBHOOK') {
     (async () => {
       try {
-        const { webhookUrl, secret, releaseId, title, since, hours, days, startDate } = request;
+        const { webhookUrl, secret, releaseId, title, since, hours, days, startDate, timeoutSeconds, timeoutMs } = request;
+        const effectiveTimeoutMs = timeoutMs || ((timeoutSeconds || 90) * 1000);
         const url = new URL(webhookUrl);
         url.searchParams.set('secret', secret);
         if (releaseId) url.searchParams.set('id', String(releaseId));
@@ -437,7 +457,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const res = await fetch(url.toString(), {
           redirect: 'follow',
           headers: { 'Accept': 'application/json, text/plain, */*' },
-          signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined
+          signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(effectiveTimeoutMs) : undefined
         });
         const text = await res.text();
         if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
@@ -688,9 +708,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (document.getElementById('bc-bulk-open-tab-btn')) return;
     const btn = document.createElement('button');
     btn.id = 'bc-bulk-open-tab-btn';
-    btn.textContent = '⚡ Open Dedicated Tab';
-    btn.title = 'Open Bandcamp Bulk Downloader Live Scanner for this catalog';
-    btn.style.cssText = 'position:fixed;bottom:22px;right:22px;z-index:999999;background:#00b4d8;color:#0b0f17;font-weight:700;font-size:12px;padding:8px 14px;border:none;border-radius:20px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.45);font-family:sans-serif;transition:transform 0.15s,box-shadow 0.15s;';
+    btn.textContent = '⚡ Downloader';
+    btn.title = 'Open Bandcamp Bulk Downloader Dashboard for this catalog';
+    btn.style.cssText = 'position:fixed;bottom:22px;right:22px;z-index:999999;background:#00b4d8;color:#0b0f17;font-weight:700;font-size:12px;padding:7px 13px;border:none;border-radius:20px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.45);font-family:sans-serif;transition:transform 0.15s,bottom 0.2s,box-shadow 0.15s;';
     btn.onmouseenter = function() { btn.style.transform = 'scale(1.05)'; };
     btn.onmouseleave = function() { btn.style.transform = 'scale(1)'; };
     btn.onclick = function(e) {
@@ -701,7 +721,81 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         autostart: false
       });
     };
+
+    function updateButtonPosition() {
+      let clearanceBottom = 22;
+      const winW = window.innerWidth;
+      const winH = window.innerHeight;
+
+      // Check common cast or floating controls by selectors
+      const candidateSelectors = [
+        'cast-button',
+        '.cast-button',
+        '#cast-button',
+        '.google-cast-launcher',
+        '[is="google-cast-button"]',
+        '.cast-icon',
+        '.cast-banner',
+        '.inline_player',
+        '#inline_player',
+        '.bandcamp-player',
+        '.music-player-fixed',
+        '#carousel-player',
+        '.feedback-floater',
+        '.back-to-top'
+      ];
+
+      for (const sel of candidateSelectors) {
+        try {
+          const els = document.querySelectorAll(sel);
+          for (const el of els) {
+            if (el === btn) continue;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0 && rect.right > winW - 160 && rect.bottom > winH - 180) {
+              const needed = (winH - rect.top) + 12;
+              if (needed > clearanceBottom) clearanceBottom = needed;
+            }
+          }
+        } catch (e) {}
+      }
+
+      // Also scan any fixed/sticky elements in the bottom-right corner
+      try {
+        const fixedElements = Array.from(document.querySelectorAll('body *')).filter(function(el) {
+          if (el === btn || el.id === 'bc-bulk-open-tab-btn' || el.contains(btn)) return false;
+          const s = window.getComputedStyle(el);
+          return (s.position === 'fixed' || s.position === 'sticky') &&
+                 s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+        });
+
+        for (const el of fixedElements) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0 && rect.right > winW - 140 && rect.bottom > winH - 140) {
+            const needed = (winH - rect.top) + 12;
+            if (needed > clearanceBottom && needed < winH * 0.75) {
+              clearanceBottom = needed;
+            }
+          }
+        }
+      } catch (e) {}
+
+      btn.style.bottom = Math.min(Math.max(22, Math.round(clearanceBottom)), 300) + 'px';
+    }
+
     document.body.appendChild(btn);
+
+    updateButtonPosition();
+    setTimeout(updateButtonPosition, 600);
+    setTimeout(updateButtonPosition, 2000);
+    window.addEventListener('resize', updateButtonPosition);
+    try {
+      const observer = new MutationObserver(function() {
+        updateButtonPosition();
+      });
+      observer.observe(document.body, { childList: true, subtree: false });
+    } catch(e) {}
   }
 
   if (document.readyState === 'loading') {
@@ -744,10 +838,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     <div class="actions">
       <button id="btnOpenDashboard" class="btn primary">
-        ↗ Open Dedicated Live Scanner Tab
+        ↗ Open Download Dashboard
       </button>
       <button id="btnQuickResume" class="btn resume" style="display:none;">
-        ▶ Resume Download In Dedicated Tab
+        ▶ Resume Download in Download Dashboard
       </button>
     </div>
   </div>
@@ -999,7 +1093,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bandcamp Bulk Downloader - Live Scanner Dashboard</title>
+  <title>Bandcamp Bulk Downloader - Download Dashboard</title>
   <link rel="stylesheet" href="dashboard.css">
 </head>
 <body class="bg-[#0b0f17] text-slate-100 min-h-screen">

@@ -44,7 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Live Scanner
+            Download Dashboard
           </button>
           {!isExtension && (
             <>

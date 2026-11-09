@@ -159,14 +159,15 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
     }
   }
 
-  // 3. Single-release fallback: if discography grid has no items, check if the page itself is an album or track release
-  if (itemsMap.size === 0) {
+  // 3. Single-release detection: if requested page is a track or album, or if discography grid has no items
+  const isTrackOrAlbumPage = parsedUrl.pathname.startsWith('/track/') || parsedUrl.pathname.startsWith('/album/');
+  if (isTrackOrAlbumPage || itemsMap.size === 0) {
     const tralbum = extractBandcampTralbum(html);
     if (tralbum && tralbum.current) {
-      const isAlbum = tralbum.current.type === 'album';
+      const isAlbum = tralbum.current.type === 'album' || parsedUrl.pathname.startsWith('/album/');
       const releaseTitle = cleanHtmlText(tralbum.current.title) || 'Release';
       const artUrl = tralbum.art_id ? `https://f4.bcbits.com/img/a${tralbum.art_id}_10.jpg` : '';
-      const rawId = `${tralbum.current.type || 'item'}-${tralbum.current.id}`;
+      const rawId = `${tralbum.current.type || (isAlbum ? 'album' : 'track')}-${tralbum.current.id}`;
       itemsMap.set(parsedUrl.pathname || '/', {
         id: rawId,
         itemId: tralbum.current.id || 0,
@@ -604,12 +605,13 @@ app.post('/api/bandcamp/check-gas-webhook', async (req: Request, res: Response) 
     if (req.body.days) url.searchParams.set('days', String(req.body.days));
     if (req.body.startDate) url.searchParams.set('startDate', String(req.body.startDate));
 
+    const timeoutMs = (Number(req.body.timeoutSeconds) || 90) * 1000;
     const response = await fetch(url.toString(), {
       redirect: 'follow',
       headers: {
         'Accept': 'application/json, text/plain, */*'
       },
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     const text = await response.text();

@@ -176,7 +176,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </option>
             </select>
             <p className="text-xs text-slate-400">
-              Can also be customized per-release directly in the Live Scanner catalog grid or table.
+              Can also be customized per-release directly in the Download Dashboard catalog grid or table.
             </p>
           </div>
 
@@ -370,24 +370,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="p-2.5 bg-[#111827] border border-slate-700 rounded space-y-1">
                   <label className="text-xs font-semibold text-white flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Watchdog Max Poll Retries:</span>
+                    <span>GAS Mail Check Timeout (seconds):</span>
                   </label>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
-                      min="1"
-                      max="60"
-                      value={formState.gasMaxPollCycles ?? 10}
-                      onChange={(e) =>
+                      min="10"
+                      max="300"
+                      step="5"
+                      value={formState.gasMailCheckTimeoutSeconds ?? 90}
+                      onChange={(e) => {
+                        const sec = parseInt(e.target.value, 10) || 90;
                         setFormState((prev) => ({
                           ...prev,
-                          gasMaxPollCycles: parseInt(e.target.value, 10) || 10,
-                        }))
-                      }
+                          gasMailCheckTimeoutSeconds: sec,
+                          gasMaxPollCycles: Math.ceil(sec / 5),
+                        }));
+                      }}
                       className="w-20 px-2.5 py-1 bg-[#0b0f17] border border-slate-700 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                     />
                     <span className="text-[11px] text-slate-400">
-                      attempts (at 5s = {((formState.gasMaxPollCycles ?? 10) * 5)}s)
+                      seconds ({Math.ceil((formState.gasMailCheckTimeoutSeconds ?? 90) / 5)} poll cycles at 5s)
                     </span>
                   </div>
                 </div>
