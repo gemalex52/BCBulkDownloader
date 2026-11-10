@@ -79,6 +79,9 @@ export interface DownloadTask {
   artUrl?: string;
   format: string;
   status: 'queued' | 'resolving' | 'downloading' | 'completed' | 'error';
+  stage?: QueueItemStage;
+  stageName?: string;
+  statusText?: string;
   progress: number;
   filename?: string;
   error?: string;
@@ -163,6 +166,7 @@ export interface AppSettings {
   deliveryMode?: DeliveryMode;
   createCompanionInfoZip: boolean; // default: true
   namingSchema: string;
+  infoZipNamingSchema?: string; // customizable companion info zip naming schema
   concurrentDownloads?: number;
   skipEmailRequired?: boolean;
   skipAlbumTrackSubpages?: boolean;
@@ -191,6 +195,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   deliveryMode: 'companion',
   createCompanionInfoZip: true,
   namingSchema: '%artist% - %date% - %album%[%title%.%format%]',
+  infoZipNamingSchema: '%artist% - %date% - %album% (info)',
   concurrentDownloads: 3,
   skipEmailRequired: false,
   skipAlbumTrackSubpages: true,
@@ -367,6 +372,33 @@ export function formatFilenameBySchema(
 export function getCompanionInfoZipName(audioFilename: string): string {
   const clean = audioFilename.replace(/\.[^/.]+$/, '');
   return `${clean} (info).zip`;
+}
+
+export function formatInfoZipFilenameBySchema(
+  schema: string | undefined,
+  meta: {
+    artist: string;
+    album: string;
+    title: string;
+    trackNum?: number | string;
+    totalTracks?: number;
+    year?: string | number;
+    date?: string;
+    type?: string;
+  },
+  audioFilenameFallback?: string
+): string {
+  const chosenSchema = (schema && schema.trim()) ? schema.trim() : '%artist% - %date% - %album% (info)';
+  let formatted = formatFilenameBySchema(chosenSchema, {
+    ...meta,
+    format: 'zip',
+    isArchive: true,
+  }, { allowSubfolders: false });
+
+  if (!formatted.toLowerCase().endsWith('.zip')) {
+    formatted = `${formatted.replace(/\.[^/.]+$/, '')}.zip`;
+  }
+  return formatted;
 }
 
 export interface ExtensionFileItem {

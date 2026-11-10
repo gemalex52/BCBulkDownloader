@@ -272,6 +272,31 @@ export function extractExtraPhotosWithTitles(
   if (coverId) seenIds.add(coverId);
   if (bioId) seenIds.add(bioId);
 
+  // 0. Explicitly collect image IDs belonging to Full Discography sections to exclude them completely
+  const excludedImageIds = new Set<string>();
+  const fullDiscoBlocks = Array.from(
+    html.matchAll(/<(?:li|div)[^>]*(?:id="buyFullDiscography"|class="[^"]*buyFullDiscography[^"]*")[^>]*>([\s\S]*?)<\/(?:li|div)>/gi)
+  );
+  for (const fdb of fullDiscoBlocks) {
+    const discoImgs = Array.from(fdb[0].matchAll(/bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg/gi)).map(m => m[0]);
+    for (const di of discoImgs) {
+      const id = extractImageNumericId(di);
+      if (id) excludedImageIds.add(id);
+    }
+  }
+
+  // Also check for any block with "Full Digital Discography" text
+  const anyBuyItemBlocks = Array.from(html.matchAll(/<li[^>]*class="[^"]*buyItem[^"]*"[^>]*>([\s\S]*?)<\/li>/gi));
+  for (const bib of anyBuyItemBlocks) {
+    if (/full\s+digital\s+discography/i.test(bib[0]) || /buyFullDiscography/i.test(bib[0])) {
+      const discoImgs = Array.from(bib[0].matchAll(/bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg/gi)).map(m => m[0]);
+      for (const di of discoImgs) {
+        const id = extractImageNumericId(di);
+        if (id) excludedImageIds.add(id);
+      }
+    }
+  }
+
   const extraPhotos: ExtraPhotoItem[] = [];
 
   const addPhoto = (rawUrl: string, sectionTitle?: string) => {
@@ -280,7 +305,7 @@ export function extractExtraPhotosWithTitles(
     // Upgrade to _10.jpg
     const highResUrl = cleanUrl.replace(/_\d+\.jpg/, '_10.jpg');
     const id = extractImageNumericId(highResUrl);
-    if (!id || seenIds.has(id)) return;
+    if (!id || seenIds.has(id) || excludedImageIds.has(id)) return;
     seenIds.add(id);
 
     const title = cleanPhotoSectionTitle(sectionTitle || '');
@@ -290,19 +315,21 @@ export function extractExtraPhotosWithTitles(
     });
   };
 
-  // 1. Packages / merch items with titles
+  // 1. Packages / merch items with full <li> or <div> blocks
   const packageMatches = Array.from(
-    html.matchAll(/<(?:li|div)[^>]*class="[^"]*(?:package|merch-item|buyItem)[^"]*"[^>]*>([\s\S]*?)<\/(?:li|div)>/gi)
+    html.matchAll(/<li[^>]*class="[^"]*(?:package|merch-item|buyItem)[^"]*"[^>]*>([\s\S]*?)<\/li>/gi)
+  ).concat(
+    Array.from(html.matchAll(/<div[^>]*class="[^"]*(?:package|merch-item)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi))
   );
 
   for (const p of packageMatches) {
+    const fullTag = p[0];
     const block = p[1];
 
     // Exclude full discography section as requested ("buyItem buyFullDiscography")
     if (
-      /buyFullDiscography/i.test(p[0]) ||
-      /id="buyFullDiscography"/i.test(p[0]) ||
-      /buyItem\s+buyFullDiscography/i.test(p[0]) ||
+      /buyFullDiscography/i.test(fullTag) ||
+      /id="buyFullDiscography"/i.test(fullTag) ||
       /full\s+digital\s+discography/i.test(block)
     ) {
       continue;
@@ -331,18 +358,20 @@ export function extractExtraPhotosWithTitles(
     html.matchAll(/<a[^>]*class="[^"]*popupImage[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)
   );
   for (const pa of popupAnchors) {
+    const fullAnchor = pa[0];
+    if (/discography/i.test(fullAnchor)) continue;
     const href = pa[1];
     const inner = pa[2];
-    const titleMatch = pa[0].match(/title="([^"]+)"/i) || inner.match(/alt="([^"]+)"/i);
+    const titleMatch = fullAnchor.match(/title="([^"]+)"/i) || inner.match(/alt="([^"]+)"/i);
     addPhoto(href, titleMatch ? titleMatch[1] : '');
   }
 
-  // 3. More thumbs list
+  // 3. More thumbs list (alternate artwork)
   const moreThumbsMatch = html.match(/<ul[^>]*class="[^"]*more-thumbs[^"]*"[^>]*>([\s\S]*?)<\/ul>/i);
   if (moreThumbsMatch) {
     const thumbBlocks = Array.from(moreThumbsMatch[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi));
     for (const tb of thumbBlocks) {
-      const uMatch = tb[1].match(/(?:href|src|data-original)="([^"]*bcbits\.com\/img\/a\d+_\d+\.jpg)"/i);
+      const uMatch = tb[1].match(/(?:href|src|data-original)="([^"]*bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg)"/i);
       const tMatch = tb[1].match(/(?:title|alt)="([^"]+)"/i);
       if (uMatch) {
         addPhoto(uMatch[1], tMatch ? tMatch[1] : '');
@@ -350,20 +379,14 @@ export function extractExtraPhotosWithTitles(
     }
   }
 
-  // 4. Any remaining img tags with alt text
+  // 4. Any remaining img tags with specific alt text (merch/photos)
   const imgTags = Array.from(
-    html.matchAll(/<img[^>]*src="([^"]*bcbits\.com\/img\/a\d+_\d+\.jpg)"[^>]*alt="([^"]*)"/gi)
+    html.matchAll(/<img[^>]*src="([^"]*bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg)"[^>]*alt="([^"]+)"/gi)
   );
   for (const it of imgTags) {
-    addPhoto(it[1], it[2]);
-  }
-
-  // 5. Fallback scan for any other high-res photos on page
-  const fallbackUrls = Array.from(html.matchAll(/https?:\/\/[a-z0-9.]*bcbits\.com\/img\/a\d+_10\.jpg/gi)).map(
-    (m) => m[0]
-  );
-  for (const fu of fallbackUrls) {
-    addPhoto(fu, '');
+    if (!/discography/i.test(it[2])) {
+      addPhoto(it[1], it[2]);
+    }
   }
 
   return {

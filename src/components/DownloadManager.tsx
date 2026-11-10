@@ -35,6 +35,9 @@ interface DownloadManagerProps {
   onFallbackEmailChange: (email: string) => void;
   namingSchema: string;
   onNamingSchemaChange: (schema: string) => void;
+  infoZipNamingSchema?: string;
+  onInfoZipNamingSchemaChange?: (schema: string) => void;
+  onSetBatchScope?: (scope: 'both' | 'audio' | 'info') => void;
   onStartBulkDownload: () => void;
   onResumeBulkDownload?: () => void;
   canResume?: boolean;
@@ -58,6 +61,9 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
   onDeliveryModeChange,
   namingSchema,
   onNamingSchemaChange,
+  infoZipNamingSchema,
+  onInfoZipNamingSchemaChange,
+  onSetBatchScope,
   onStartBulkDownload,
   onResumeBulkDownload,
   canResume = false,
@@ -166,10 +172,11 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
             </div>
           </div>
 
-          {/* Controls: Format Selector & Action Buttons */}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Format Dropdown */}
-            <div className="flex items-center gap-1.5 bg-[#111827] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs">
+          {/* Controls: Format Selector, Meta Fields & Action Buttons */}
+          <div className="flex flex-col items-end gap-2 w-full md:w-auto">
+            <div className="flex flex-wrap items-center justify-end gap-3 w-full">
+              {/* Format Dropdown */}
+              <div className="flex items-center gap-1.5 bg-[#111827] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs">
               <span className="text-slate-400 font-medium">Format:</span>
               <select
                 value={selectedFormat}
@@ -354,6 +361,40 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                 )}
               </div>
             )}
+            </div>
+
+            {/* Target selector for selected - placed in sticky lower pane below Format and meta fields */}
+            {selectedCount > 0 && onSetBatchScope && (
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-[11px] text-slate-400 font-medium">Target for selected:</span>
+                <div className="inline-flex items-center bg-[#111827] border border-slate-700 rounded-lg p-0.5 text-xs shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => onSetBatchScope('both')}
+                    className="px-2.5 py-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-medium transition"
+                    title="Set selected to download both audio and companion info archive"
+                  >
+                    Both
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSetBatchScope('audio')}
+                    className="px-2.5 py-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-medium transition"
+                    title="Set selected to download studio audio only"
+                  >
+                    Audio only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSetBatchScope('info')}
+                    className="px-2.5 py-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-medium transition"
+                    title="Set selected to download companion info archive only"
+                  >
+                    Info only
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -427,6 +468,10 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                         ) : task.status === 'error' ? (
                           <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                        ) : task.stage === 'checking_mail' || task.stage === 'triggering_email' || task.stage === 'polling_gas' ? (
+                          <Mail className="w-4 h-4 text-amber-400 animate-pulse shrink-0" />
+                        ) : task.stage === 'packaging_info' ? (
+                          <FolderArchive className="w-4 h-4 text-indigo-400 shrink-0" />
                         ) : (
                           <RotateCw className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
                         )}
@@ -446,13 +491,17 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                         <span
                           className={`text-[11px] font-mono px-2 py-0.5 rounded ${
                             task.status === 'completed'
-                              ? 'bg-emerald-950 text-emerald-300'
+                              ? 'bg-emerald-950 border border-emerald-600/40 text-emerald-300'
                               : task.status === 'error'
-                              ? 'bg-red-950 text-red-300'
-                              : 'bg-cyan-950 text-cyan-300'
+                              ? 'bg-red-950 border border-red-600/40 text-red-300'
+                              : task.stage === 'checking_mail' || task.stage === 'triggering_email' || task.stage === 'polling_gas'
+                              ? 'bg-amber-950/80 border border-amber-600/50 text-amber-300'
+                              : task.stage === 'packaging_info'
+                              ? 'bg-indigo-950/80 border border-indigo-600/50 text-indigo-300'
+                              : 'bg-cyan-950 border border-cyan-600/40 text-cyan-300'
                           }`}
                         >
-                          {task.status}
+                          {task.stageName || task.statusText || task.status}
                         </span>
                       </div>
                     </div>

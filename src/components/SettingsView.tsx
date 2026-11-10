@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
-import { AppSettings, AUDIO_FORMATS, DEFAULT_APP_SETTINGS, formatFilenameBySchema } from '../types/bandcamp';
+import {
+  AppSettings,
+  AUDIO_FORMATS,
+  DEFAULT_APP_SETTINGS,
+  formatFilenameBySchema,
+  formatInfoZipFilenameBySchema,
+} from '../types/bandcamp';
 import { GAS_SCRIPT_TEMPLATE } from '../services/gasTemplate';
 import { apiClient } from '../services/unifiedClient';
 import {
@@ -643,6 +649,83 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   isArchive: true,
                 }
               )}
+            </div>
+          </div>
+
+          {/* Sub-Section 4b: Companion Info ZIP Naming Schema */}
+          <div className="pt-4 border-t border-slate-800/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-semibold text-white flex items-center gap-2">
+                <FolderArchive className="w-4 h-4 text-indigo-400" />
+                <span>Companion (info).zip Naming Schema</span>
+              </label>
+              <button
+                type="button"
+                onClick={() =>
+                  setFormState((prev) => ({
+                    ...prev,
+                    infoZipNamingSchema: '%artist% - %date% - %album% (info)',
+                  }))
+                }
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium"
+              >
+                Reset to Default
+              </button>
+            </div>
+
+            <input
+              type="text"
+              value={formState.infoZipNamingSchema || '%artist% - %date% - %album% (info)'}
+              onChange={(e) =>
+                setFormState((prev) => ({ ...prev, infoZipNamingSchema: e.target.value }))
+              }
+              placeholder="%artist% - %date% - %album% (info)"
+              className="w-full px-4 py-2.5 bg-[#0b0f17] border border-slate-700 rounded-lg text-sm text-indigo-300 font-mono placeholder-slate-500 focus:outline-none focus:border-indigo-400"
+            />
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-slate-400 font-medium mr-1">Insert tag token:</span>
+              {[
+                { token: '%artist%', label: 'Artist' },
+                { token: '%date%', label: 'Date (YYYY.MM.DD)' },
+                { token: '%year%', label: 'Year' },
+                { token: '%album%', label: 'Album' },
+                { token: '%title%', label: 'Title' },
+              ].map((t) => (
+                <button
+                  key={t.token}
+                  type="button"
+                  onClick={() => {
+                    const current = formState.infoZipNamingSchema || '%artist% - %date% - %album% (info)';
+                    if (!current.includes(t.token)) {
+                      setFormState((prev) => ({
+                        ...prev,
+                        infoZipNamingSchema: `${current} ${t.token}`,
+                      }));
+                    }
+                  }}
+                  className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700 rounded text-[11px] font-mono text-indigo-400 hover:text-white transition"
+                >
+                  +{t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="p-3 bg-[#0b0f17] border border-slate-800 rounded-lg text-xs space-y-1">
+              <div className="text-slate-400">Companion Info ZIP output preview:</div>
+              <div className="font-mono text-indigo-400 font-medium">
+                {formatInfoZipFilenameBySchema(
+                  formState.infoZipNamingSchema || '%artist% - %date% - %album% (info)',
+                  {
+                    artist: 'Othaliel',
+                    album: 'Eternal Life in Metastasized Dreams',
+                    title: 'Eternal Life in Metastasized Dreams',
+                    date: '2026.03.03',
+                    year: '2026',
+                    type: 'album',
+                  }
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -367,35 +367,6 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                 )}
               </div>
             )}
-
-            {selectedCount > 0 && onSetBatchScope && (
-              <div className="flex items-center gap-1.5 pl-2 border-l border-slate-700/80">
-                <span className="text-[11px] text-slate-400">Target for selected:</span>
-                <div className="flex items-center bg-[#0b0f17] border border-slate-700 rounded-lg p-0.5 text-[11px]">
-                  <button
-                    onClick={() => onSetBatchScope('both')}
-                    className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 font-medium transition"
-                    title="Set selected to download both audio and info archive"
-                  >
-                    Both
-                  </button>
-                  <button
-                    onClick={() => onSetBatchScope('audio')}
-                    className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 font-medium transition"
-                    title="Set selected to download audio master only"
-                  >
-                    Audio only
-                  </button>
-                  <button
-                    onClick={() => onSetBatchScope('info')}
-                    className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 font-medium transition"
-                    title="Set selected to download companion info archive only"
-                  >
-                    Info only
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Search and View Mode Switch */}

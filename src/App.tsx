@@ -12,6 +12,7 @@ import {
   SiteQueueSession,
   formatFilenameBySchema,
   getCompanionInfoZipName,
+  formatInfoZipFilenameBySchema,
 } from './types/bandcamp';
 import { Header } from './components/Header';
 import { ScannerBar } from './components/ScannerBar';
@@ -909,7 +910,20 @@ export default function App() {
               audioStreams: resolveData?.audioStreams || rel.audioStreams,
             });
 
-            const companionName = getCompanionInfoZipName(audioFilename);
+            const companionName = formatInfoZipFilenameBySchema(
+              settings.infoZipNamingSchema,
+              {
+                artist: rel.artist,
+                album: rel.title,
+                title: rel.title,
+                trackNum: rel.trackCount === 1 ? 1 : undefined,
+                totalTracks: rel.trackCount || 1,
+                date: rel.isoDate || rel.releaseDate,
+                year: rel.releaseDate?.slice(0, 4),
+                type: rel.itemType || 'album',
+              },
+              getCompanionInfoZipName(audioFilename)
+            );
             await apiClient.downloadBlob(companionResult.blob, companionName);
             infoSuccess = true;
             logAndSync('packaging_info', `Created companion ZIP: ${companionName} (${companionResult.filesCount} files)`);
@@ -1215,38 +1229,63 @@ export default function App() {
     const q = currentSession?.items[r.id];
     let status: DownloadTask['status'] = 'queued';
     let progress = 0;
+    let stage: QueueItemStage | undefined = q?.stage;
+    let stageName: string | undefined = undefined;
 
     if (q) {
-      if (q.stage === 'completed') {
-        status = 'completed';
-        progress = 100;
-      } else if (q.stage === 'failed') {
-        status = 'error';
-        progress = 100;
-      } else if (q.stage === 'pacing') {
-        status = 'downloading';
-        progress = 95;
-      } else if (q.stage === 'packaging_info') {
-        status = 'downloading';
-        progress = 85;
-      } else if (q.stage === 'downloading_audio') {
-        status = 'downloading';
-        progress = 70;
-      } else if (q.stage === 'resolving_stat') {
-        status = 'resolving';
-        progress = 55;
-      } else if (q.stage === 'polling_gas') {
-        status = 'resolving';
-        progress = 40;
-      } else if (q.stage === 'triggering_email') {
-        status = 'resolving';
-        progress = 25;
-      } else if (q.stage === 'checking_mail') {
-        status = 'resolving';
-        progress = 15;
-      } else if (q.stage !== 'pending') {
-        status = 'resolving';
-        progress = 10;
+      stage = q.stage;
+      switch (q.stage) {
+        case 'completed':
+          status = 'completed';
+          progress = 100;
+          stageName = q.statusText || 'Completed';
+          break;
+        case 'failed':
+          status = 'error';
+          progress = 100;
+          stageName = q.error || q.statusText || 'Failed';
+          break;
+        case 'pacing':
+          status = 'downloading';
+          progress = 95;
+          stageName = 'Pacing Pause';
+          break;
+        case 'packaging_info':
+          status = 'downloading';
+          progress = 85;
+          stageName = 'Building Info ZIP';
+          break;
+        case 'downloading_audio':
+          status = 'downloading';
+          progress = 70;
+          stageName = 'Downloading Audio';
+          break;
+        case 'resolving_stat':
+          status = 'resolving';
+          progress = 55;
+          stageName = 'Resolving Studio Link';
+          break;
+        case 'polling_gas':
+          status = 'resolving';
+          progress = 40;
+          stageName = 'Awaiting Download Link';
+          break;
+        case 'triggering_email':
+          status = 'resolving';
+          progress = 25;
+          stageName = 'Sending Email Request';
+          break;
+        case 'checking_mail':
+          status = 'resolving';
+          progress = 15;
+          stageName = 'Checking Mailbox';
+          break;
+        case 'pending':
+        default:
+          status = 'queued';
+          progress = 0;
+          stageName = 'Queued';
+          break;
       }
     }
 
@@ -1258,7 +1297,10 @@ export default function App() {
       artUrl: r.artUrl,
       format: selectedFormat,
       status,
-      progress,
+      stage,
+      stageName,
+      statusText: q?.statusText || stageName || status,
+      progress: q?.stageProgress || progress,
       error: q?.error,
     };
   });
@@ -1420,6 +1462,11 @@ export default function App() {
           onNamingSchemaChange={(schema) =>
             setSettings((prev) => ({ ...prev, namingSchema: schema }))
           }
+          infoZipNamingSchema={settings.infoZipNamingSchema}
+          onInfoZipNamingSchemaChange={(schema) =>
+            setSettings((prev) => ({ ...prev, infoZipNamingSchema: schema }))
+          }
+          onSetBatchScope={handleSetBatchScope}
           onStartBulkDownload={handleStartBulkDownload}
           onResumeBulkDownload={handleResumeBulkDownload}
           canResume={canResume}

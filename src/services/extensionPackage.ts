@@ -1,6 +1,5 @@
 import JSZip from 'jszip';
 import jszipMinSource from 'jszip/dist/jszip.min.js?raw';
-import { CORE_JS_SOURCE } from './coreSource';
 import { ExtensionFileItem } from '../types/bandcamp';
 import { getExtensionIconBuffers } from './iconGenerator';
 import { GAS_SCRIPT_TEMPLATE } from './gasTemplate';
@@ -20,7 +19,7 @@ export const EXTENSION_FILES: ExtensionFileItem[] = [
     path: 'core.js',
     language: 'javascript',
     description: 'Unified Bandcamp core engine (parsing, statdownload polling, and naming schema).',
-    content: CORE_JS_SOURCE,
+    content: '// Compiled from src/services/bandcampCore.ts',
   },
   {
     name: 'manifest.json',
@@ -85,6 +84,7 @@ importScripts('core.js');
 // Map of URLs and download IDs to custom sanitized filenames for chrome.downloads.onDeterminingFilename
 const pendingUrlFilenameMap = new Map();
 const downloadFilenameMap = new Map();
+const pendingDownloadsQueue = [];
 
 function sanitizeChromeDownloadFilename(pathStr) {
   if (!pathStr || typeof pathStr !== 'string') return 'download.zip';
@@ -98,17 +98,61 @@ function sanitizeChromeDownloadFilename(pathStr) {
   return cleanSegments.length > 0 ? cleanSegments.join('/') : 'download.zip';
 }
 
+function resolvePendingFilename(item) {
+  if (item && downloadFilenameMap.has(item.id)) {
+    return downloadFilenameMap.get(item.id);
+  }
+  if (item && item.url && pendingUrlFilenameMap.has(item.url)) {
+    return pendingUrlFilenameMap.get(item.url);
+  }
+  if (item && item.finalUrl && pendingUrlFilenameMap.has(item.finalUrl)) {
+    return pendingUrlFilenameMap.get(item.finalUrl);
+  }
+
+  // Handle Bandcamp CDN 302 redirects (e.g. popplers -> p4.bcbits) by matching payment_id or album ID
+  if (item && (item.url || item.finalUrl)) {
+    const fullUrl = (item.url || '') + ' ' + (item.finalUrl || '');
+    for (const [pUrl, fname] of pendingUrlFilenameMap.entries()) {
+      const idMatch = pUrl.match(/[?&]id=(\d+)/);
+      const payMatch = pUrl.match(/[?&]payment_id=(\d+)/);
+      if (idMatch && (fullUrl.includes('id=' + idMatch[1]) || fullUrl.includes('/' + idMatch[1]))) {
+        return fname;
+      }
+      if (payMatch && fullUrl.includes('payment_id=' + payMatch[1])) {
+        return fname;
+      }
+    }
+  }
+
+  // Fallback: match most recent download initiated within the last 60 seconds
+  const now = Date.now();
+  for (let i = pendingDownloadsQueue.length - 1; i >= 0; i--) {
+    const p = pendingDownloadsQueue[i];
+    if (!p.used && (now - p.time < 60000)) {
+      p.used = true;
+      return p.filename;
+    }
+  }
+
+  return null;
+}
+
 if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
   chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-    const customName = downloadFilenameMap.get(item.id) || pendingUrlFilenameMap.get(item.url);
-    if (customName) {
-      const sanitized = sanitizeChromeDownloadFilename(customName);
-      suggest({ filename: sanitized, conflictAction: 'uniquify' });
-      downloadFilenameMap.delete(item.id);
-      pendingUrlFilenameMap.delete(item.url);
-    } else {
-      suggest();
+    try {
+      const customName = resolvePendingFilename(item);
+      if (customName) {
+        const sanitized = sanitizeChromeDownloadFilename(customName);
+        suggest({ filename: sanitized, conflictAction: 'uniquify' });
+        if (item && item.id) downloadFilenameMap.delete(item.id);
+        if (item && item.url) pendingUrlFilenameMap.delete(item.url);
+      } else {
+        suggest();
+      }
+    } catch (e) {
+      // Gracefully ignore if download interrupted or completed rapidly
     }
+    return false;
   });
 }
 
@@ -560,15 +604,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const rawFilename = request.filename || 'download.zip';
     const cleanFilename = sanitizeChromeDownloadFilename(rawFilename);
     pendingUrlFilenameMap.set(request.url, cleanFilename);
+    pendingDownloadsQueue.push({ url: request.url, filename: cleanFilename, time: Date.now(), used: false });
+    if (pendingDownloadsQueue.length > 25) pendingDownloadsQueue.shift();
 
     chrome.downloads.download({
       url: request.url,
       filename: cleanFilename,
       conflictAction: 'uniquify'
     }, (downloadId) => {
-      if (chrome.runtime.lastError) {
+      const err = chrome.runtime.lastError;
+      if (err) {
         pendingUrlFilenameMap.delete(request.url);
-        sendResponse({ success: false, error: chrome.runtime.lastError.message });
+        sendResponse({ success: false, error: err.message });
       } else {
         if (downloadId) {
           downloadFilenameMap.set(downloadId, cleanFilename);
@@ -1453,6 +1500,19 @@ A Chrome-compatible browser extension designed to scan Bandcamp artist music cat
 export async function createExtensionZip(): Promise<Blob> {
   const zip = new JSZip();
   for (const file of EXTENSION_FILES) {
+    if (file.path === 'core.js') {
+      try {
+        let res = await fetch('/extension-dist/core.js');
+        if (!res.ok) {
+          res = await fetch('/public/extension-dist/core.js');
+        }
+        if (res.ok) {
+          const txt = await res.text();
+          zip.file(file.path, txt);
+          continue;
+        }
+      } catch (e) {}
+    }
     if (file.path === 'dashboard.bundle.js') {
       try {
         let res = await fetch('/extension-dist/dashboard.bundle.js');
@@ -1491,14 +1551,19 @@ export async function createExtensionZip(): Promise<Blob> {
 export async function createExtensionZipBuffer(): Promise<Uint8Array> {
   const zip = new JSZip();
 
-  // Load compiled dashboard bundle and css if running on Node.js
+  // Load compiled dashboard bundle, core engine, and css if running on Node.js
   let bundleContent = '';
   let cssContent = '';
+  let coreContent = '';
   try {
     const fs = await import('fs');
     const path = await import('path');
+    const corePath = path.join(process.cwd(), 'public', 'extension-dist', 'core.js');
     const bundlePath = path.join(process.cwd(), 'public', 'extension-dist', 'dashboard.bundle.js');
     const cssPath = path.join(process.cwd(), 'public', 'extension-dist', 'dashboard.css');
+    if (fs.existsSync(corePath)) {
+      coreContent = fs.readFileSync(corePath, 'utf8');
+    }
     if (fs.existsSync(bundlePath)) {
       bundleContent = fs.readFileSync(bundlePath, 'utf8');
     }
@@ -1508,6 +1573,10 @@ export async function createExtensionZipBuffer(): Promise<Uint8Array> {
   } catch (e) {}
 
   for (const file of EXTENSION_FILES) {
+    if (file.path === 'core.js' && coreContent) {
+      zip.file(file.path, coreContent);
+      continue;
+    }
     if (file.path === 'dashboard.bundle.js' && bundleContent) {
       zip.file(file.path, bundleContent);
       continue;
