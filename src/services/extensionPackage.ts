@@ -343,9 +343,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         const { downloadPageUrl, format, albumUrl, release } = request;
         let effectivePageUrl = downloadPageUrl || release?.freeDownloadPageUrl;
+        const isEmailWalled = Boolean(
+          release?.requiresEmail ||
+          release?.badgeType === 'email' ||
+          release?.isNameYourPrice
+        );
 
-        // If no downloadPageUrl but albumUrl is present, fetch album page to see if freeDownloadPage is available
-        if (!effectivePageUrl && albumUrl) {
+        // Never use a raw fsig= temporary download page for email-walled releases (requires real email delivery)
+        if (effectivePageUrl && isEmailWalled && !effectivePageUrl.includes('from=email') && !effectivePageUrl.includes('payment_id=')) {
+          effectivePageUrl = undefined;
+        }
+
+        // If no downloadPageUrl but albumUrl is present, fetch album page to see if freeDownloadPage is available (only for direct free releases)
+        if (!effectivePageUrl && albumUrl && !isEmailWalled) {
           try {
             const pageRes = await fetch(albumUrl, {
               headers: {

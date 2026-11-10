@@ -523,12 +523,11 @@ export default function App() {
         };
       }
 
-      const isPaid = Boolean(
+      const isEmailEligible = Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
+      const isPaid = !isEmailEligible && !r.isPurchased && r.badgeType !== 'own' && Boolean(
         r.badgeType === 'paid' ||
-        (r as any).isPaid ||
-        (!r.freeDownloadPageUrl && !r.isPurchased && (r.minPrice || 0) > 0 && !r.requiresEmail && !r.isNameYourPrice && r.badgeType !== 'email')
+        (!r.freeDownloadPageUrl && !r.isFree && (r.minPrice || 0) > 0)
       );
-      const isEmailEligible = !isPaid && Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
       const isDirectFree = !isPaid && Boolean(r.freeDownloadPageUrl || r.isPurchased || r.badgeType === 'own' || (!isEmailEligible && (r.isFree || r.badgeType === 'free')));
 
       return {
@@ -596,8 +595,10 @@ export default function App() {
   // 1-Click Retry an individual item
   const handleRetryItem = (releaseId: string) => {
     const rel = releases.find((r) => r.id === releaseId);
+    const isEmail = Boolean(rel?.badgeType === 'email' || rel?.requiresEmail || rel?.isNameYourPrice);
+    const isPaid = !isEmail && !rel?.isPurchased && (rel?.badgeType === 'paid' || Boolean((rel?.minPrice || 0) > 0 && !rel?.isFree && !rel?.freeDownloadPageUrl));
     const updated = resetItemForRetry(currentHostname, releaseId, {
-      isPaid: Boolean((rel as any)?.isPaid || (rel && rel.minPrice > 0 && !rel.isPurchased && !rel.freeDownloadPageUrl)),
+      isPaid,
       minPrice: rel?.minPrice,
     });
     if (updated) {
@@ -665,12 +666,24 @@ export default function App() {
 
       try {
         let downloadPageUrl = qItem.freeDownloadPageUrl || rel.freeDownloadPageUrl;
-        const isPaidOnly = Boolean(
-          (qItem.badgeType === 'paid' || rel.badgeType === 'paid') ||
-          qItem.isPaid || rel.isPaid ||
-          (!downloadPageUrl && !qItem.isPurchased && !rel.isPurchased && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0) && !qItem.requiresEmail && !rel.requiresEmail && qItem.badgeType !== 'email')
+        const isEmailEligible = Boolean(
+          qItem.requiresEmail ||
+          rel.requiresEmail ||
+          qItem.isNameYourPrice ||
+          rel.isNameYourPrice ||
+          qItem.badgeType === 'email' ||
+          rel.badgeType === 'email'
         );
-        const isEmailEligible = !isPaidOnly && Boolean(qItem.requiresEmail || rel.requiresEmail || qItem.isNameYourPrice || rel.isNameYourPrice || qItem.badgeType === 'email' || rel.badgeType === 'email');
+
+        // If release requires email, never use a raw fsig download page as it is not a genuine signed email download page
+        if (downloadPageUrl && isEmailEligible && !downloadPageUrl.includes('from=email') && !downloadPageUrl.includes('payment_id=')) {
+          downloadPageUrl = undefined;
+        }
+
+        const isPaidOnly = !isEmailEligible && !qItem.isPurchased && !rel.isPurchased && Boolean(
+          (qItem.badgeType === 'paid' || rel.badgeType === 'paid') ||
+          (!downloadPageUrl && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0) && !qItem.isFree && !rel.isFree)
+        );
         const isDirectFree = !isPaidOnly && Boolean(downloadPageUrl || qItem.isPurchased || rel.isPurchased || qItem.badgeType === 'own' || rel.badgeType === 'own' || (!isEmailEligible && (qItem.isFree || rel.isFree || qItem.badgeType === 'free' || rel.badgeType === 'free')));
 
         const hasGasWatchdog = Boolean(settings.gasWebhookUrl && settings.gasWebhookUrl.trim());
@@ -1030,8 +1043,10 @@ export default function App() {
       const targetScope = r.downloadScope || settings.defaultDownloadScope || 'both';
       const complete = existing ? isItemCompleteForScope(existing, targetScope) : false;
       if (!complete) {
+        const isEmail = Boolean(r.badgeType === 'email' || r.requiresEmail || r.isNameYourPrice);
+        const isPaid = !isEmail && !r.isPurchased && (r.badgeType === 'paid' || Boolean((r.minPrice || 0) > 0 && !r.isFree && !r.freeDownloadPageUrl));
         resetItemForRetry(currentHostname, r.id, {
-          isPaid: Boolean((r as any).isPaid || (r.minPrice > 0 && !r.isPurchased && !r.freeDownloadPageUrl)),
+          isPaid,
           minPrice: r.minPrice,
           downloadScope: targetScope,
         });
@@ -1051,8 +1066,10 @@ export default function App() {
     } else {
       // If all selected were already complete, re-run all selected
       selectedReleases.forEach((r) => {
+        const isEmail = Boolean(r.badgeType === 'email' || r.requiresEmail || r.isNameYourPrice);
+        const isPaid = !isEmail && !r.isPurchased && (r.badgeType === 'paid' || Boolean((r.minPrice || 0) > 0 && !r.isFree && !r.freeDownloadPageUrl));
         resetItemForRetry(currentHostname, r.id, {
-          isPaid: Boolean((r as any).isPaid || (r.minPrice > 0 && !r.isPurchased && !r.freeDownloadPageUrl)),
+          isPaid,
           minPrice: r.minPrice,
           downloadScope: r.downloadScope || settings.defaultDownloadScope || 'both',
         });
@@ -1079,8 +1096,10 @@ export default function App() {
     itemsToResume.forEach((item) => {
       if (item.stage === 'failed' || item.stage === 'completed') {
         const rel = releases.find((r) => r.id === item.id);
+        const isEmail = Boolean(rel?.badgeType === 'email' || rel?.requiresEmail || rel?.isNameYourPrice);
+        const isPaid = !isEmail && !rel?.isPurchased && (rel?.badgeType === 'paid' || Boolean((rel?.minPrice || 0) > 0 && !rel?.isFree && !rel?.freeDownloadPageUrl));
         resetItemForRetry(currentHostname, item.id, {
-          isPaid: Boolean((rel as any)?.isPaid || (rel && rel.minPrice > 0 && !rel.isPurchased && !rel.freeDownloadPageUrl)),
+          isPaid,
           minPrice: rel?.minPrice,
           downloadScope: rel?.downloadScope || item.downloadScope || settings.defaultDownloadScope || 'both',
         });
@@ -1178,8 +1197,10 @@ export default function App() {
       setCurrentSession(sess);
     }
 
+    const isEmail = Boolean(release.badgeType === 'email' || release.requiresEmail || release.isNameYourPrice);
+    const isPaid = !isEmail && !release.isPurchased && (release.badgeType === 'paid' || Boolean((release.minPrice || 0) > 0 && !release.isFree && !release.freeDownloadPageUrl));
     resetItemForRetry(currentHostname, release.id, {
-      isPaid: Boolean((release as any).isPaid || (release.minPrice > 0 && !release.isPurchased && !release.freeDownloadPageUrl)),
+      isPaid,
       minPrice: release.minPrice,
     });
     const refreshed = syncSessionFromStorage(currentHostname) || sess;

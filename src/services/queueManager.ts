@@ -205,8 +205,14 @@ export function initSiteSession(
       isFree: rel.isFree,
       isNameYourPrice: rel.isNameYourPrice,
       isPurchased: rel.isPurchased,
-      isPaid: Boolean(rel.badgeType === 'paid' || rel.isPaid || (!rel.isPurchased && !rel.freeDownloadPageUrl && !rel.requiresEmail && !rel.isNameYourPrice && (rel.minPrice || 0) > 0)),
-      badgeType: rel.badgeType || ((rel.badgeType === 'paid' || rel.isPaid) ? 'paid' : (rel.isPurchased ? 'own' : (rel.freeDownloadPageUrl || (!rel.requiresEmail && !rel.isNameYourPrice && (rel.minPrice === 0 || rel.isFree)) ? 'free' : ((rel.requiresEmail || rel.isNameYourPrice) ? 'email' : 'paid')))),
+      isPaid: Boolean(
+        rel.badgeType !== 'email' &&
+        !rel.requiresEmail &&
+        !rel.isNameYourPrice &&
+        !rel.isPurchased &&
+        (rel.badgeType === 'paid' || (!rel.freeDownloadPageUrl && !rel.isFree && (rel.minPrice || 0) > 0))
+      ),
+      badgeType: rel.badgeType || (rel.isPurchased ? 'own' : ((rel.requiresEmail || rel.isNameYourPrice) ? 'email' : ((rel.minPrice || 0) > 0 && !rel.isFree && !rel.freeDownloadPageUrl ? 'paid' : 'free'))),
       minPrice: rel.minPrice,
       requiresEmail: rel.requiresEmail,
       stage: prev ? prev.stage : 'pending',

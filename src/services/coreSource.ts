@@ -120,22 +120,27 @@ function extractBandcampTralbum(html) {
 function extractArtistBioPicUrl(html, tralbum, globalBioUrl) {
   if (!html && !tralbum) return globalBioUrl;
 
-  var bioPicId = (tralbum && tralbum.band && tralbum.band.bio_pic_id) || (tralbum && tralbum.bio_pic_id);
+  var bioPicId = (tralbum && tralbum.band && tralbum.band.bio_pic_id) || (tralbum && tralbum.bio_pic_id) || (tralbum && tralbum.band_photo_id);
   if (bioPicId) {
     return 'https://f4.bcbits.com/img/00' + bioPicId + '_10.jpg';
   }
 
   if (html) {
-    var cdnBioMatch = html.match(/https?:\\/\\/f4\\.bcbits\\.com\\/img\\/00(\\d+)_/i);
-    if (cdnBioMatch) {
-      return 'https://f4.bcbits.com/img/00' + cdnBioMatch[1] + '_10.jpg';
+    var bioContainerMatch = html.match(/id="bio-container"[^>]*>([\\s\\S]*?)<\\/div>/i);
+    if (bioContainerMatch) {
+      var imgInBio =
+        bioContainerMatch[1].match(/(?:src|data-original)="([^"]+)"/i) ||
+        bioContainerMatch[1].match(/https?:\\/\\/f4\\.bcbits\\.com\\/img\\/(?:00\\d+|a\\d+)_\\d+\\.jpg/i);
+      if (imgInBio) {
+        var raw = imgInBio[1] || imgInBio[0];
+        return raw.replace(/_\\d+\\.jpg/, '_10.jpg');
+      }
     }
 
     var bioPicMatch =
       html.match(/class="[^"]*bio-pic[^"]*"[^>]*src="([^"]+)"/i) ||
-      html.match(/id="bio-container"[^>]*>[\\s\\S]*?<img[^>]*src="([^"]+)"/i) ||
       html.match(/class="[^"]*band-photo[^"]*"[^>]*src="([^"]+)"/i) ||
-      html.match(/<img[^>]*class="[^"]*photo[^"]*"[^>]*src="([^"]+)"/i);
+      html.match(/<img[^>]*class="[^"]*(?:bio-pic|band-photo)[^"]*"[^>]*src="([^"]+)"/i);
 
     if (bioPicMatch && bioPicMatch[1]) {
       return bioPicMatch[1].replace(/_\\d+\\.jpg/, '_10.jpg');
@@ -224,16 +229,30 @@ function extractExtraPhotosWithTitles(html, artUrl, artistBioPicUrl) {
   );
 
   for (var i = 0; i < packageMatches.length; i++) {
-    var block = packageMatches[i][1];
+    var pMatch = packageMatches[i];
+    var block = pMatch[1];
+
+    // Exclude full discography section as requested ("buyItem buyFullDiscography")
+    if (
+      /buyFullDiscography/i.test(pMatch[0]) ||
+      /id="buyFullDiscography"/i.test(pMatch[0]) ||
+      /buyItem\s+buyFullDiscography/i.test(pMatch[0]) ||
+      /full\s+digital\s+discography/i.test(block)
+    ) {
+      continue;
+    }
+
     var titleMatch =
-      block.match(/class="[^"]*(?:package-title|merch-item-title|title)[^"]*"[^>]*>([\\s\\S]*?)<\\//i) ||
+      block.match(/class="[^"]*buyItemPackageTitle[^"]*"[^>]*>([\\s\\S]*?)<\\//i) ||
+      block.match(/class="[^"]*primaryText[^"]*"[^>]*>([\\s\\S]*?)<\\//i) ||
+      block.match(/class="[^"]*(?:package-title|merch-item-title)[^"]*"[^>]*>([\\s\\S]*?)<\\//i) ||
       block.match(/<h[34][^>]*>([\\s\\S]*?)<\\/h[34]>/i) ||
       block.match(/class="popupImage"[^>]*title="([^"]+)"/i) ||
       block.match(/<img[^>]*alt="([^"]+)"/i);
-    var sectionTitle = titleMatch ? titleMatch[1] : '';
+    var sectionTitle = titleMatch ? cleanHtmlText(titleMatch[1]) : '';
 
     var imgUrls = Array.from(
-      block.matchAll(/(?:href|src|data-original)="([^"]*bcbits\\.com\\/img\\/a\\d+_\\d+\\.jpg)"/gi)
+      block.matchAll(/(?:href|src|data-original)="([^"]*bcbits\\.com\\/img\\/(?:a\\d+|00\\d+)_\\d+\\.jpg)"/gi)
     ).map(function(m) { return m[1]; });
     for (var j = 0; j < imgUrls.length; j++) {
       addPhoto(imgUrls[j], sectionTitle);
@@ -307,9 +326,9 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
     (!isSetPrice && hasNypText && !hasFreeButton)
   );
 
-  // freeDownloadPage is ONLY a direct download link if the release is NOT email-walled and has a direct free download button
+  // freeDownloadPage is ONLY a direct download link if the release is NOT email-walled and has a direct free download button without email required
   var rawFreeDlPage = (tralbum && tralbum.freeDownloadPage) ? tralbum.freeDownloadPage : null;
-  var freeDlPage = (!isEmailWalled && hasFreeButton) ? rawFreeDlPage : null;
+  var freeDlPage = (!isEmailWalled && hasFreeButton && (!current || current.require_email_0 !== 1)) ? rawFreeDlPage : null;
   var requireEmail = isEmailWalled;
 
   var isFree = false;
@@ -324,11 +343,12 @@ function parseReleasePageData(subHtml, tralbum, item, origin, fallbackArtist, gl
     // Free download via email / Name Your Price email gate
     isNyp = true;
     isFree = true;
+    isPaid = false;
     badgeType = 'email';
   } else if (Boolean(freeDlPage)) {
     isFree = true;
     badgeType = 'free';
-  } else if (isSetPrice || (!hasFreeButton && (!current || current.require_email_0 !== 1) && minPrice > 0)) {
+  } else if (isSetPrice || (!hasFreeButton && !hasNypText && (!current || current.require_email_0 !== 1) && minPrice > 0)) {
     // Strictly paid-only: requires payment, no email or free download option
     isPaid = true;
     isFree = false;

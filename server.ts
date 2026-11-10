@@ -400,7 +400,15 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
     }
 
     // 0. If downloadPageUrl is provided directly (from Gmail watchdog or freeDownloadPage), resolve immediately!
-    const effectiveDownloadPageUrl = downloadPageUrl || cachedRelease?.freeDownloadPageUrl;
+    let effectiveDownloadPageUrl = downloadPageUrl || cachedRelease?.freeDownloadPageUrl;
+    const isEmailRelease = Boolean(
+      cachedRelease?.badgeType === 'email' ||
+      cachedRelease?.requiresEmail ||
+      cachedRelease?.isNameYourPrice
+    );
+    if (effectiveDownloadPageUrl && isEmailRelease && !effectiveDownloadPageUrl.includes('from=email') && !effectiveDownloadPageUrl.includes('payment_id=')) {
+      effectiveDownloadPageUrl = undefined;
+    }
 
     if (effectiveDownloadPageUrl) {
       const resolved = await resolveBandcampDownload(effectiveDownloadPageUrl, formatInfo.id);
