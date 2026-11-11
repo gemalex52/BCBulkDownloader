@@ -208,84 +208,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const html = await res.text();
 
-        const artistMatch = html.match(/id="band-name-location"[^>]*>[\\s\\S]*?class="title"[^>]*>([^<]+)/i) ||
-                            html.match(/property="og:site_name"[^>]*content="([^"]+)"/i) ||
-                            html.match(/<title>([^-|]+)/i);
-        const artistName = artistMatch ? cleanHtmlText(artistMatch[1]) : parsedUrl.hostname.split('.')[0];
-        const artistBioPicUrl = extractArtistBioPicUrl(html);
-
-        const itemsMap = new Map();
-
-        // 1. Single release detection: check if current page is an album or track release
-        const tralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(html) : null;
-        if (tralbum && tralbum.current) {
-          const isAlbum = tralbum.current.type === 'album' || parsedUrl.pathname.startsWith('/album/');
-          const releaseTitle = cleanHtmlText(tralbum.current.title) || 'Release';
-          const artUrl = tralbum.art_id ? ('https://f4.bcbits.com/img/a' + tralbum.art_id + '_10.jpg') : '';
-          const rawId = (tralbum.current.type || (isAlbum ? 'album' : 'track')) + '-' + tralbum.current.id;
-          itemsMap.set(parsedUrl.pathname || '/', {
-            id: rawId,
-            itemId: tralbum.current.id || 0,
-            url: targetUrl,
-            title: releaseTitle,
-            artUrl,
-            type: isAlbum ? 'album' : 'track'
-          });
-        }
-        const liMatches = Array.from(html.matchAll(/<li[^>]*data-item-id="([^"]*)"[^>]*>([\\s\\S]*?)<\\/li>/gi));
-        for (const m of liMatches) {
-          const rawId = m[1];
-          const content = m[2];
-          const hrefMatch = content.match(/href="([^"]+)"/);
-          if (!hrefMatch) continue;
-          const href = hrefMatch[1];
-          const isAlbum = href.startsWith('/album/');
-          const isTrack = href.startsWith('/track/');
-          if (!isAlbum && !isTrack) continue;
-          const fullUrl = href.startsWith('http') ? href : (origin + href);
-          const titleMatch = content.match(/<p class="title">\\s*([^<]+)/);
-          const artMatch = content.match(/<img[^>]*src="([^"]+)"/);
-          const artUrl = artMatch ? artMatch[1].replace(/_(\\d+)\\.jpg/, '_10.jpg') : '';
-          const numId = parseInt(rawId.replace(/\\D/g, '') || '0', 10);
-          itemsMap.set(href, {
-            id: rawId,
-            itemId: numId,
-            url: fullUrl,
-            title: titleMatch ? cleanHtmlText(titleMatch[1]) : 'Release',
-            artUrl,
-            type: isAlbum ? 'album' : 'track'
-          });
-        }
-
-        const clientMatch = html.match(/data-client-items="([^"]+)"/i);
-        if (clientMatch) {
-          try {
-            const raw = clientMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-            const clientItems = JSON.parse(raw);
-            for (const item of clientItems) {
-              if (!itemsMap.has(item.page_url)) {
-                const isAlbum = item.type === 'album' || item.page_url.startsWith('/album/');
-                const fullUrl = item.page_url.startsWith('http') ? item.page_url : (origin + item.page_url);
-                const artUrl = item.art_id ? ('https://f4.bcbits.com/img/a' + item.art_id + '_10.jpg') : '';
-                itemsMap.set(item.page_url, {
-                  id: (item.type || 'item') + '-' + item.id,
-                  itemId: item.id || 0,
-                  url: fullUrl,
-                  title: cleanHtmlText(item.title) || 'Release',
-                  artUrl,
-                  type: isAlbum ? 'album' : 'track'
-                });
-              }
-            }
-          } catch(e) {}
-        }
+        const catalog = typeof discoverCatalogItemsFromHtml === 'function'
+          ? discoverCatalogItemsFromHtml(html, targetUrl)
+          : { artistName: parsedUrl.hostname.split('.')[0], origin, items: [] };
 
         sendResponse({
           success: true,
-          artistName,
-          origin,
-          artistBioPicUrl,
-          items: Array.from(itemsMap.values())
+          ...catalog
         });
       } catch (err) {
         sendResponse({ success: false, error: err.message });
@@ -352,6 +281,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             artUrl: parsed.artUrl,
             artistBioPicUrl: parsed.artistBioPicUrl,
             extraImages: parsed.allImages,
+            extraPhotos: parsed.extraPhotos,
+            isPreorder: parsed.isPreorder,
             releaseDate: parsed.humanDate,
             isoDate: parsed.dotDate,
             isFree: parsed.isFree,
@@ -371,7 +302,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             creditsText: parsed.creditsText,
             infoText: parsed.infoText,
             tags: parsed.tagsMatches,
-            selected: parsed.badgeType !== 'paid',
+            selected: parsed.badgeType !== 'paid' && parsed.badgeType !== 'preorder',
           }
         });
       } catch (err) {
@@ -424,20 +355,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             artUrl: release?.artUrl,
             artistBioPicUrl: release?.artistBioPicUrl,
             extraImages: release?.extraImages,
+            extraPhotos: release?.extraPhotos,
             audioStreams: release?.audioStreams,
           });
         } else {
-          const isPaid = Boolean(release?.badgeType === 'paid' || release?.isPaid);
+          const isPreorder = Boolean(release?.badgeType === 'preorder' || release?.isPreorder);
+          const isPaid = isPreorder || Boolean(release?.badgeType === 'paid' || release?.isPaid);
           sendResponse({
             success: false,
             isPaid,
+            isPreorder,
             skipAudio: isPaid,
-            message: isPaid ? 'Paid release: audio skipped per policy. Packaging companion info ZIP.' : 'Direct download link not yet resolved from mailbox.',
+            message: isPreorder
+              ? 'Pre-order release: audio master is not yet available prior to official release date. Packaging companion info ZIP.'
+              : (isPaid ? 'Paid release: audio skipped per policy. Packaging companion info ZIP.' : 'Direct download link not yet resolved from mailbox.'),
             title: release?.title,
             artist: release?.artist,
             artUrl: release?.artUrl,
             artistBioPicUrl: release?.artistBioPicUrl,
             extraImages: release?.extraImages,
+            extraPhotos: release?.extraPhotos,
             infoText: release?.infoText,
             audioStreams: release?.audioStreams,
           });
@@ -675,44 +612,80 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const isBandcamp = window.location.hostname.endsWith('bandcamp.com');
     if (!isBandcamp) return { error: 'Not on a Bandcamp domain.' };
 
+    if (typeof discoverCatalogItemsFromHtml === 'function') {
+      try {
+        const result = discoverCatalogItemsFromHtml(document.documentElement.outerHTML, window.location.href);
+        return {
+          success: true,
+          ...result,
+          url: window.location.href
+        };
+      } catch (e) {}
+    }
+
     const artistName = document.querySelector('#band-name-location .title')?.textContent?.trim() ||
                        document.querySelector('meta[property="og:site_name"]')?.content ||
                        window.location.hostname.split('.')[0];
 
-    // Artist bio image (renamed to artist.jpg)
     const bioImg = document.querySelector('#bio-container .bio-pic img') ||
                    document.querySelector('.band-photo') ||
                    document.querySelector('img.photo');
-    const artistBioPicUrl = bioImg ? (bioImg.getAttribute('src') || '').replace(/_\\d+\\.jpg/, '_10.jpg') : '';
+    const artistBioPicUrl = bioImg ? (bioImg.getAttribute('src') || '').replace(/_\d+\.jpg/, '_10.jpg') : '';
 
     const itemsMap = new Map();
 
-    // 1. Initial rendered <li> items
-    const gridItems = document.querySelectorAll('ol#music-grid li[data-item-id]');
+    // 1. Initial rendered <li> items from music-grid (matches any li inside music-grid or music-grid-item)
+    const gridItems = document.querySelectorAll('#music-grid li, ol.music-grid li, li.music-grid-item, #featured-item');
     gridItems.forEach((li) => {
-      const link = li.querySelector('a[href^="/album/"], a[href^="/track/"]');
+      const link = li.querySelector('a[href*="/album/"], a[href*="/track/"]');
       if (!link) return;
 
-      const href = link.getAttribute('href');
-      const isAlbum = href.startsWith('/album/');
-      const isTrack = href.startsWith('/track/');
+      const rawHref = link.getAttribute('href');
+      if (!rawHref) return;
+
+      let pathname;
+      let fullHref;
+      try {
+        const u = new URL(rawHref, window.location.origin);
+        pathname = u.pathname;
+        fullHref = u.href;
+      } catch {
+        return;
+      }
+
+      const isAlbum = pathname.startsWith('/album/');
+      const isTrack = pathname.startsWith('/track/');
       if (!isAlbum && !isTrack) return;
 
+      const normKey = pathname.replace(/\/+$/, '').toLowerCase();
+      if (itemsMap.has(normKey)) return;
+
       const titleEl = li.querySelector('p.title') || li.querySelector('.title');
-      const title = titleEl ? titleEl.childNodes[0]?.textContent?.trim() || titleEl.textContent?.trim() : 'Untitled';
+      let title = 'Untitled';
+      let itemArtist = artistName;
+      if (titleEl) {
+        const artistSpan = titleEl.querySelector('.artist-override, .artist') || li.querySelector('.artist-override, .artist');
+        if (artistSpan && artistSpan.textContent.trim()) {
+          itemArtist = artistSpan.textContent.trim();
+        }
+        const clone = titleEl.cloneNode(true);
+        clone.querySelectorAll('.artist-override, .artist').forEach((el) => el.remove());
+        title = clone.textContent.trim().replace(/\s+/g, ' ');
+      }
 
       const img = li.querySelector('img');
-      const rawSrc = img ? (img.getAttribute('src') || img.getAttribute('data-original') || '') : '';
-      const artUrl = rawSrc ? rawSrc.replace(/_\\d+\\.jpg/, '_10.jpg') : '';
+      const rawSrc = img ? (img.getAttribute('data-original') || img.getAttribute('src') || '') : '';
+      const artUrl = rawSrc && !rawSrc.includes('blank.gif') ? rawSrc.replace(/_\d+\.jpg/, '_10.jpg') : '';
+      const rawId = li.getAttribute('data-item-id') || link.getAttribute('data-item-id') || (isAlbum ? 'album-' : 'track-') + normKey.replace(/^\/(?:album|track)\//, '');
 
-      itemsMap.set(href, {
-        id: li.getAttribute('data-item-id') || href,
-        itemId: li.getAttribute('data-item-id'),
-        href: window.location.origin + href,
-        pageUrl: href,
+      itemsMap.set(normKey, {
+        id: rawId,
+        itemId: parseInt(rawId.replace(/\D/g, '') || '0', 10),
+        href: fullHref,
+        pageUrl: pathname,
         title,
         artUrl,
-        artist: artistName,
+        artist: itemArtist,
         artistBioPicUrl,
         type: isAlbum ? 'album' : 'track'
       });
@@ -726,16 +699,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         try {
           const clientItems = JSON.parse(clientData);
           clientItems.forEach((item) => {
-            if (!itemsMap.has(item.page_url)) {
-              const isAlbum = item.type === 'album' || item.page_url.startsWith('/album/');
-              itemsMap.set(item.page_url, {
+            const pageUrl = item.page_url;
+            if (!pageUrl) return;
+            const pathname = pageUrl.split('?')[0];
+            const normKey = pathname.replace(/\/+$/, '').toLowerCase();
+            if (!itemsMap.has(normKey)) {
+              const isAlbum = item.type === 'album' || normKey.startsWith('/album/');
+              itemsMap.set(normKey, {
                 id: (item.type || 'item') + '-' + item.id,
-                itemId: item.id,
-                href: window.location.origin + item.page_url,
-                pageUrl: item.page_url,
+                itemId: item.id || 0,
+                href: window.location.origin + pathname,
+                pageUrl: pathname,
                 title: item.title,
                 artUrl: item.art_id ? ('https://f4.bcbits.com/img/a' + item.art_id + '_10.jpg') : '',
-                artist: artistName,
+                artist: item.band_name || item.artist_name || item.artist || artistName,
                 artistBioPicUrl,
                 type: isAlbum ? 'album' : 'track'
               });

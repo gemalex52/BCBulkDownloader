@@ -469,7 +469,7 @@ export default function App() {
     setReleases((prev) =>
       prev.map((r) => ({
         ...r,
-        selected: r.badgeType !== 'paid' && (r.isFree || r.isNameYourPrice || r.requiresEmail || r.isPurchased || r.badgeType === 'free' || r.badgeType === 'email' || r.badgeType === 'own'),
+        selected: r.badgeType !== 'paid' && r.badgeType !== 'preorder' && !r.isPreorder && (r.isFree || r.isNameYourPrice || r.requiresEmail || r.isPurchased || r.badgeType === 'free' || r.badgeType === 'email' || r.badgeType === 'own'),
       }))
     );
   };
@@ -524,12 +524,13 @@ export default function App() {
         };
       }
 
-      const isEmailEligible = Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
-      const isPaid = !isEmailEligible && !r.isPurchased && r.badgeType !== 'own' && Boolean(
+      const isPreorder = Boolean(r.isPreorder || r.badgeType === 'preorder');
+      const isEmailEligible = !isPreorder && Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
+      const isPaid = isPreorder || (!isEmailEligible && !r.isPurchased && r.badgeType !== 'own' && Boolean(
         r.badgeType === 'paid' ||
         (!r.freeDownloadPageUrl && !r.isFree && (r.minPrice || 0) > 0)
-      );
-      const isDirectFree = !isPaid && Boolean(r.freeDownloadPageUrl || r.isPurchased || r.badgeType === 'own' || (!isEmailEligible && (r.isFree || r.badgeType === 'free')));
+      ));
+      const isDirectFree = !isPaid && !isPreorder && Boolean(r.freeDownloadPageUrl || r.isPurchased || r.badgeType === 'own' || (!isEmailEligible && (r.isFree || r.badgeType === 'free')));
 
       return {
         id: r.id,
@@ -542,19 +543,20 @@ export default function App() {
         artistBioPicUrl: r.artistBioPicUrl,
         extraImages: r.extraImages,
         extraPhotos: r.extraPhotos,
-        downloadScope: r.downloadScope || 'both',
+        downloadScope: r.downloadScope || (isPreorder ? 'info' : 'both'),
         releaseDate: r.releaseDate,
         isoDate: r.isoDate,
         isFree: r.isFree,
         isNameYourPrice: r.isNameYourPrice,
         isPurchased: r.isPurchased,
         isPaid,
-        badgeType: r.badgeType || (isPaid ? 'paid' : (isDirectFree ? 'free' : 'email')),
+        isPreorder,
+        badgeType: r.badgeType || (isPreorder ? 'preorder' : (isPaid ? 'paid' : (isDirectFree ? 'free' : 'email'))),
         minPrice: r.minPrice,
         requiresEmail: r.requiresEmail,
         stage: 'pending',
         stageProgress: 0,
-        statusText: r.priceFormatted || 'Pending',
+        statusText: r.priceFormatted || (isPreorder ? 'Pre-order' : 'Pending'),
         audioDownloaded: false,
         infoZipDownloaded: false,
         freeDownloadPageUrl: r.freeDownloadPageUrl,
@@ -681,11 +683,18 @@ export default function App() {
           downloadPageUrl = undefined;
         }
 
-        const isPaidOnly = !isEmailEligible && !qItem.isPurchased && !rel.isPurchased && Boolean(
+        const isPreorder = Boolean(
+          qItem.isPreorder ||
+          rel.isPreorder ||
+          qItem.badgeType === 'preorder' ||
+          rel.badgeType === 'preorder'
+        );
+
+        const isPaidOnly = isPreorder || (!isEmailEligible && !qItem.isPurchased && !rel.isPurchased && Boolean(
           (qItem.badgeType === 'paid' || rel.badgeType === 'paid') ||
           (!downloadPageUrl && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0) && !qItem.isFree && !rel.isFree)
-        );
-        const isDirectFree = !isPaidOnly && Boolean(downloadPageUrl || qItem.isPurchased || rel.isPurchased || qItem.badgeType === 'own' || rel.badgeType === 'own' || (!isEmailEligible && (qItem.isFree || rel.isFree || qItem.badgeType === 'free' || rel.badgeType === 'free')));
+        ));
+        const isDirectFree = !isPaidOnly && !isPreorder && Boolean(downloadPageUrl || qItem.isPurchased || rel.isPurchased || qItem.badgeType === 'own' || rel.badgeType === 'own' || (!isEmailEligible && (qItem.isFree || rel.isFree || qItem.badgeType === 'free' || rel.badgeType === 'free')));
 
         const hasGasWatchdog = Boolean(settings.gasWebhookUrl && settings.gasWebhookUrl.trim());
 
@@ -723,7 +732,9 @@ export default function App() {
 
         // --- SECTION 1: Audio Resolution & Download ---
         if (shouldDownloadAudio) {
-          if (!isPaidOnly) {
+          if (isPreorder) {
+            logAndSync('downloading_audio', 'Pre-order release: audio master is not yet available prior to official release date. Packaging companion info ZIP.');
+          } else if (!isPaidOnly) {
             try {
               // Stage 1: Checking Mailbox via GAS watchdog if configured
               if (!downloadPageUrl && hasGasWatchdog) {
@@ -962,7 +973,12 @@ export default function App() {
         let finalStatusText = '';
 
         if (shouldDownloadAudio && shouldDownloadInfo) {
-          if (isPaidOnly) {
+          if (isPreorder) {
+            finalStage = infoSuccess ? 'completed' : 'failed';
+            finalStatusText = infoSuccess
+              ? 'Packaging complete (Pre-order - companion info ZIP created)'
+              : `Pre-order (Info ZIP failed: ${infoError || 'error'})`;
+          } else if (isPaidOnly) {
             finalStage = infoSuccess ? 'completed' : 'failed';
             finalStatusText = infoSuccess
               ? 'Packaging complete (Paid release - companion info ZIP created)'
@@ -981,7 +997,10 @@ export default function App() {
             finalStatusText = `Audio failed (${audioError || 'unknown'}) · Info failed (${infoError || 'unknown'})`;
           }
         } else if (shouldDownloadAudio && !shouldDownloadInfo) {
-          if (audioSuccess) {
+          if (isPreorder) {
+            finalStage = 'completed';
+            finalStatusText = 'Pre-order: Audio master unavailable until official release date.';
+          } else if (audioSuccess) {
             finalStage = 'completed';
             finalStatusText = 'Audio download completed (Audio only)!';
           } else {

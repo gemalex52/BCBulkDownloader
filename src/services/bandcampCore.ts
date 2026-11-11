@@ -43,7 +43,8 @@ export interface ParsedReleaseDetails {
   isNyp: boolean;
   isPurchased: boolean;
   isPaid: boolean;
-  badgeType: 'own' | 'free' | 'email' | 'paid';
+  isPreorder?: boolean;
+  badgeType: 'own' | 'free' | 'email' | 'paid' | 'preorder';
   minPrice: number;
   priceFormatted: string;
   requireEmail: boolean;
@@ -265,6 +266,8 @@ export function extractExtraPhotosWithTitles(
   artUrl?: string,
   artistBioPicUrl?: string
 ): { extraImages: string[]; extraPhotos: ExtraPhotoItem[] } {
+  if (!html) return { extraImages: [], extraPhotos: [] };
+
   const coverId = extractImageNumericId(artUrl);
   const bioId = extractImageNumericId(artistBioPicUrl);
 
@@ -272,29 +275,53 @@ export function extractExtraPhotosWithTitles(
   if (coverId) seenIds.add(coverId);
   if (bioId) seenIds.add(bioId);
 
-  // 0. Explicitly collect image IDs belonging to Full Discography sections to exclude them completely
   const excludedImageIds = new Set<string>();
-  const fullDiscoBlocks = Array.from(
-    html.matchAll(/<(?:li|div)[^>]*(?:id="buyFullDiscography"|class="[^"]*buyFullDiscography[^"]*")[^>]*>([\s\S]*?)<\/(?:li|div)>/gi)
-  );
-  for (const fdb of fullDiscoBlocks) {
-    const discoImgs = Array.from(fdb[0].matchAll(/bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg/gi)).map(m => m[0]);
-    for (const di of discoImgs) {
-      const id = extractImageNumericId(di);
-      if (id) excludedImageIds.add(id);
-    }
-  }
 
-  // Also check for any block with "Full Digital Discography" text
-  const anyBuyItemBlocks = Array.from(html.matchAll(/<li[^>]*class="[^"]*buyItem[^"]*"[^>]*>([\s\S]*?)<\/li>/gi));
-  for (const bib of anyBuyItemBlocks) {
-    if (/full\s+digital\s+discography/i.test(bib[0]) || /buyFullDiscography/i.test(bib[0])) {
-      const discoImgs = Array.from(bib[0].matchAll(/bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg/gi)).map(m => m[0]);
+  // 1. Completely exclude Full Discography sections (class "buyFullDiscography" or id "buyFullDiscography")
+  const fullDiscoRegexes = [
+    /<(?:li|div|section)[^>]*(?:id="buyFullDiscography"|class="[^"]*buyFullDiscography[^"]*")[^>]*>[\s\S]*?<\/(?:li|div|section)>/gi,
+    /<li[^>]*class="[^"]*buyItem[^"]*"[^>]*>[\s\S]*?(?:full\s+digital\s+discography|buyFullDiscography)[\s\S]*?<\/li>/gi,
+  ];
+
+  for (const re of fullDiscoRegexes) {
+    const matches = Array.from(html.matchAll(re));
+    for (const m of matches) {
+      const discoImgs = Array.from(m[0].matchAll(/bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg/gi)).map((x) => x[0]);
       for (const di of discoImgs) {
         const id = extractImageNumericId(di);
         if (id) excludedImageIds.add(id);
       }
     }
+  }
+
+  // 2. Completely exclude "Supported by" / Collectors / Fans sections
+  // Class IDs "collected-by collectors", "#collectors-token", ".collectors", etc.
+  const collectorsRegexes = [
+    /<(?:div|section)[^>]*(?:id="collectors-token"|class="[^"]*(?:collected-by|collectors|deper-fans|fans-wrapper|fans)[^"]*")[^>]*>[\s\S]*?<\/(?:div|section)>/gi,
+    /<div[^>]*id="fans"[^>]*>[\s\S]*?<\/div>/gi,
+    /<div[^>]*class="[^"]*collected-by[^"]*"[^>]*>[\s\S]*?<\/div>/gi,
+    /<div[^>]*class="[^"]*fan-avatar[^"]*"[^>]*>[\s\S]*?<\/div>/gi,
+    /<a[^>]*class="[^"]*fan\b[^"]*"[^>]*>[\s\S]*?<\/a>/gi,
+  ];
+
+  for (const re of collectorsRegexes) {
+    const matches = Array.from(html.matchAll(re));
+    for (const m of matches) {
+      const fanImgs = Array.from(m[0].matchAll(/bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg/gi)).map((x) => x[0]);
+      for (const fi of fanImgs) {
+        const id = extractImageNumericId(fi);
+        if (id) excludedImageIds.add(id);
+      }
+    }
+  }
+
+  // Create a clean sanitized version of html without full discography or collectors
+  let cleanHtml = html;
+  for (const re of fullDiscoRegexes) {
+    cleanHtml = cleanHtml.replace(re, '');
+  }
+  for (const re of collectorsRegexes) {
+    cleanHtml = cleanHtml.replace(re, '');
   }
 
   const extraPhotos: ExtraPhotoItem[] = [];
@@ -315,47 +342,74 @@ export function extractExtraPhotosWithTitles(
     });
   };
 
-  // 1. Packages / merch items with full <li> or <div> blocks
+  // Helper to accurately extract package title from buyItemPackageTitle primaryText
+  const extractPackageTitle = (block: string): string => {
+    // 1. Direct match on buyItemPackageTitle element (a, span, div, h3)
+    const buyItemPkgMatch = block.match(/<[a-z0-9]+[^>]*class="[^"]*buyItemPackageTitle[^"]*"[^>]*>([\s\S]*?)<\/[a-z0-9]+>/i);
+    if (buyItemPkgMatch) {
+      const t = cleanPhotoSectionTitle(buyItemPkgMatch[1]);
+      if (t) return t;
+    }
+    // 2. primaryText inside package
+    const primaryTextMatch = block.match(/<[a-z0-9]+[^>]*class="[^"]*primaryText[^"]*"[^>]*>([\s\S]*?)<\/[a-z0-9]+>/i);
+    if (primaryTextMatch) {
+      const t = cleanPhotoSectionTitle(primaryTextMatch[1]);
+      if (t && !/discography/i.test(t)) return t;
+    }
+    // 3. package-title or merch-item-title
+    const pkgTitleMatch = block.match(/<[a-z0-9]+[^>]*class="[^"]*(?:package-title|merch-item-title)[^"]*"[^>]*>([\s\S]*?)<\/[a-z0-9]+>/i);
+    if (pkgTitleMatch) {
+      const t = cleanPhotoSectionTitle(pkgTitleMatch[1]);
+      if (t) return t;
+    }
+    // 4. h3 or h4 heading in merch block
+    const hMatch = block.match(/<h[34][^>]*>([\s\S]*?)<\/h[34]>/i);
+    if (hMatch) {
+      const t = cleanPhotoSectionTitle(hMatch[1]);
+      if (t && !/discography/i.test(t)) return t;
+    }
+    // 5. popupImage title attribute
+    const popupMatch = block.match(/class="[^"]*popupImage[^"]*"[^>]*title="([^"]+)"/i) || block.match(/title="([^"]+)"[^>]*class="[^"]*popupImage[^"]*"/i);
+    if (popupMatch) {
+      const t = cleanPhotoSectionTitle(popupMatch[1]);
+      if (t) return t;
+    }
+    return '';
+  };
+
+  // 1. Scan merch & physical packages
   const packageMatches = Array.from(
-    html.matchAll(/<li[^>]*class="[^"]*(?:package|merch-item|buyItem)[^"]*"[^>]*>([\s\S]*?)<\/li>/gi)
+    cleanHtml.matchAll(/<li[^>]*class="[^"]*(?:package|merch-item|buyItem)[^"]*"[^>]*>([\s\S]*?)<\/li>/gi)
   ).concat(
-    Array.from(html.matchAll(/<div[^>]*class="[^"]*(?:package|merch-item)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi))
+    Array.from(cleanHtml.matchAll(/<div[^>]*class="[^"]*(?:package|merch-item|buyItemPackage)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi))
   );
 
   for (const p of packageMatches) {
     const fullTag = p[0];
     const block = p[1];
 
-    // Exclude full discography section as requested ("buyItem buyFullDiscography")
-    if (
-      /buyFullDiscography/i.test(fullTag) ||
-      /id="buyFullDiscography"/i.test(fullTag) ||
-      /full\s+digital\s+discography/i.test(block)
-    ) {
+    if (/buyFullDiscography|full\s+digital\s+discography/i.test(fullTag) || /buyFullDiscography|full\s+digital\s+discography/i.test(block)) {
+      continue;
+    }
+    if (/collected-by|collectors|fans/i.test(fullTag)) {
       continue;
     }
 
-    // Extract title from buyItemPackageTitle primaryText or package-title
-    const titleMatch =
-      block.match(/class="[^"]*buyItemPackageTitle[^"]*"[^>]*>([\s\S]*?)<\//i) ||
-      block.match(/class="[^"]*primaryText[^"]*"[^>]*>([\s\S]*?)<\//i) ||
-      block.match(/class="[^"]*(?:package-title|merch-item-title)[^"]*"[^>]*>([\s\S]*?)<\//i) ||
-      block.match(/<h[34][^>]*>([\s\S]*?)<\/h[34]>/i) ||
-      block.match(/class="popupImage"[^>]*title="([^"]+)"/i) ||
-      block.match(/<img[^>]*alt="([^"]+)"/i);
-    const sectionTitle = titleMatch ? cleanHtmlText(titleMatch[1]) : '';
+    const packageTitle = extractPackageTitle(block);
 
+    // Extract all image URLs in this package block
     const imgUrls = Array.from(
       block.matchAll(/(?:href|src|data-original)="([^"]*bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg)"/gi)
     ).map((m) => m[1]);
+
     for (const u of imgUrls) {
-      addPhoto(u, sectionTitle);
+      addPhoto(u, packageTitle);
     }
   }
 
-  // 2. popupImage anchors across the page
+  // 2. popupImage anchors across the cleaned page (excluding discography & fans)
   const popupAnchors = Array.from(
-    html.matchAll(/<a[^>]*class="[^"]*popupImage[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)
+    cleanHtml.matchAll(/<a[^>]*class="[^"]*popupImage[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)
   );
   for (const pa of popupAnchors) {
     const fullAnchor = pa[0];
@@ -366,8 +420,8 @@ export function extractExtraPhotosWithTitles(
     addPhoto(href, titleMatch ? titleMatch[1] : '');
   }
 
-  // 3. More thumbs list (alternate artwork)
-  const moreThumbsMatch = html.match(/<ul[^>]*class="[^"]*more-thumbs[^"]*"[^>]*>([\s\S]*?)<\/ul>/i);
+  // 3. More thumbs list (alternate packaging artwork)
+  const moreThumbsMatch = cleanHtml.match(/<ul[^>]*class="[^"]*more-thumbs[^"]*"[^>]*>([\s\S]*?)<\/ul>/i);
   if (moreThumbsMatch) {
     const thumbBlocks = Array.from(moreThumbsMatch[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi));
     for (const tb of thumbBlocks) {
@@ -376,16 +430,6 @@ export function extractExtraPhotosWithTitles(
       if (uMatch) {
         addPhoto(uMatch[1], tMatch ? tMatch[1] : '');
       }
-    }
-  }
-
-  // 4. Any remaining img tags with specific alt text (merch/photos)
-  const imgTags = Array.from(
-    html.matchAll(/<img[^>]*src="([^"]*bcbits\.com\/img\/(?:a\d+|00\d+)_\d+\.jpg)"[^>]*alt="([^"]+)"/gi)
-  );
-  for (const it of imgTags) {
-    if (!/discography/i.test(it[2])) {
-      addPhoto(it[1], it[2]);
     }
   }
 
@@ -438,14 +482,45 @@ export function parseReleasePageData(
   const freeDlPage = (!isEmailWalled && hasFreeButton && current?.require_email_0 !== 1) ? rawFreeDlPage : null;
   const requireEmail = isEmailWalled;
 
+  // Check for pre-order status
+  let isFutureDate = false;
+  if (current?.release_date) {
+    try {
+      const rd = new Date(current.release_date);
+      if (!isNaN(rd.getTime()) && rd.getTime() > Date.now()) {
+        isFutureDate = true;
+      }
+    } catch (e) {}
+  }
+
+  const isPreorder = Boolean(
+    current?.is_preorder ||
+    tralbum?.is_preorder ||
+    tralbum?.album_is_preorder ||
+    current?.preorder ||
+    /class="[^"]*pre-?order[^"]*"/i.test(subHtml) ||
+    /buyItem[^"]*pre-?order/i.test(subHtml) ||
+    /pre-?order\s+(?:digital|now|track|album)/i.test(subHtml) ||
+    /<button[^>]*class="[^"]*buy-link[^"]*"[^>]*>\s*pre-?order/i.test(subHtml) ||
+    /<span[^>]*class="[^"]*buyItemDigital[^"]*"[^>]*>[\s\S]*?pre-?order/i.test(subHtml) ||
+    /<h\d[^>]*class="[^"]*compound-button[^"]*"[^>]*>[\s\S]*?pre-?order/i.test(subHtml) ||
+    (isFutureDate && /pre-?order/i.test(subHtml))
+  );
+
   let isFree = false;
   let isNyp = false;
   let isPaid = false;
-  let badgeType: 'own' | 'free' | 'email' | 'paid' = 'free';
+  let badgeType: 'own' | 'free' | 'email' | 'paid' | 'preorder' = 'free';
 
   if (isPurchased) {
     isFree = true;
     badgeType = 'own';
+  } else if (isPreorder) {
+    // Pre-order release: audio master is not yet available prior to official release date
+    badgeType = 'preorder';
+    isPaid = true;
+    isFree = false;
+    isNyp = false;
   } else if (isEmailWalled) {
     // Free download via email / Name Your Price email gate
     isNyp = true;
@@ -483,6 +558,8 @@ export function parseReleasePageData(
   let priceFormatted = 'Paid';
   if (badgeType === 'own') {
     priceFormatted = 'Own';
+  } else if (badgeType === 'preorder') {
+    priceFormatted = minPrice > 0 ? `Pre-order (${curSymbol}${minPrice})` : 'Pre-order';
   } else if (badgeType === 'free') {
     priceFormatted = 'Free';
   } else if (badgeType === 'email') {
@@ -615,7 +692,13 @@ export function parseReleasePageData(
   if (fromAlbumTitle) {
     infoText += `From Album   : ${fromAlbumTitle}\n`;
   }
-  infoText += `Status       : ${priceFormatted}${isPaid ? ' (Paid release - Audio skipped unless purchased. Artwork, photos & info bundled)' : ''}\n`;
+  let statusDetail = priceFormatted;
+  if (badgeType === 'preorder') {
+    statusDetail += ' (Pre-order - Audio master is not yet available prior to official release date. Artwork, photos & info bundled)';
+  } else if (isPaid) {
+    statusDetail += ' (Paid release - Audio skipped unless purchased. Artwork, photos & info bundled)';
+  }
+  infoText += `Status       : ${statusDetail}\n`;
   infoText += `Bandcamp URL : ${item.url}\n`;
   infoText += `Artist Page  : ${origin}\n\n`;
 
@@ -659,6 +742,7 @@ export function parseReleasePageData(
     isNyp,
     isPurchased,
     isPaid,
+    isPreorder,
     badgeType,
     minPrice,
     priceFormatted,
@@ -1129,4 +1213,221 @@ export function getCompanionInfoZipName(audioFilename: string): string {
     return `${base} (info).zip`;
   }
   return `${audioFilename} (info).zip`;
+}
+
+export interface DiscoveredCatalogItem {
+  id: string;
+  itemId: number;
+  url: string;
+  title: string;
+  artUrl: string;
+  artist?: string;
+  type: 'album' | 'track';
+}
+
+export interface DiscoveredCatalogResult {
+  artistName: string;
+  origin: string;
+  artistBioPicUrl?: string;
+  items: DiscoveredCatalogItem[];
+}
+
+/**
+ * Universal Bandcamp Catalog Scanner
+ * Robustly parses Bandcamp artist & label discography pages:
+ * 1. Initial 16 static HTML <li> items inside ol#music-grid (regardless of whether data-item-id is on the li,
+ *    supporting relative or absolute URLs, label artist overrides, and lazy-loaded artwork).
+ * 2. Featured releases (e.g. #featured-item).
+ * 3. Additional items beyond the initial 16 from data-client-items JSON attribute.
+ * 4. Fallback link sweep if layout is unconventional.
+ */
+export function discoverCatalogItemsFromHtml(html: string, targetUrl: string): DiscoveredCatalogResult {
+  const parsedUrl = new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`);
+  const origin = parsedUrl.origin;
+
+  const artistName =
+    cleanHtmlText(html.match(/#band-name-location[^>]*class="title"[^>]*>([^<]+)/i)?.[1]) ||
+    cleanHtmlText(html.match(/<span[^>]*class="title"[^>]*>([^<]+)<\/span>/i)?.[1]) ||
+    cleanHtmlText(html.match(/property="og:site_name"[^>]*content="([^"]+)"/i)?.[1]) ||
+    cleanHtmlText(html.match(/<title>([^|<]+)/i)?.[1]) ||
+    parsedUrl.hostname.split('.')[0];
+
+  const artistBioPicUrl = extractArtistBioPicUrl(html);
+  const itemsMap = new Map<string, DiscoveredCatalogItem>();
+
+  const addItem = (
+    rawHref: string | undefined,
+    rawId: string | undefined,
+    rawTitle: string | undefined,
+    rawArtUrl: string | undefined,
+    itemArtist: string | undefined
+  ) => {
+    if (!rawHref) return;
+    let pathname = '';
+    let fullUrl = '';
+    try {
+      const u = new URL(rawHref, origin);
+      pathname = u.pathname;
+      fullUrl = u.href;
+    } catch {
+      return;
+    }
+
+    const isAlbum = pathname.startsWith('/album/');
+    const isTrack = pathname.startsWith('/track/');
+    if (!isAlbum && !isTrack) return;
+
+    // Deduplicate by clean pathname (lowercased without trailing slash)
+    const normKey = pathname.replace(/\/+$/, '').toLowerCase();
+    if (itemsMap.has(normKey)) return;
+
+    const id = rawId && rawId.trim()
+      ? rawId.trim()
+      : `${isAlbum ? 'album' : 'track'}-${normKey.replace(/^\/(?:album|track)\//, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+    const numId = parseInt(id.replace(/\D/g, '') || '0', 10);
+    const cleanTitle = cleanHtmlText(rawTitle) || 'Release';
+    const cleanArt = (rawArtUrl || '').replace(/_\d+\.jpg/, '_10.jpg');
+
+    itemsMap.set(normKey, {
+      id,
+      itemId: numId,
+      url: fullUrl,
+      title: cleanTitle,
+      artUrl: cleanArt,
+      artist: cleanHtmlText(itemArtist || artistName),
+      type: isAlbum ? 'album' : 'track',
+    });
+  };
+
+  // 1. Single release detection (when current page is an album or track)
+  const tralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(html) : null;
+  if (tralbum && tralbum.current) {
+    const isAlbum = tralbum.current.type === 'album' || parsedUrl.pathname.startsWith('/album/');
+    const releaseTitle = cleanHtmlText(tralbum.current.title) || 'Release';
+    const artUrl = tralbum.art_id ? `https://f4.bcbits.com/img/a${tralbum.art_id}_10.jpg` : '';
+    const rawId = `${tralbum.current.type || (isAlbum ? 'album' : 'track')}-${tralbum.current.id}`;
+    addItem(parsedUrl.pathname || '/', rawId, releaseTitle, artUrl, artistName);
+  }
+
+  // 2. Featured item on music page
+  const featuredMatch = html.match(/<(?:div|li)[^>]*id=["']featured-item["'][^>]*>([\s\S]*?)<\/(?:div|li)>/i) ||
+                        html.match(/<(?:div|li)[^>]*class=["'][^"']*featured-item[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|li)>/i);
+  if (featuredMatch) {
+    const fContent = featuredMatch[1];
+    const linkMatch = fContent.match(/href=["']([^"']*(?:\/album\/|\/track\/)[^"']*)["']/i);
+    if (linkMatch) {
+      const idMatch = featuredMatch[0].match(/data-item-id=["']([^"']+)["']/i) || fContent.match(/data-item-id=["']([^"']+)["']/i);
+      const titleMatch = fContent.match(/<[^>]*class=["'][^"']*title[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i);
+      const imgMatch = fContent.match(/<img[^>]*>/i);
+      const artMatch = imgMatch ? (imgMatch[0].match(/data-original=["']([^"']+)["']/i) || imgMatch[0].match(/src=["']([^"']+)["']/i)) : null;
+      addItem(linkMatch[1], idMatch?.[1], titleMatch?.[1], artMatch?.[1], artistName);
+    }
+  }
+
+  // 3. Grid items extraction from ol#music-grid or across HTML
+  const gridMatch = html.match(/<ol[^>]*id=["']music-grid["'][^>]*>([\s\S]*?)<\/ol>/i);
+  const searchHtml = gridMatch ? gridMatch[1] : html;
+
+  // Extract all <li> blocks from the grid container and any li.music-grid-item
+  const liMatches = [
+    ...Array.from(searchHtml.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)),
+    ...(gridMatch ? [] : Array.from(html.matchAll(/<li[^>]*class=["'][^"']*music-grid-item[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi))),
+  ];
+
+  for (const m of liMatches) {
+    const fullLiTag = m[0];
+    const content = m[1];
+
+    // Find the release link (matches /album/ or /track/ in relative or absolute URL)
+    const linkMatch = content.match(/href=["']([^"']*(?:\/album\/|\/track\/)[^"']*)["']/i);
+    if (!linkMatch) continue;
+
+    const rawHref = linkMatch[1];
+    const idMatch = fullLiTag.match(/data-item-id=["']([^"']+)["']/i) || content.match(/data-item-id=["']([^"']+)["']/i);
+    const rawId = idMatch ? idMatch[1] : undefined;
+
+    // Extract Title & Artist (supporting label pages where band name is in artist-override or artist span)
+    const titleElMatch = content.match(/<p[^>]*class=["'][^"']*title[^"']*["'][^>]*>([\s\S]*?)<\/p>/i) ||
+                         content.match(/<[^>]*class=["'][^"']*title[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i);
+    let titleStr = '';
+    let itemArtistStr = '';
+    if (titleElMatch) {
+      const fullTitleHtml = titleElMatch[1];
+      const artistSubMatch = fullTitleHtml.match(/<span[^>]*class=["'](?:artist-override|artist)["'][^>]*>([^<]+)<\/span>/i) ||
+                             content.match(/<span[^>]*class=["'](?:artist-override|artist)["'][^>]*>([^<]+)<\/span>/i);
+      if (artistSubMatch) {
+        itemArtistStr = artistSubMatch[1].trim();
+      }
+      titleStr = fullTitleHtml
+        .replace(/<span[^>]*class=["'](?:artist-override|artist)["'][^>]*>[\s\S]*?<\/span>/gi, '')
+        .replace(/<br\s*\/?>/gi, ' ')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+    }
+
+    if (!titleStr) {
+      const imgAltMatch = content.match(/<img[^>]*alt=["']([^"']+)["']/i);
+      if (imgAltMatch && imgAltMatch[1].trim()) {
+        titleStr = imgAltMatch[1].trim();
+      }
+    }
+
+    // Extract Artwork URL: check data-original first (lazy load), then src (skip blank.gif)
+    const imgMatch = content.match(/<img[^>]*>/i);
+    let artUrlStr = '';
+    if (imgMatch) {
+      const tag = imgMatch[0];
+      const origMatch = tag.match(/data-original=["']([^"']+)["']/i);
+      const srcMatch = tag.match(/src=["']([^"']+)["']/i);
+      const chosen = (origMatch && origMatch[1]) || (srcMatch && !srcMatch[1].includes('blank.gif') && srcMatch[1]) || '';
+      artUrlStr = chosen.replace(/_\d+\.jpg/, '_10.jpg');
+    }
+
+    addItem(rawHref, rawId, titleStr, artUrlStr, itemArtistStr);
+  }
+
+  // 4. Remaining items from data-client-items attribute on ol#music-grid
+  const clientMatch = html.match(/data-client-items=["']([\s\S]*?)["'](?=[\s>]|data-)/i) ||
+                      html.match(/data-client-items="([^"]+)"/i);
+  if (clientMatch) {
+    try {
+      const raw = clientMatch[1]
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&#39;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>');
+      const clientItems: any[] = JSON.parse(raw);
+      if (Array.isArray(clientItems)) {
+        for (const item of clientItems) {
+          if (!item.page_url) continue;
+          const artUrl = item.art_id ? `https://f4.bcbits.com/img/a${item.art_id}_10.jpg` : '';
+          const rawId = `${item.type || 'album'}-${item.id}`;
+          const itemArtist = item.band_name || item.artist_name || item.artist || artistName;
+          addItem(item.page_url, rawId, item.title, artUrl, itemArtist);
+        }
+      }
+    } catch (e) {
+      debugLog('scanner', 'Failed parsing data-client-items:', e);
+    }
+  }
+
+  // 5. Ultimate Fallback: If 0 items were found, sweep all release links on the page
+  if (itemsMap.size === 0) {
+    const allLinks = Array.from(html.matchAll(/<a[^>]*href=["']([^"']*(?:\/album\/|\/track\/)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi));
+    for (const lMatch of allLinks) {
+      const rawHref = lMatch[1];
+      const linkBody = lMatch[2];
+      const textTitle = cleanHtmlText(linkBody.replace(/<[^>]+>/g, ''));
+      addItem(rawHref, undefined, textTitle || 'Release', undefined, artistName);
+    }
+  }
+
+  return {
+    artistName,
+    origin,
+    artistBioPicUrl,
+    items: Array.from(itemsMap.values()),
+  };
 }

@@ -45,6 +45,17 @@ export function getReleaseBadgeInfo(r: ScannedRelease) {
     };
   }
 
+  if (r.badgeType === 'preorder' || r.isPreorder) {
+    const cur = r.currency === 'EUR' ? '€' : (r.currency === 'USD' ? '$' : (r.currency === 'GBP' ? '£' : r.currency || '€'));
+    const label = r.minPrice > 0 ? `Pre-order (${cur}${r.minPrice})` : (r.priceFormatted || 'Pre-order');
+    return {
+      type: 'preorder' as const,
+      label,
+      badgeClass: 'bg-violet-950/90 text-violet-300 border-violet-500/40',
+      textClass: 'text-violet-400 font-semibold',
+    };
+  }
+
   // Strictly paid releases must never be converted to email
   if (r.badgeType === 'paid' || r.isPaid) {
     const cur = r.currency === 'EUR' ? '€' : (r.currency === 'USD' ? '$' : (r.currency === 'GBP' ? '£' : r.currency || '€'));
@@ -105,7 +116,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   onResetReleaseState,
   onToggleGroupSelect,
 }) => {
-  const [filterType, setFilterType] = useState<'all' | 'free' | 'email' | 'paid' | 'own'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'free' | 'email' | 'paid' | 'preorder' | 'own'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [expandedTracklists, setExpandedTracklists] = useState<Record<string, boolean>>({});
@@ -132,12 +143,14 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
     if (filterType === 'free') return badge.type === 'free';
     if (filterType === 'email') return badge.type === 'email';
     if (filterType === 'paid') return badge.type === 'paid';
+    if (filterType === 'preorder') return badge.type === 'preorder';
     if (filterType === 'own') return badge.type === 'own';
     return true;
   });
 
   const totalCount = releases.length;
   const ownCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'own').length;
+  const preorderCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'preorder').length;
   const freeCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'free').length;
   const emailCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'email').length;
   const paidCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'paid').length;
@@ -449,6 +462,18 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
             >
               Paid ({paidCount})
             </button>
+            {preorderCount > 0 && (
+              <button
+                onClick={() => setFilterType('preorder')}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  filterType === 'preorder'
+                    ? 'bg-violet-950/70 border border-violet-500/50 text-violet-300 font-semibold'
+                    : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Pre-order ({preorderCount})
+              </button>
+            )}
             {ownCount > 0 && (
               <button
                 onClick={() => setFilterType('own')}

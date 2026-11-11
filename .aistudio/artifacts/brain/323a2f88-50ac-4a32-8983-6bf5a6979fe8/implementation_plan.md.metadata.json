@@ -1,6 +1,0 @@
-{
-  "summary":  "Revised implementation plan incorporating multi-site namespaced local storage sessions, rate-limiting delays with random jitter and configurable cool-down pauses, and track lyrics (.lrc) bundled inside companion info ZIP archives.",
-  "updatedAt":  "2026-10-30T18:27:20.211239735Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

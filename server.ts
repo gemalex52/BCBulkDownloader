@@ -17,6 +17,7 @@ import {
   extractArtistBioPicUrl,
   parseReleasePageData,
   resolveBandcampDownload,
+  discoverCatalogItemsFromHtml,
 } from './src/services/bandcampCore';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -59,12 +60,10 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
     url: string;
     title: string;
     artUrl: string;
+    artist?: string;
     type: 'album' | 'track';
   }[];
 }> {
-  const parsedUrl = new URL(targetUrl);
-  const origin = parsedUrl.origin;
-
   let catalogRes = await fetch(targetUrl, {
     headers: BANDCAMP_FETCH_HEADERS,
   });
@@ -72,7 +71,8 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
   // Fallback to origin root if /music returns 404 (e.g. single-release artists or custom layouts)
   if (!catalogRes.ok && targetUrl.endsWith('/music')) {
     try {
-      const rootRes = await fetch(origin, { headers: BANDCAMP_FETCH_HEADERS });
+      const parsed = new URL(targetUrl);
+      const rootRes = await fetch(parsed.origin, { headers: BANDCAMP_FETCH_HEADERS });
       if (rootRes.ok) {
         catalogRes = rootRes;
       }
@@ -84,109 +84,7 @@ async function discoverAllCatalogItems(targetUrl: string): Promise<{
   }
 
   const html = await catalogRes.text();
-
-  const artistName =
-    cleanHtmlText(html.match(/#band-name-location[^>]*class="title"[^>]*>([^<]+)/i)?.[1]) ||
-    cleanHtmlText(html.match(/<span[^>]*class="title"[^>]*>([^<]+)<\/span>/i)?.[1]) ||
-    cleanHtmlText(html.match(/property="og:site_name"[^>]*content="([^"]+)"/i)?.[1]) ||
-    cleanHtmlText(html.match(/<title>([^|<]+)/i)?.[1]) ||
-    parsedUrl.hostname.split('.')[0];
-
-  const itemsMap = new Map<string, {
-    id: string;
-    itemId: number;
-    url: string;
-    title: string;
-    artUrl: string;
-    type: 'album' | 'track';
-  }>();
-
-  // 1. Initial rendered <li> items
-  const liMatches = Array.from(html.matchAll(/<li[^>]*data-item-id="([^"]*)"[^>]*>([\s\S]*?)<\/li>/gi));
-  for (const m of liMatches) {
-    const rawId = m[1];
-    const content = m[2];
-    const hrefMatch = content.match(/href="([^"]+)"/);
-    if (!hrefMatch) continue;
-
-    const href = hrefMatch[1];
-    const isAlbum = href.startsWith('/album/');
-    const isTrack = href.startsWith('/track/');
-    if (!isAlbum && !isTrack) continue;
-
-    const fullUrl = href.startsWith('http') ? href : `${origin}${href}`;
-    const titleMatch = content.match(/<p class="title">\s*([^<]+)/);
-    const artMatch = content.match(/<img[^>]*src="([^"]+)"/);
-
-    const artUrl = artMatch ? artMatch[1].replace(/_(\d+)\.jpg/, '_10.jpg') : '';
-    const numId = parseInt(rawId.replace(/\D/g, '') || '0', 10);
-
-    itemsMap.set(href, {
-      id: rawId,
-      itemId: numId,
-      url: fullUrl,
-      title: titleMatch ? cleanHtmlText(titleMatch[1]) : 'Release',
-      artUrl,
-      type: isAlbum ? 'album' : 'track',
-    });
-  }
-
-  // 2. Extract remaining items from data-client-items attribute on ol#music-grid
-  const clientMatch = html.match(/data-client-items="([^"]+)"/i);
-  if (clientMatch) {
-    try {
-      const raw = clientMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-      const clientItems: any[] = JSON.parse(raw);
-      for (const item of clientItems) {
-        if (!itemsMap.has(item.page_url)) {
-          const isAlbum = item.type === 'album' || item.page_url.startsWith('/album/');
-          const fullUrl = item.page_url.startsWith('http') ? item.page_url : `${origin}${item.page_url}`;
-          const artUrl = item.art_id ? `https://f4.bcbits.com/img/a${item.art_id}_10.jpg` : '';
-          const rawId = `${item.type || 'item'}-${item.id}`;
-
-          itemsMap.set(item.page_url, {
-            id: rawId,
-            itemId: item.id || 0,
-            url: fullUrl,
-            title: cleanHtmlText(item.title) || 'Release',
-            artUrl,
-            type: isAlbum ? 'album' : 'track',
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('Failed parsing data-client-items:', e);
-    }
-  }
-
-  // 3. Single-release detection: if requested page is a track or album, or if discography grid has no items
-  const isTrackOrAlbumPage = parsedUrl.pathname.startsWith('/track/') || parsedUrl.pathname.startsWith('/album/');
-  if (isTrackOrAlbumPage || itemsMap.size === 0) {
-    const tralbum = extractBandcampTralbum(html);
-    if (tralbum && tralbum.current) {
-      const isAlbum = tralbum.current.type === 'album' || parsedUrl.pathname.startsWith('/album/');
-      const releaseTitle = cleanHtmlText(tralbum.current.title) || 'Release';
-      const artUrl = tralbum.art_id ? `https://f4.bcbits.com/img/a${tralbum.art_id}_10.jpg` : '';
-      const rawId = `${tralbum.current.type || (isAlbum ? 'album' : 'track')}-${tralbum.current.id}`;
-      itemsMap.set(parsedUrl.pathname || '/', {
-        id: rawId,
-        itemId: tralbum.current.id || 0,
-        url: targetUrl,
-        title: releaseTitle,
-        artUrl,
-        type: isAlbum ? 'album' : 'track',
-      });
-    }
-  }
-
-  const artistBioPicUrl = extractArtistBioPicUrl(html);
-
-  return {
-    artistName,
-    origin,
-    artistBioPicUrl,
-    items: Array.from(itemsMap.values()),
-  };
+  return discoverCatalogItemsFromHtml(html, targetUrl);
 }
 
 // Inspect a single release subpage using shared core parser for artwork, full metadata, info text, and pricing
@@ -224,6 +122,8 @@ async function inspectReleaseSubpage(
       artUrl: parsed.artUrl,
       artistBioPicUrl: parsed.artistBioPicUrl,
       extraImages: parsed.allImages,
+      extraPhotos: parsed.extraPhotos,
+      isPreorder: parsed.isPreorder,
       releaseDate: parsed.humanDate,
       isoDate: parsed.dotDate,
       isFree: parsed.isFree,
@@ -243,7 +143,7 @@ async function inspectReleaseSubpage(
       creditsText: parsed.creditsText,
       infoText: parsed.infoText,
       tags: parsed.tagsMatches,
-      selected: parsed.badgeType !== 'paid',
+      selected: parsed.badgeType !== 'paid' && parsed.badgeType !== 'preorder',
     };
   } catch (e: any) {
     console.warn(`Error inspecting subpage ${item.url}:`, e.message);
@@ -428,6 +328,7 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
           artUrl: cachedRelease?.artUrl,
           artistBioPicUrl: cachedRelease?.artistBioPicUrl,
           extraImages: cachedRelease?.extraImages || [],
+          extraPhotos: cachedRelease?.extraPhotos || [],
           audioStreams: cachedRelease?.audioStreams || [],
         });
       } else {
