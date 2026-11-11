@@ -767,48 +767,84 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
   });
 
-  // Non-intrusive floating button on Bandcamp pages to open Dedicated Scanner Tab directly
+  // Resilient floating button on Bandcamp pages to open Dedicated Scanner Tab directly
   function injectPageButton() {
-    if (document.getElementById('bc-bulk-open-tab-btn')) return;
-    const targetParent = document.body || document.documentElement;
-    if (!targetParent) {
-      setTimeout(injectPageButton, 200);
+    if (window.top !== window.self) return;
+    if (document.getElementById('bc-bulk-open-tab-host')) return;
+
+    const rootTarget = document.documentElement;
+    if (!rootTarget) {
+      setTimeout(injectPageButton, 100);
       return;
     }
 
-    const btn = document.createElement('button');
-    btn.id = 'bc-bulk-open-tab-btn';
-    btn.textContent = '⚡ Downloader';
-    btn.title = 'Open Bandcamp Bulk Downloader Dashboard for this catalog';
-    btn.style.cssText = [
-      'position: fixed !important',
-      'bottom: 22px !important',
-      'right: 22px !important',
-      'z-index: 2147483647 !important',
-      'background: #00b4d8 !important',
-      'color: #0b0f17 !important',
-      'font-weight: 700 !important',
-      'font-size: 13px !important',
-      'line-height: 1 !important',
-      'padding: 8px 14px !important',
-      'border: 2px solid #ffffff !important',
-      'border-radius: 20px !important',
-      'cursor: pointer !important',
-      'box-shadow: 0 4px 14px rgba(0,0,0,0.55) !important',
-      'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important',
-      'transition: transform 0.15s ease, bottom 0.2s ease !important',
-      'display: inline-flex !important',
-      'align-items: center !important',
-      'gap: 4px !important',
-      'visibility: visible !important',
-      'opacity: 1 !important',
-      'pointer-events: auto !important'
-    ].join(';');
+    const host = document.createElement('div');
+    host.id = 'bc-bulk-open-tab-host';
+    host.style.cssText = 'all: initial !important; position: fixed !important; bottom: 24px !important; right: 24px !important; z-index: 2147483647 !important; pointer-events: auto !important; display: block !important;';
 
-    btn.onmouseenter = function() { btn.style.transform = 'scale(1.06)'; };
-    btn.onmouseleave = function() { btn.style.transform = 'scale(1)'; };
-    btn.onclick = function(e) {
+    const shadow = host.attachShadow({ mode: 'open' });
+
+    const style = document.createElement('style');
+    style.textContent = \`
+      :host {
+        all: initial !important;
+        position: fixed !important;
+        bottom: 24px !important;
+        right: 24px !important;
+        z-index: 2147483647 !important;
+        display: block !important;
+      }
+      .bc-dl-btn {
+        all: unset !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        background: linear-gradient(135deg, #00b4d8 0%, #0096c7 100%) !important;
+        color: #0b0f17 !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+        font-size: 13px !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.3px !important;
+        line-height: 1 !important;
+        padding: 9px 15px !important;
+        border-radius: 9999px !important;
+        border: 2px solid #ffffff !important;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6), 0 0 10px rgba(0, 180, 216, 0.4) !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s ease !important;
+      }
+      .bc-dl-btn:hover {
+        transform: scale(1.07) translateY(-1px) !important;
+        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.7), 0 0 16px rgba(0, 180, 216, 0.6) !important;
+      }
+      .bc-dl-btn:active {
+        transform: scale(0.97) !important;
+      }
+      .bc-icon-svg {
+        width: 18px !important;
+        height: 18px !important;
+        flex-shrink: 0 !important;
+      }
+    \`;
+
+    const btn = document.createElement('button');
+    btn.className = 'bc-dl-btn';
+    btn.setAttribute('type', 'button');
+    btn.setAttribute('title', 'Open Bandcamp Bulk Downloader Dashboard for this artist');
+    btn.innerHTML = \`
+      <svg class="bc-icon-svg" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="128" height="128" rx="26" fill="#0b0f17"/>
+        <path d="M26 86 L50 26 H86 L62 86 Z" fill="#00b4d8"/>
+        <path d="M68 38 V64 H56 L76 90 L96 64 H84 V38 Z" fill="#ffffff"/>
+        <rect x="56" y="96" width="40" height="6" rx="3" fill="#38bdf8"/>
+      </svg>
+      <span>Downloader</span>
+    \`;
+
+    btn.addEventListener('click', (e) => {
       e.preventDefault();
+      e.stopPropagation();
       try {
         chrome.runtime.sendMessage({
           action: 'OPEN_DASHBOARD_TAB',
@@ -816,60 +852,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           autostart: false
         });
       } catch (err) {
-        console.warn('Failed to open dashboard tab via runtime message:', err);
+        console.warn('[BandcampDL] Failed to open dashboard tab:', err);
       }
-    };
+    });
 
-    function updateButtonPosition() {
-      let clearanceBottom = 22;
-      const winW = window.innerWidth;
-      const winH = window.innerHeight;
-
-      // Check common cast or floating controls by selectors
-      const candidateSelectors = [
-        'cast-button',
-        '.cast-button',
-        '#cast-button',
-        '.google-cast-launcher',
-        '[is="google-cast-button"]',
-        '.cast-icon',
-        '.cast-banner',
-        '.inline_player',
-        '#inline_player',
-        '.bandcamp-player',
-        '.music-player-fixed',
-        '#carousel-player',
-        '.feedback-floater',
-        '.back-to-top'
-      ];
-
-      for (const sel of candidateSelectors) {
-        try {
-          const els = document.querySelectorAll(sel);
-          for (const el of els) {
-            if (el === btn) continue;
-            const style = window.getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
-            const rect = el.getBoundingClientRect();
-            if (rect.width > 10 && rect.height > 10 && rect.right > winW - 160 && rect.bottom > winH - 140 && rect.top < winH) {
-              const needed = (winH - rect.top) + 14;
-              if (needed > clearanceBottom && needed < winH * 0.6) {
-                clearanceBottom = needed;
-              }
-            }
-          }
-        } catch (e) {}
-      }
-
-      btn.style.setProperty('bottom', Math.min(Math.max(22, Math.round(clearanceBottom)), 250) + 'px', 'important');
-    }
-
-    targetParent.appendChild(btn);
-
-    updateButtonPosition();
-    setTimeout(updateButtonPosition, 400);
-    setTimeout(updateButtonPosition, 1500);
-    window.addEventListener('resize', updateButtonPosition);
+    shadow.appendChild(style);
+    shadow.appendChild(btn);
+    rootTarget.appendChild(host);
+    console.log('[BandcampDL] Floating button mounted successfully on', window.location.hostname);
   }
 
   if (document.readyState === 'loading') {
@@ -878,9 +868,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     injectPageButton();
   }
   window.addEventListener('load', injectPageButton);
-  setTimeout(injectPageButton, 400);
+  setTimeout(injectPageButton, 300);
   setTimeout(injectPageButton, 1200);
   setTimeout(injectPageButton, 3000);
+
+  // Re-inject if page dynamically updates or navigates via SPA
+  try {
+    const observer = new MutationObserver(() => {
+      if (!document.getElementById('bc-bulk-open-tab-host')) {
+        injectPageButton();
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: false });
+  } catch(e) {}
 })();
 `
   },

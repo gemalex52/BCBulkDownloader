@@ -153,14 +153,15 @@ export default function App() {
   };
 
   // Helper to load cached catalog from localStorage or chrome.storage.local
-  const loadFromLocalCache = (targetUrl: string): boolean => {
+  const loadFromLocalCache = async (targetUrl: string): Promise<boolean> => {
     try {
       const hName = getDomainHostname(targetUrl);
       const sess = syncSessionFromStorage(hName);
 
       const cacheKey = `bc_cache_v8_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
-      let cached: any = null;
-      if (typeof localStorage !== 'undefined') {
+      let cached: any = await storage.get<any>(cacheKey);
+
+      if (!cached && typeof localStorage !== 'undefined') {
         const cachedRaw = localStorage.getItem(cacheKey);
         if (cachedRaw) {
           try { cached = JSON.parse(cachedRaw); } catch (e) {}
@@ -190,28 +191,6 @@ export default function App() {
           setCurrentSession(newSess);
         }
         return true;
-      } else if (isExtension) {
-        storage.get<any>(cacheKey).then((asyncCached) => {
-          if (asyncCached?.releases && Array.isArray(asyncCached.releases) && asyncCached.releases.length > 0) {
-            const currentS = loadSiteSession(hName);
-            const enriched = asyncCached.releases.map((r: ScannedRelease) => {
-              const q = currentS?.items?.[r.id];
-              return {
-                ...r,
-                audioDownloaded: Boolean(r.audioDownloaded || q?.audioDownloaded),
-                infoZipDownloaded: Boolean(r.infoZipDownloaded || q?.infoZipDownloaded),
-              };
-            });
-            setReleases(enriched);
-            setScanMeta({
-              source: 'local_cache',
-              timestamp: new Date(asyncCached.scannedAt).toLocaleTimeString(),
-            });
-            setScanProgressText(
-              `Loaded ${enriched.length} releases from cache (${enriched.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
-            );
-          }
-        });
       }
     } catch (e) {
       console.warn('Failed to read from cache:', e);
@@ -245,7 +224,7 @@ export default function App() {
   // Scan Bandcamp Discography
   const runScan = async (targetUrl: string = url, forceRefresh: boolean = false) => {
     if (!forceRefresh) {
-      const hasCached = loadFromLocalCache(targetUrl);
+      const hasCached = await loadFromLocalCache(targetUrl);
       if (hasCached) {
         return;
       }
@@ -444,14 +423,18 @@ export default function App() {
     }
   };
 
-  // Initial load
+  // Initial load: await local/extension cache before triggering network crawl
   useEffect(() => {
+    let cancelled = false;
     const target = initialUrlRef.current;
-    const cached = loadFromLocalCache(target);
-    if (!cached) {
-      runScan(target, false);
-    }
+    (async () => {
+      const cached = await loadFromLocalCache(target);
+      if (!cached && !cancelled) {
+        await runScan(target, false);
+      }
+    })();
     return () => {
+      cancelled = true;
       if (activeEventSourceRef.current) {
         activeEventSourceRef.current.close();
       }

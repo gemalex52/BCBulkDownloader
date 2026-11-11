@@ -252,6 +252,16 @@ var BandcampCore = (() => {
       });
     };
     const extractPackageTitle = (block) => {
+      const mId = block.match(/<([a-z0-9]+)[^>]*id=["']package-title(?:-[^"']*)?["'][^>]*>([\s\S]*?)<\/\1>/i);
+      if (mId) {
+        const t = cleanPhotoSectionTitle(mId[2]);
+        if (t && !/discography/i.test(t)) return t;
+      }
+      const mIdLoose = block.match(/id=["']package-title(?:-[^"']*)?["'][^>]*>([^<]+)/i);
+      if (mIdLoose) {
+        const t = cleanPhotoSectionTitle(mIdLoose[1]);
+        if (t && !/discography/i.test(t)) return t;
+      }
       const m1 = block.match(/<([a-z0-9]+)[^>]*class=["'][^"']*buyItemPackageTitle[^"']*["'][^>]*>([\s\S]*?)<\/\1>/i);
       if (m1) {
         const t = cleanPhotoSectionTitle(m1[2]);
@@ -347,23 +357,26 @@ var BandcampCore = (() => {
     );
     const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
     const isSetPrice = Boolean(current?.is_set_price);
-    const hasFreeButton = /free\s+download/i.test(subHtml);
+    const hasFreeButton = /free\s+download/i.test(subHtml) || minPrice === 0 && current?.download_pref === 1;
     const hasNypText = /name\s+your\s+price/i.test(subHtml) || /buyItemNyp/i.test(subHtml) || minPrice === 0 && current?.download_pref === 2;
-    const requireEmailFlag = Boolean(current?.require_email === 1 || current?.require_email_0 === 1 || current?.require_email && !isSetPrice);
-    const isNypEligible = !isSetPrice && (hasNypText || hasFreeButton || current?.require_email_0 === 1);
+    const isZeroEligible = minPrice === 0 || Boolean(current?.require_email_0 === 1) || hasFreeButton;
     const isEmailWalled = Boolean(
-      requireEmailFlag || current?.require_email_0 === 1 || !isSetPrice && hasNypText && !hasFreeButton
+      current?.require_email_0 === 1 || isZeroEligible && (current?.require_email === 1 || current?.download_pref === 2 || hasNypText) && !hasFreeButton
     );
+    const isNypEligible = isZeroEligible && (hasNypText || current?.require_email_0 === 1);
     const rawFreeDlPage = tralbum?.freeDownloadPage || null;
     const freeDlPage = !isEmailWalled && hasFreeButton && current?.require_email_0 !== 1 ? rawFreeDlPage : null;
     const requireEmail = isEmailWalled;
     let isFutureDate = false;
     let hasValidReleaseDate = false;
+    let preorderShortDate = "";
     if (current?.release_date) {
       try {
         const rd = new Date(current.release_date);
         if (!isNaN(rd.getTime())) {
           hasValidReleaseDate = true;
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          preorderShortDate = `${monthNames[rd.getMonth()]}, ${rd.getDate()}`;
           if (rd.getTime() > Date.now()) {
             isFutureDate = true;
           }
@@ -407,7 +420,7 @@ var BandcampCore = (() => {
     } else if (Boolean(freeDlPage)) {
       isFree = true;
       badgeType = "free";
-    } else if (isSetPrice || !hasFreeButton && !hasNypText && current?.require_email_0 !== 1 && minPrice > 0) {
+    } else if (minPrice > 0 && !isZeroEligible) {
       isPaid = true;
       isFree = false;
       isNyp = false;
@@ -431,7 +444,8 @@ var BandcampCore = (() => {
     if (badgeType === "own") {
       priceFormatted = "Own";
     } else if (badgeType === "preorder") {
-      priceFormatted = minPrice > 0 ? `Pre-order (${curSymbol}${minPrice})` : "Pre-order";
+      const pricePart = minPrice > 0 ? `(${curSymbol}${minPrice})` : "";
+      priceFormatted = ["Pre-order", pricePart, preorderShortDate].filter(Boolean).join(" ");
     } else if (badgeType === "free") {
       priceFormatted = "Free";
     } else if (badgeType === "email") {
@@ -547,8 +561,22 @@ ${divider}
 
 `;
     if (trackListFormatted.length > 0) {
+      const totalSec = audioStreams.reduce((acc, s) => acc + (s.duration || 0), 0);
+      let totalDurationFormatted = "";
+      if (totalSec > 0) {
+        const hours = Math.floor(totalSec / 3600);
+        const minutes = Math.floor(totalSec % 3600 / 60);
+        const seconds = Math.floor(totalSec % 60);
+        if (hours > 0) {
+          totalDurationFormatted = `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+        } else {
+          totalDurationFormatted = `${minutes}:${String(seconds).padStart(2, "0")}`;
+        }
+      }
+      const countStr = `${trackListFormatted.length} Track${trackListFormatted.length > 1 ? "s" : ""}`;
+      const headerDetails = totalDurationFormatted ? `${countStr}, ${totalDurationFormatted}` : countStr;
       infoText += `${divider}
-TRACKLIST (${trackListFormatted.length} Track${trackListFormatted.length > 1 ? "s" : ""})
+TRACKLIST (${headerDetails})
 ${divider}
 ${trackListFormatted.join("\n")}
 

@@ -344,8 +344,20 @@ export function extractExtraPhotosWithTitles(
     });
   };
 
-  // Helper to accurately extract package title from buyItemPackageTitle primaryText
+  // Helper to accurately extract package title from buyItemPackageTitle primaryText or span[id^="package-title"]
   const extractPackageTitle = (block: string): string => {
+    // 0. Highest priority: element with id starting with "package-title" (e.g. <span id="package-title-1464408137">Compact Disc</span>)
+    const mId = block.match(/<([a-z0-9]+)[^>]*id=["']package-title(?:-[^"']*)?["'][^>]*>([\s\S]*?)<\/\1>/i);
+    if (mId) {
+      const t = cleanPhotoSectionTitle(mId[2]);
+      if (t && !/discography/i.test(t)) return t;
+    }
+    const mIdLoose = block.match(/id=["']package-title(?:-[^"']*)?["'][^>]*>([^<]+)/i);
+    if (mIdLoose) {
+      const t = cleanPhotoSectionTitle(mIdLoose[1]);
+      if (t && !/discography/i.test(t)) return t;
+    }
+
     // 1. Direct match on buyItemPackageTitle element with matching closing tag
     const m1 = block.match(/<([a-z0-9]+)[^>]*class=["'][^"']*buyItemPackageTitle[^"']*["'][^>]*>([\s\S]*?)<\/\1>/i);
     if (m1) {
@@ -485,17 +497,21 @@ export function parseReleasePageData(
 
   const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
   const isSetPrice = Boolean(current?.is_set_price);
-  const hasFreeButton = /free\s+download/i.test(subHtml);
+  const hasFreeButton = /free\s+download/i.test(subHtml) || (minPrice === 0 && current?.download_pref === 1);
   const hasNypText = /name\s+your\s+price/i.test(subHtml) || /buyItemNyp/i.test(subHtml) || (minPrice === 0 && current?.download_pref === 2);
-  const requireEmailFlag = Boolean(current?.require_email === 1 || current?.require_email_0 === 1 || (current?.require_email && !isSetPrice));
-  const isNypEligible = !isSetPrice && (hasNypText || hasFreeButton || current?.require_email_0 === 1);
 
-  // If Name Your Price is present without a direct "free download" button, Bandcamp requires an email address for $0 checkout
+  // A release can ONLY be an email download if $0 checkout is allowed:
+  // 1. Explicit require_email_0 flag (Bandcamp's specific property for email required for $0 download)
+  // 2. OR minPrice is 0 and email is required (current.require_email === 1 || download_pref === 2 || (hasNypText && !hasFreeButton))
+  // 3. BUT if minPrice > 0 and no require_email_0 and not hasFreeButton, it is strictly PAID!
+  const isZeroEligible = (minPrice === 0) || Boolean(current?.require_email_0 === 1) || hasFreeButton;
+
   const isEmailWalled = Boolean(
-    requireEmailFlag ||
     current?.require_email_0 === 1 ||
-    (!isSetPrice && hasNypText && !hasFreeButton)
+    (isZeroEligible && (current?.require_email === 1 || current?.download_pref === 2 || hasNypText) && !hasFreeButton)
   );
+
+  const isNypEligible = isZeroEligible && (hasNypText || current?.require_email_0 === 1);
 
   // freeDownloadPage is ONLY a direct download link if the release is NOT email-walled and has a direct free download button without email required
   const rawFreeDlPage = tralbum?.freeDownloadPage || null;
@@ -505,11 +521,14 @@ export function parseReleasePageData(
   // Check for pre-order status
   let isFutureDate = false;
   let hasValidReleaseDate = false;
+  let preorderShortDate = '';
   if (current?.release_date) {
     try {
       const rd = new Date(current.release_date);
       if (!isNaN(rd.getTime())) {
         hasValidReleaseDate = true;
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        preorderShortDate = `${monthNames[rd.getMonth()]}, ${rd.getDate()}`;
         if (rd.getTime() > Date.now()) {
           isFutureDate = true;
         }
@@ -570,7 +589,7 @@ export function parseReleasePageData(
   } else if (Boolean(freeDlPage)) {
     isFree = true;
     badgeType = 'free';
-  } else if (isSetPrice || (!hasFreeButton && !hasNypText && current?.require_email_0 !== 1 && minPrice > 0)) {
+  } else if (minPrice > 0 && !isZeroEligible) {
     // Strictly paid-only: requires payment, no email or free download option
     isPaid = true;
     isFree = false;
@@ -599,7 +618,8 @@ export function parseReleasePageData(
   if (badgeType === 'own') {
     priceFormatted = 'Own';
   } else if (badgeType === 'preorder') {
-    priceFormatted = minPrice > 0 ? `Pre-order (${curSymbol}${minPrice})` : 'Pre-order';
+    const pricePart = minPrice > 0 ? `(${curSymbol}${minPrice})` : '';
+    priceFormatted = ['Pre-order', pricePart, preorderShortDate].filter(Boolean).join(' ');
   } else if (badgeType === 'free') {
     priceFormatted = 'Free';
   } else if (badgeType === 'email') {
@@ -743,7 +763,22 @@ export function parseReleasePageData(
   infoText += `Artist Page  : ${origin}\n\n`;
 
   if (trackListFormatted.length > 0) {
-    infoText += `${divider}\nTRACKLIST (${trackListFormatted.length} Track${trackListFormatted.length > 1 ? 's' : ''})\n${divider}\n${trackListFormatted.join('\n')}\n\n`;
+    // Calculate total album running time
+    const totalSec = audioStreams.reduce((acc, s) => acc + (s.duration || 0), 0);
+    let totalDurationFormatted = '';
+    if (totalSec > 0) {
+      const hours = Math.floor(totalSec / 3600);
+      const minutes = Math.floor((totalSec % 3600) / 60);
+      const seconds = Math.floor(totalSec % 60);
+      if (hours > 0) {
+        totalDurationFormatted = `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      } else {
+        totalDurationFormatted = `${minutes}:${String(seconds).padStart(2, '0')}`;
+      }
+    }
+    const countStr = `${trackListFormatted.length} Track${trackListFormatted.length > 1 ? 's' : ''}`;
+    const headerDetails = totalDurationFormatted ? `${countStr}, ${totalDurationFormatted}` : countStr;
+    infoText += `${divider}\nTRACKLIST (${headerDetails})\n${divider}\n${trackListFormatted.join('\n')}\n\n`;
   }
 
   if (aboutText) {

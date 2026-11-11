@@ -47,10 +47,25 @@ export function getReleaseBadgeInfo(r: ScannedRelease) {
 
   if (r.badgeType === 'preorder' || r.isPreorder) {
     const cur = r.currency === 'EUR' ? '€' : (r.currency === 'USD' ? '$' : (r.currency === 'GBP' ? '£' : r.currency || '€'));
-    const label = r.minPrice > 0 ? `Pre-order (${cur}${r.minPrice})` : (r.priceFormatted || 'Pre-order');
+    let shortDate = '';
+    if (r.releaseDate) {
+      try {
+        const d = new Date(r.releaseDate.replace(/\./g, '-'));
+        if (!isNaN(d.getTime())) {
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          shortDate = `${monthNames[d.getMonth()]}, ${d.getDate()}`;
+        }
+      } catch (e) {}
+    }
+    const pricePart = r.minPrice > 0 ? `(${cur}${r.minPrice})` : '';
+    const label = [
+      'Pre-order',
+      pricePart,
+      shortDate
+    ].filter(Boolean).join(' ');
     return {
       type: 'preorder' as const,
-      label,
+      label: label || r.priceFormatted || 'Pre-order',
       badgeClass: 'bg-violet-950/90 text-violet-300 border-violet-500/40',
       textClass: 'text-violet-400 font-semibold',
     };

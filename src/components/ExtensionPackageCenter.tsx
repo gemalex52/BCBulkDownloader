@@ -23,22 +23,32 @@ export const ExtensionPackageCenter: React.FC<ExtensionPackageCenterProps> = ({
       {/* Top Banner Card */}
       <div className="bg-[#111827] border border-slate-800 rounded-xl p-6 sm:p-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded text-[11px] font-semibold bg-cyan-950 text-cyan-300 border border-cyan-800/80">
-                Manifest V3 Compliant
-              </span>
-              <span className="text-xs text-slate-400">
-                Chrome · Edge · Brave · Opera
-              </span>
+          <div className="flex items-start gap-4">
+            <div className="shrink-0 w-16 h-16 rounded-2xl bg-[#0b0f17] border border-slate-700/80 p-2.5 shadow-xl flex items-center justify-center">
+              <svg className="w-full h-full" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="128" height="128" rx="26" fill="#0b0f17"/>
+                <path d="M26 86 L50 26 H86 L62 86 Z" fill="#00b4d8"/>
+                <path d="M68 38 V64 H56 L76 90 L96 64 H84 V38 Z" fill="#ffffff"/>
+                <rect x="56" y="96" width="40" height="6" rx="3" fill="#38bdf8"/>
+              </svg>
             </div>
-            <h2 className="text-2xl font-bold text-white tracking-tight">
-              Bandcamp Bulk Downloader Extension
-            </h2>
-            <p className="text-sm text-slate-300 max-w-xl leading-relaxed">
-              Runs directly in your browser with host permissions, bypassing datacenter bot challenges,
-              fetching catalog metadata without CORS limits, and managing downloads through the browser download engine.
-            </p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded text-[11px] font-semibold bg-cyan-950 text-cyan-300 border border-cyan-800/80">
+                  Manifest V3 Compliant
+                </span>
+                <span className="text-xs text-slate-400">
+                  Chrome · Edge · Brave · Opera
+                </span>
+              </div>
+              <h2 className="text-2xl font-bold text-white tracking-tight">
+                Bandcamp Bulk Downloader Extension
+              </h2>
+              <p className="text-sm text-slate-300 max-w-xl leading-relaxed">
+                Runs directly in your browser with host permissions, bypassing datacenter bot challenges,
+                fetching catalog metadata without CORS limits, and managing downloads through the browser download engine.
+              </p>
+            </div>
           </div>
 
           <div className="shrink-0">

@@ -137,7 +137,7 @@ export function createPng(
   return png;
 }
 
-// 2x2 Bandcamp parallelogram icons on dark rounded square background
+// Polished clean Bandcamp bulk download icon (Cyan parallelogram + sharp white download arrow + sonic tray)
 export function renderBandcamp2x2(
   x: number,
   y: number,
@@ -148,7 +148,7 @@ export function renderBandcamp2x2(
   const ny = y / h;
 
   // Background: dark slate #0b0f17 with rounded corners
-  const rBg = 0.16;
+  const rBg = 0.20;
   const inCorner =
     (nx < rBg && ny < rBg && Math.hypot(nx - rBg, ny - rBg) > rBg) ||
     (nx > 1 - rBg && ny < rBg && Math.hypot(nx - (1 - rBg), ny - rBg) > rBg) ||
@@ -156,43 +156,31 @@ export function renderBandcamp2x2(
     (nx > 1 - rBg && ny > 1 - rBg && Math.hypot(nx - (1 - rBg), ny - (1 - rBg)) > rBg);
   if (inCorner) return [0, 0, 0, 0];
 
-  function inParallelogram(
-    px: number,
-    py: number,
-    x0: number,
-    y0: number,
-    x1: number,
-    y1: number,
-    slant: number
-  ): boolean {
-    if (py < y0 || py > y1) return false;
-    const progress = (py - y0) / (y1 - y0);
-    const left = x0 + progress * slant;
-    const right = x1 + progress * slant;
-    return px >= left && px <= right;
+  // 1. Crisp white download arrow
+  // Arrow stem
+  if (nx >= 0.53 && nx <= 0.65 && ny >= 0.30 && ny <= 0.52) {
+    return [255, 255, 255, 255];
+  }
+  // Arrow head
+  if (ny > 0.50 && ny <= 0.72 && Math.abs(nx - 0.59) <= (0.72 - ny) * 0.78) {
+    return [255, 255, 255, 255];
+  }
+  // Sonic tray bar at base
+  if (nx >= 0.44 && nx <= 0.74 && ny >= 0.76 && ny <= 0.83) {
+    return [56, 189, 248, 255]; // #38bdf8
   }
 
-  // Row 1 (Top)
-  // Col 1: Cyan #00b4d8
-  if (inParallelogram(nx, ny, 0.18, 0.14, 0.44, 0.44, -0.09)) {
-    return [0, 180, 216, 255];
-  }
-  // Col 2: Sky Blue #38bdf8
-  if (inParallelogram(nx, ny, 0.58, 0.14, 0.84, 0.44, -0.09)) {
-    return [56, 189, 248, 255];
-  }
-
-  // Row 2 (Bottom)
-  // Col 1: Sky Blue #38bdf8
-  if (inParallelogram(nx, ny, 0.18, 0.56, 0.44, 0.86, -0.09)) {
-    return [56, 189, 248, 255];
-  }
-  // Col 2: Emerald Green #10b981
-  if (inParallelogram(nx, ny, 0.58, 0.56, 0.84, 0.86, -0.09)) {
-    return [16, 185, 129, 255];
+  // 2. Bandcamp slanted parallelogram in electric cyan
+  if (ny >= 0.22 && ny <= 0.70) {
+    const progress = (ny - 0.22) / (0.70 - 0.22);
+    const left = 0.40 - progress * 0.20;
+    const right = 0.72 - progress * 0.20;
+    if (nx >= left && nx <= right) {
+      return [0, 180, 216, 255]; // #00b4d8
+    }
   }
 
-  return [11, 15, 23, 255]; // #0b0f17
+  return [11, 15, 23, 255]; // #0b0f17 base
 }
 
 export function getExtensionIconBuffers(): {
@@ -206,16 +194,23 @@ export function getExtensionIconBuffers(): {
   const icon128 = createPng(128, 128, renderBandcamp2x2);
 
   const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <rect width="128" height="128" rx="24" fill="#0b0f17"/>
-  <!-- 2x2 Bandcamp Bulk Download Logos -->
-  <!-- Top Left (Cyan) -->
-  <path d="M23 56 L34 18 H56 L45 56 Z" fill="#00b4d8"/>
-  <!-- Top Right (Sky Blue) -->
-  <path d="M74 56 L85 18 H107 L96 56 Z" fill="#38bdf8"/>
-  <!-- Bottom Left (Sky Blue) -->
-  <path d="M23 110 L34 72 H56 L45 110 Z" fill="#38bdf8"/>
-  <!-- Bottom Right (Emerald Green) -->
-  <path d="M74 110 L85 72 H107 L96 110 Z" fill="#10b981"/>
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#00b4d8" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="2"/>
+  <!-- Polished Bandcamp Slanted Plate -->
+  <path d="M26 86 L50 26 H86 L62 86 Z" fill="url(#cyanGrad)"/>
+  <!-- Crisp Center Down-Arrow Overlay with Drop Shadow -->
+  <path d="M68 38 V64 H56 L76 90 L96 64 H84 V38 Z" fill="#ffffff" filter="drop-shadow(0 2px 5px rgba(0,0,0,0.45))"/>
+  <!-- Base Sonic Tray -->
+  <rect x="56" y="96" width="40" height="6" rx="3" fill="#38bdf8"/>
 </svg>`;
 
   return { icon16, icon48, icon128, iconSvg };
