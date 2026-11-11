@@ -66,7 +66,10 @@ export const EXTENSION_FILES: ExtensionFileItem[] = [
   },
   "content_scripts": [
     {
-      "matches": ["https://*.bandcamp.com/*"],
+      "matches": [
+        "*://*.bandcamp.com/*",
+        "*://bandcamp.com/*"
+      ],
       "js": ["core.js", "content.js"],
       "run_at": "document_idle"
     }
@@ -634,6 +637,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     const itemsMap = new Map();
 
+    const isDirectRelease = window.location.pathname.startsWith('/album/') || window.location.pathname.startsWith('/track/');
+    if (isDirectRelease) {
+      const pageTitle = document.querySelector('#name-section .trackTitle, .trackTitle, h2.trackTitle')?.textContent?.trim() || document.title;
+      const coverImg = document.querySelector('#tralbumArt img, .tralbumArt img');
+      const coverUrl = coverImg ? (coverImg.getAttribute('src') || '').replace(/_\d+\.jpg/, '_10.jpg') : '';
+      const isAlbum = window.location.pathname.startsWith('/album/');
+      const normKey = window.location.pathname.replace(/\/+$/, '').toLowerCase();
+      itemsMap.set(normKey, {
+        id: (isAlbum ? 'album-' : 'track-') + normKey.replace(/^\/(?:album|track)\//, ''),
+        itemId: 0,
+        href: window.location.href,
+        pageUrl: window.location.pathname,
+        title: pageTitle,
+        artUrl: coverUrl,
+        artist: artistName,
+        artistBioPicUrl,
+        type: isAlbum ? 'album' : 'track'
+      });
+      return {
+        success: true,
+        artist: artistName,
+        artistBioPicUrl,
+        url: window.location.href,
+        items: Array.from(itemsMap.values())
+      };
+    }
+
     // 1. Initial rendered <li> items from music-grid (matches any li inside music-grid or music-grid-item)
     const gridItems = document.querySelectorAll('#music-grid li, ol.music-grid li, li.music-grid-item, #featured-item');
     gridItems.forEach((li) => {
@@ -740,20 +770,54 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Non-intrusive floating button on Bandcamp pages to open Dedicated Scanner Tab directly
   function injectPageButton() {
     if (document.getElementById('bc-bulk-open-tab-btn')) return;
+    const targetParent = document.body || document.documentElement;
+    if (!targetParent) {
+      setTimeout(injectPageButton, 200);
+      return;
+    }
+
     const btn = document.createElement('button');
     btn.id = 'bc-bulk-open-tab-btn';
     btn.textContent = '⚡ Downloader';
     btn.title = 'Open Bandcamp Bulk Downloader Dashboard for this catalog';
-    btn.style.cssText = 'position:fixed;bottom:22px;right:22px;z-index:999999;background:#00b4d8;color:#0b0f17;font-weight:700;font-size:12px;padding:7px 13px;border:none;border-radius:20px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.45);font-family:sans-serif;transition:transform 0.15s,bottom 0.2s,box-shadow 0.15s;';
-    btn.onmouseenter = function() { btn.style.transform = 'scale(1.05)'; };
+    btn.style.cssText = [
+      'position: fixed !important',
+      'bottom: 22px !important',
+      'right: 22px !important',
+      'z-index: 2147483647 !important',
+      'background: #00b4d8 !important',
+      'color: #0b0f17 !important',
+      'font-weight: 700 !important',
+      'font-size: 13px !important',
+      'line-height: 1 !important',
+      'padding: 8px 14px !important',
+      'border: 2px solid #ffffff !important',
+      'border-radius: 20px !important',
+      'cursor: pointer !important',
+      'box-shadow: 0 4px 14px rgba(0,0,0,0.55) !important',
+      'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important',
+      'transition: transform 0.15s ease, bottom 0.2s ease !important',
+      'display: inline-flex !important',
+      'align-items: center !important',
+      'gap: 4px !important',
+      'visibility: visible !important',
+      'opacity: 1 !important',
+      'pointer-events: auto !important'
+    ].join(';');
+
+    btn.onmouseenter = function() { btn.style.transform = 'scale(1.06)'; };
     btn.onmouseleave = function() { btn.style.transform = 'scale(1)'; };
     btn.onclick = function(e) {
       e.preventDefault();
-      chrome.runtime.sendMessage({
-        action: 'OPEN_DASHBOARD_TAB',
-        url: window.location.href,
-        autostart: false
-      });
+      try {
+        chrome.runtime.sendMessage({
+          action: 'OPEN_DASHBOARD_TAB',
+          url: window.location.href,
+          autostart: false
+        });
+      } catch (err) {
+        console.warn('Failed to open dashboard tab via runtime message:', err);
+      }
     };
 
     function updateButtonPosition() {
@@ -787,49 +851,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const style = window.getComputedStyle(el);
             if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
             const rect = el.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0 && rect.right > winW - 160 && rect.bottom > winH - 180) {
-              const needed = (winH - rect.top) + 12;
-              if (needed > clearanceBottom) clearanceBottom = needed;
+            if (rect.width > 10 && rect.height > 10 && rect.right > winW - 160 && rect.bottom > winH - 140 && rect.top < winH) {
+              const needed = (winH - rect.top) + 14;
+              if (needed > clearanceBottom && needed < winH * 0.6) {
+                clearanceBottom = needed;
+              }
             }
           }
         } catch (e) {}
       }
 
-      // Also scan any fixed/sticky elements in the bottom-right corner
-      try {
-        const fixedElements = Array.from(document.querySelectorAll('body *')).filter(function(el) {
-          if (el === btn || el.id === 'bc-bulk-open-tab-btn' || el.contains(btn)) return false;
-          const s = window.getComputedStyle(el);
-          return (s.position === 'fixed' || s.position === 'sticky') &&
-                 s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
-        });
-
-        for (const el of fixedElements) {
-          const rect = el.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0 && rect.right > winW - 140 && rect.bottom > winH - 140) {
-            const needed = (winH - rect.top) + 12;
-            if (needed > clearanceBottom && needed < winH * 0.75) {
-              clearanceBottom = needed;
-            }
-          }
-        }
-      } catch (e) {}
-
-      btn.style.bottom = Math.min(Math.max(22, Math.round(clearanceBottom)), 300) + 'px';
+      btn.style.setProperty('bottom', Math.min(Math.max(22, Math.round(clearanceBottom)), 250) + 'px', 'important');
     }
 
-    document.body.appendChild(btn);
+    targetParent.appendChild(btn);
 
     updateButtonPosition();
-    setTimeout(updateButtonPosition, 600);
-    setTimeout(updateButtonPosition, 2000);
+    setTimeout(updateButtonPosition, 400);
+    setTimeout(updateButtonPosition, 1500);
     window.addEventListener('resize', updateButtonPosition);
-    try {
-      const observer = new MutationObserver(function() {
-        updateButtonPosition();
-      });
-      observer.observe(document.body, { childList: true, subtree: false });
-    } catch(e) {}
   }
 
   if (document.readyState === 'loading') {
@@ -837,6 +877,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else {
     injectPageButton();
   }
+  window.addEventListener('load', injectPageButton);
+  setTimeout(injectPageButton, 400);
+  setTimeout(injectPageButton, 1200);
+  setTimeout(injectPageButton, 3000);
 })();
 `
   },

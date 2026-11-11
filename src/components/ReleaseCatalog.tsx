@@ -494,8 +494,31 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
         </div>
       </div>
 
+      {releases.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-20 px-4 bg-[#111827] border border-slate-800 rounded-xl text-center">
+          <div className="w-14 h-14 rounded-2xl bg-cyan-950/60 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mb-4 animate-pulse">
+            <Music className="w-7 h-7" />
+          </div>
+          <h3 className="text-base font-semibold text-slate-200 mb-1">
+            Bandcamp Catalog
+          </h3>
+          <p className="text-xs text-slate-400 max-w-md mb-2">
+            Enter any Bandcamp artist or album URL above and click &quot;Scan Catalog&quot; to discover lossless studio masters, high-res artwork, liner notes, and packaging.
+          </p>
+          <span className="text-[11px] text-cyan-400 font-mono">
+            Pro Tip: In Chrome, click &quot;⚡ Downloader&quot; on any Bandcamp page to batch download immediately.
+          </span>
+        </div>
+      )}
+
+      {releases.length > 0 && filteredReleases.length === 0 && (
+        <div className="py-12 px-4 bg-[#111827] border border-slate-800 rounded-xl text-center text-xs text-slate-400">
+          No releases match the current filter ({filterType}) or search query &quot;{searchQuery}&quot;.
+        </div>
+      )}
+
       {/* Grid View */}
-      {viewMode === 'grid' && (
+      {viewMode === 'grid' && releases.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {filteredReleases.map((release) => {
             const isExpanded = !!expandedTracklists[release.id];

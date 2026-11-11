@@ -20,6 +20,7 @@ await esbuild.build({
 if (typeof self !== 'undefined') { Object.assign(self, BandcampCore); }
 if (typeof window !== 'undefined') { Object.assign(window, BandcampCore); }
 if (typeof globalThis !== 'undefined') { Object.assign(globalThis, BandcampCore); }
+if (typeof module !== 'undefined' && module.exports) { Object.assign(module.exports, BandcampCore); }
 `,
   },
   outfile: path.join(distDir, 'core.js'),

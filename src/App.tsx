@@ -158,7 +158,7 @@ export default function App() {
       const hName = getDomainHostname(targetUrl);
       const sess = syncSessionFromStorage(hName);
 
-      const cacheKey = `bc_cache_v7_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
+      const cacheKey = `bc_cache_v8_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
       let cached: any = null;
       if (typeof localStorage !== 'undefined') {
         const cachedRaw = localStorage.getItem(cacheKey);
@@ -222,7 +222,7 @@ export default function App() {
   // Helper to save catalog to storage
   const saveToLocalCache = (targetUrl: string, artist: string, items: ScannedRelease[]) => {
     try {
-      const cacheKey = `bc_cache_v7_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
+      const cacheKey = `bc_cache_v8_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
       const cacheObj = {
         scannedAt: new Date().toISOString(),
         artist,

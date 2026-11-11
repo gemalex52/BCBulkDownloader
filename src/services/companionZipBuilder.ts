@@ -148,7 +148,7 @@ export async function buildCompanionInfoZip(options: CompanionZipOptions): Promi
           }
 
           let baseName = candidate.title ? cleanPhotoSectionTitle(candidate.title) : '';
-          if (!baseName) {
+          if (!baseName || /^package(\s+image)?$/i.test(baseName) || /^photo(\s+\d+)?$/i.test(baseName)) {
             baseName = `photo_${i + 1}`;
           }
 
@@ -157,6 +157,7 @@ export async function buildCompanionInfoZip(options: CompanionZipOptions): Promi
           usedFilenames.set(lowerKey, count);
 
           const finalPhotoName = count > 1 ? `${baseName} (${count}).jpg` : `${baseName}.jpg`;
+          console.log(`[companionZipBuilder] Packaging photo ${i + 1}/${photoCandidates.length}: "${finalPhotoName}" (source title: "${candidate.title || ''}")`);
           zip.file(`photos/${finalPhotoName}`, pBuf);
           filesCount++;
         }

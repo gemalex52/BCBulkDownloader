@@ -36,6 +36,31 @@ interface CachedCatalog {
   releases: ScannedRelease[];
 }
 const serverCatalogCache = new Map<string, CachedCatalog>();
+const CATALOG_CACHE_FILE = path.join(process.cwd(), 'data-catalog-cache.json');
+
+try {
+  if (fs.existsSync(CATALOG_CACHE_FILE)) {
+    const rawCache = JSON.parse(fs.readFileSync(CATALOG_CACHE_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(rawCache)) {
+      serverCatalogCache.set(k, v as CachedCatalog);
+    }
+    console.log(`Loaded ${serverCatalogCache.size} catalogs from disk cache.`);
+  }
+} catch (e) {
+  console.warn('Error loading catalog cache from disk:', e);
+}
+
+function saveServerCatalogCache() {
+  try {
+    const obj: Record<string, CachedCatalog> = {};
+    for (const [k, v] of serverCatalogCache.entries()) {
+      obj[k] = v;
+    }
+    fs.writeFileSync(CATALOG_CACHE_FILE, JSON.stringify(obj, null, 2));
+  } catch (e) {
+    console.warn('Error saving catalog cache to disk:', e);
+  }
+}
 
 // Audio formats supported by Bandcamp
 export const SUPPORTED_FORMATS = [
@@ -231,13 +256,37 @@ app.get(['/api/bandcamp/scan', '/api/bandcamp/scan-batch'], async (req: Request,
 // SSE progressive stream endpoint for instant dynamic UI population
 app.get('/api/bandcamp/scan-stream', async (req: Request, res: Response) => {
   const targetUrl = (req.query.url as string) || 'https://esoctrilihum.bandcamp.com/music';
+  const forceRefresh = req.query.forceRefresh === 'true';
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
+  // If cached and not forcing refresh, stream cached releases immediately (0ms wait)
+  const cached = serverCatalogCache.get(targetUrl);
+  if (!forceRefresh && cached && cached.releases && cached.releases.length > 0) {
+    res.write(`data: ${JSON.stringify({ type: 'manifest', total: cached.releases.length, artist: cached.artist, items: cached.releases, source: 'server_cache' })}\n\n`);
+    for (let i = 0; i < cached.releases.length; i++) {
+      res.write(`data: ${JSON.stringify({ type: 'release_discovered', index: i, total: cached.releases.length, release: cached.releases[i] })}\n\n`);
+    }
+    res.write(`data: ${JSON.stringify({ type: 'complete', total: cached.releases.length, artist: cached.artist, releases: cached.releases, source: 'server_cache' })}\n\n`);
+    res.end();
+    return;
+  }
+
   try {
     const { artistName, origin, artistBioPicUrl, items } = await discoverAllCatalogItems(targetUrl);
+
+    // If items discovery returned empty (e.g. challenge page) but we have a cache fallback:
+    if (items.length === 0 && cached && cached.releases && cached.releases.length > 0) {
+      res.write(`data: ${JSON.stringify({ type: 'manifest', total: cached.releases.length, artist: cached.artist, items: cached.releases, source: 'server_cache' })}\n\n`);
+      for (let i = 0; i < cached.releases.length; i++) {
+        res.write(`data: ${JSON.stringify({ type: 'release_discovered', index: i, total: cached.releases.length, release: cached.releases[i] })}\n\n`);
+      }
+      res.write(`data: ${JSON.stringify({ type: 'complete', total: cached.releases.length, artist: cached.artist, releases: cached.releases, source: 'server_cache' })}\n\n`);
+      res.end();
+      return;
+    }
 
     // Send initial catalog manifest
     res.write(`data: ${JSON.stringify({ type: 'manifest', total: items.length, artist: artistName, items })}\n\n`);
@@ -252,16 +301,29 @@ app.get('/api/bandcamp/scan-stream', async (req: Request, res: Response) => {
     }
 
     // Cache the completed crawl
-    serverCatalogCache.set(targetUrl, {
-      targetUrl,
-      artist: artistName,
-      scannedAt: new Date().toISOString(),
-      releases: accumulatedReleases,
-    });
+    if (accumulatedReleases.length > 0) {
+      serverCatalogCache.set(targetUrl, {
+        targetUrl,
+        artist: artistName,
+        scannedAt: new Date().toISOString(),
+        releases: accumulatedReleases,
+      });
+      saveServerCatalogCache();
+    }
 
     res.write(`data: ${JSON.stringify({ type: 'complete', total: items.length, artist: artistName, releases: accumulatedReleases })}\n\n`);
     res.end();
   } catch (err: any) {
+    // If live fetch failed but cache exists, stream cache
+    if (cached && cached.releases && cached.releases.length > 0) {
+      res.write(`data: ${JSON.stringify({ type: 'manifest', total: cached.releases.length, artist: cached.artist, items: cached.releases, source: 'server_cache' })}\n\n`);
+      for (let i = 0; i < cached.releases.length; i++) {
+        res.write(`data: ${JSON.stringify({ type: 'release_discovered', index: i, total: cached.releases.length, release: cached.releases[i] })}\n\n`);
+      }
+      res.write(`data: ${JSON.stringify({ type: 'complete', total: cached.releases.length, artist: cached.artist, releases: cached.releases, source: 'server_cache' })}\n\n`);
+      res.end();
+      return;
+    }
     res.write(`data: ${JSON.stringify({ type: 'error', error: err.message, message: err.message })}\n\n`);
     res.end();
   }
