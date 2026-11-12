@@ -35,6 +35,7 @@ export const EXTENSION_FILES: ExtensionFileItem[] = [
     "activeTab",
     "downloads",
     "storage",
+    "unlimitedStorage",
     "scripting"
   ],
   "host_permissions": [
@@ -633,7 +634,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const bioImg = document.querySelector('#bio-container .bio-pic img') ||
                    document.querySelector('.band-photo') ||
                    document.querySelector('img.photo');
-    const artistBioPicUrl = bioImg ? (bioImg.getAttribute('src') || '').replace(/_\d+\.jpg/, '_10.jpg') : '';
+    const artistBioPicUrl = bioImg ? (bioImg.getAttribute('src') || '').replace(/_\\d+\\.jpg/, '_10.jpg') : '';
 
     const itemsMap = new Map();
 
@@ -641,11 +642,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (isDirectRelease) {
       const pageTitle = document.querySelector('#name-section .trackTitle, .trackTitle, h2.trackTitle')?.textContent?.trim() || document.title;
       const coverImg = document.querySelector('#tralbumArt img, .tralbumArt img');
-      const coverUrl = coverImg ? (coverImg.getAttribute('src') || '').replace(/_\d+\.jpg/, '_10.jpg') : '';
+      const coverUrl = coverImg ? (coverImg.getAttribute('src') || '').replace(/_\\d+\\.jpg/, '_10.jpg') : '';
       const isAlbum = window.location.pathname.startsWith('/album/');
-      const normKey = window.location.pathname.replace(/\/+$/, '').toLowerCase();
+      const normKey = window.location.pathname.replace(/\\/+$/, '').toLowerCase();
       itemsMap.set(normKey, {
-        id: (isAlbum ? 'album-' : 'track-') + normKey.replace(/^\/(?:album|track)\//, ''),
+        id: (isAlbum ? 'album-' : 'track-') + normKey.replace('/album/', '').replace('/track/', ''),
         itemId: 0,
         href: window.location.href,
         pageUrl: window.location.pathname,
@@ -687,7 +688,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const isTrack = pathname.startsWith('/track/');
       if (!isAlbum && !isTrack) return;
 
-      const normKey = pathname.replace(/\/+$/, '').toLowerCase();
+      const normKey = pathname.replace(/\\/+$/, '').toLowerCase();
       if (itemsMap.has(normKey)) return;
 
       const titleEl = li.querySelector('p.title') || li.querySelector('.title');
@@ -700,17 +701,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
         const clone = titleEl.cloneNode(true);
         clone.querySelectorAll('.artist-override, .artist').forEach((el) => el.remove());
-        title = clone.textContent.trim().replace(/\s+/g, ' ');
+        title = clone.textContent.trim().replace(/\\s+/g, ' ');
       }
 
       const img = li.querySelector('img');
       const rawSrc = img ? (img.getAttribute('data-original') || img.getAttribute('src') || '') : '';
-      const artUrl = rawSrc && !rawSrc.includes('blank.gif') ? rawSrc.replace(/_\d+\.jpg/, '_10.jpg') : '';
-      const rawId = li.getAttribute('data-item-id') || link.getAttribute('data-item-id') || (isAlbum ? 'album-' : 'track-') + normKey.replace(/^\/(?:album|track)\//, '');
+      const artUrl = rawSrc && !rawSrc.includes('blank.gif') ? rawSrc.replace(/_\\d+\\.jpg/, '_10.jpg') : '';
+      const rawId = li.getAttribute('data-item-id') || link.getAttribute('data-item-id') || (isAlbum ? 'album-' : 'track-') + normKey.replace('/album/', '').replace('/track/', '');
 
       itemsMap.set(normKey, {
         id: rawId,
-        itemId: parseInt(rawId.replace(/\D/g, '') || '0', 10),
+        itemId: parseInt(rawId.replace(/\\D/g, '') || '0', 10),
         href: fullHref,
         pageUrl: pathname,
         title,
@@ -732,7 +733,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const pageUrl = item.page_url;
             if (!pageUrl) return;
             const pathname = pageUrl.split('?')[0];
-            const normKey = pathname.replace(/\/+$/, '').toLowerCase();
+            const normKey = pathname.replace(/\\/+$/, '').toLowerCase();
             if (!itemsMap.has(normKey)) {
               const isAlbum = item.type === 'album' || normKey.startsWith('/album/');
               itemsMap.set(normKey, {
@@ -1172,6 +1173,8 @@ document.addEventListener('DOMContentLoaded', () => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bandcamp Bulk Downloader - Download Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="icon" type="image/png" href="icons/icon16.png">
   <link rel="stylesheet" href="dashboard.css">
 </head>
 <body class="bg-[#0b0f17] text-slate-100 min-h-screen">

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Bandcamp Downloader Preferences</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #0b0f17;
+      color: #f1f5f9;
+      padding: 40px;
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    h2 { color: #00b4d8; margin-bottom: 24px; font-size: 22px; display: flex; align-items: center; gap: 10px; }
+    h3 { color: #fbbf24; margin: 24px 0 12px; font-size: 15px; border-top: 1px solid #1e293b; padding-top: 16px; }
+    .form-group { margin-bottom: 18px; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 13px; color: #e2e8f0; }
+    p.hint { font-size: 12px; color: #94a3b8; margin-top: 4px; line-height: 1.4; }
+    input[type="text"], input[type="email"], input[type="url"], input[type="number"], select {
+      width: 100%;
+      padding: 9px 12px;
+      background: #131c2e;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #fff;
+      box-sizing: border-box;
+      font-size: 13px;
+    }
+    .grid-2 { display: grid; grid-cols: 1fr 1fr; gap: 12px; }
+    .cb-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .btn {
+      background: #00b4d8;
+      color: #0b0f17;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .btn.sec { background: #1e293b; color: #fbbf24; border: 1px solid #334155; margin-right: 10px; }
+    .btn:hover { opacity: 0.9; }
+    .toast {
+      margin-top: 14px;
+      color: #10b981;
+      font-weight: 600;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h2>
+    <img src="icons/icon48.png" width="32" height="32" alt="Icon">
+    Bandcamp Bulk Downloader Settings
+  </h2>
+
+  <div class="form-group">
+    <label for="defaultFormat">Default Audio Format</label>
+    <select id="defaultFormat">
+      <option value="flac" selected>FLAC (Lossless Studio Master - Default)</option>
+      <option value="mp3-320">MP3 320kbps (High Quality CBR)</option>
+      <option value="mp3-v0">MP3 V0 (High Quality VBR)</option>
+      <option value="wav">WAV 16-bit PCM</option>
+      <option value="aac-hi">AAC (VBR)</option>
+      <option value="alac">ALAC</option>
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label class="cb-row">
+      <input type="checkbox" id="createCompanionInfoZip" checked>
+      <span>Generate Companion (info).zip Alongside Audio Release</span>
+    </label>
+    <p class="hint">Creates a paired zip with untruncated info.txt, cover.jpg, artist.jpg (bio_pic), photos/, and .lrc lyrics.</p>
+  </div>
+
+  <div class="form-group">
+    <label for="namingSchema">File Naming Schema</label>
+    <input type="text" id="namingSchema" value="%artist% - %date% - %album%[%title%.%format%]">
+    <p class="hint">For whole-album archives, [%title%.%format%] is automatically omitted.</p>
+  </div>
+
+  <div class="form-group">
+    <label for="fallbackEmail">Auto-fill Fallback Email</label>
+    <input type="email" id="fallbackEmail" placeholder="listener@example.com">
+    <p class="hint">Sent to Bandcamp when receiving free or NYP download tokens.</p>
+  </div>
+
+  <h3>Google Apps Script Email-Walled Watchdog</h3>
+  <div class="form-group">
+    <label for="gasWebhookUrl">GAS Web App URL</label>
+    <input type="url" id="gasWebhookUrl" placeholder="https://script.google.com/macros/s/.../exec">
+    <p class="hint">Deployed Web App URL for automatic Gmail search of incoming download links.</p>
+  </div>
+
+  <div class="form-group">
+    <label for="gasSecret">Secret Password</label>
+    <input type="text" id="gasSecret" placeholder="my_secret_key">
+  </div>
+
+  <div class="form-group">
+    <label for="gasSearchOffsetHours">Mailbox Search Window (Time Offset)</label>
+    <select id="gasSearchOffsetHours">
+      <option value="1">Last 1 Hour</option>
+      <option value="6">Last 6 Hours</option>
+      <option value="24">Last 24 Hours (1 Day)</option>
+      <option value="72" selected>Last 3 Days (Recommended)</option>
+      <option value="168">Last 7 Days (1 Week)</option>
+      <option value="720">Last 30 Days (1 Month)</option>
+    </select>
+    <p class="hint">Searching only recent emails drastically speeds up search and avoids reading unrelated emails.</p>
+  </div>
+
+  <h3>Anti-Captcha Pacing & Rate Limits</h3>
+  <div style="display:flex; gap:12px;">
+    <div class="form-group" style="flex:1;">
+      <label for="pacingBaseDelay">Base Delay (seconds)</label>
+      <input type="number" step="0.5" id="pacingBaseDelay" value="2.5">
+    </div>
+    <div class="form-group" style="flex:1;">
+      <label for="pacingJitter">Jitter Variation (%)</label>
+      <input type="number" id="pacingJitter" value="40">
+    </div>
+  </div>
+
+  <div style="display:flex; gap:12px;">
+    <div class="form-group" style="flex:1;">
+      <label for="cooldownBatch">Cool-Down Frequency</label>
+      <input type="number" id="cooldownBatch" value="5">
+      <p class="hint">Pause every N downloads.</p>
+    </div>
+    <div class="form-group" style="flex:1;">
+      <label for="cooldownDuration">Cool-Down Pause (seconds)</label>
+      <input type="number" id="cooldownDuration" value="12">
+    </div>
+  </div>
+
+  <div style="margin-top:24px;">
+    <button id="copyScriptBtn" class="btn sec">Copy Code.gs Script</button>
+    <button id="saveBtn" class="btn">Save Preferences</button>
+  </div>
+  <div id="toast" class="toast">✓ Preferences saved successfully!</div>
+
+  <script src="options.js"></script>
+</body>
+</html>

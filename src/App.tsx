@@ -77,9 +77,38 @@ export default function App() {
 
   // Persistent Queue Session State
   const [currentSession, setCurrentSession] = useState<SiteQueueSession | null>(null);
+  const currentSessionRef = useRef<SiteQueueSession | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const isDownloadingRef = useRef(false);
   const [pacingNotice, setPacingNotice] = useState<string>('');
   const isCancelledRef = useRef(false);
+
+  useEffect(() => {
+    isDownloadingRef.current = isDownloading;
+  }, [isDownloading]);
+
+  const updateCurrentSession = (
+    sessOrUpdater: SiteQueueSession | null | ((prev: SiteQueueSession | null) => SiteQueueSession | null)
+  ) => {
+    if (typeof sessOrUpdater === 'function') {
+      setCurrentSession((prev) => {
+        const next = sessOrUpdater(prev);
+        currentSessionRef.current = next;
+        return next;
+      });
+    } else {
+      const sess = sessOrUpdater;
+      if (sess && currentSessionRef.current && currentSessionRef.current.hostname === sess.hostname) {
+        if (sess.updatedAt && currentSessionRef.current.updatedAt) {
+          if (new Date(sess.updatedAt).getTime() < new Date(currentSessionRef.current.updatedAt).getTime()) {
+            return;
+          }
+        }
+      }
+      currentSessionRef.current = sess;
+      setCurrentSession(sess);
+    }
+  };
 
   // App Settings with storage adapter persistence (chrome.storage.local & localStorage)
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -138,14 +167,16 @@ export default function App() {
   const syncSessionFromStorage = (hostname: string): SiteQueueSession | null => {
     const sess = loadSiteSession(hostname);
     if (sess) {
-      setCurrentSession(sess);
+      if (!isDownloadingRef.current) {
+        updateCurrentSession(sess);
+      }
       return sess;
     }
     if (isExtension) {
       const key = `bc_session_v2_${hostname.toLowerCase()}`;
       storage.get<SiteQueueSession>(key).then((extSess) => {
-        if (extSess) {
-          setCurrentSession(extSess);
+        if (extSess && !isDownloadingRef.current) {
+          updateCurrentSession(extSess);
         }
       });
     }
@@ -156,13 +187,20 @@ export default function App() {
   const loadFromLocalCache = async (targetUrl: string): Promise<boolean> => {
     try {
       const hName = getDomainHostname(targetUrl);
+      if (!hName) return false;
       const sess = syncSessionFromStorage(hName);
 
-      const cacheKey = `bc_cache_v8_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
-      let cached: any = await storage.get<any>(cacheKey);
+      const cleaned = cleanBandcampUrl(targetUrl).trim().toLowerCase();
+      const hostKey = `bc_cache_v8_host_${hName.toLowerCase()}`;
+      const cacheKey = `bc_cache_v8_${encodeURIComponent(cleaned)}`;
+      const musicKey = `bc_cache_v8_${encodeURIComponent('https://' + hName.toLowerCase() + '/music')}`;
+
+      let cached: any = await storage.get<any>(hostKey);
+      if (!cached) cached = await storage.get<any>(cacheKey);
+      if (!cached) cached = await storage.get<any>(musicKey);
 
       if (!cached && typeof localStorage !== 'undefined') {
-        const cachedRaw = localStorage.getItem(cacheKey);
+        const cachedRaw = localStorage.getItem(hostKey) || localStorage.getItem(cacheKey) || localStorage.getItem(musicKey);
         if (cachedRaw) {
           try { cached = JSON.parse(cachedRaw); } catch (e) {}
         }
@@ -170,7 +208,7 @@ export default function App() {
 
       if (cached && cached.releases && Array.isArray(cached.releases) && cached.releases.length > 0) {
         const enriched = cached.releases.map((r: ScannedRelease) => {
-          const q = sess?.items?.[r.id];
+          const q = sess?.items?.[r.id] || currentSessionRef.current?.items?.[r.id];
           return {
             ...r,
             audioDownloaded: Boolean(r.audioDownloaded || q?.audioDownloaded),
@@ -186,9 +224,15 @@ export default function App() {
           `Loaded ${enriched.length} releases from cache (${enriched.filter((r: ScannedRelease) => r.isFree || r.isNameYourPrice).length} free/NYP)`
         );
 
-        if (!sess) {
-          const newSess = initSiteSession(hName, new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`).origin, cached.artist || 'Artist', targetUrl, enriched);
-          setCurrentSession(newSess);
+        if (!sess && !isDownloadingRef.current) {
+          const newSess = initSiteSession(
+            hName,
+            new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`).origin,
+            cached.artist || 'Artist',
+            targetUrl,
+            enriched
+          );
+          updateCurrentSession(newSess);
         }
         return true;
       }
@@ -201,21 +245,34 @@ export default function App() {
   // Helper to save catalog to storage
   const saveToLocalCache = (targetUrl: string, artist: string, items: ScannedRelease[]) => {
     try {
-      const cacheKey = `bc_cache_v8_${encodeURIComponent(targetUrl.trim().toLowerCase())}`;
+      const hName = getDomainHostname(targetUrl);
+      const cleaned = cleanBandcampUrl(targetUrl).trim().toLowerCase();
+      const hostKey = `bc_cache_v8_host_${hName.toLowerCase()}`;
+      const cacheKey = `bc_cache_v8_${encodeURIComponent(cleaned)}`;
+      const musicKey = `bc_cache_v8_${encodeURIComponent('https://' + hName.toLowerCase() + '/music')}`;
+
       const cacheObj = {
         scannedAt: new Date().toISOString(),
         artist,
         releases: items,
       };
+
+      storage.set(hostKey, cacheObj);
       storage.set(cacheKey, cacheObj);
+      storage.set(musicKey, cacheObj);
+
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(cacheKey, JSON.stringify(cacheObj));
+        try {
+          localStorage.setItem(hostKey, JSON.stringify(cacheObj));
+          localStorage.setItem(cacheKey, JSON.stringify(cacheObj));
+        } catch (lsErr) {
+          console.warn('localStorage quota reached (cache safely preserved in chrome.storage):', lsErr);
+        }
       }
 
-      const hName = getDomainHostname(targetUrl);
       const origin = targetUrl.startsWith('http') ? new URL(targetUrl).origin : `https://${hName}`;
       const sess = initSiteSession(hName, origin, artist, targetUrl, items);
-      setCurrentSession(sess);
+      updateCurrentSession(sess);
     } catch (e) {
       console.warn('Failed to write to cache:', e);
     }
@@ -476,6 +533,10 @@ export default function App() {
     const scope = relScope || item.downloadScope || settings.defaultDownloadScope || 'both';
     if (scope === 'audio') return Boolean(item.audioDownloaded);
     if (scope === 'info') return Boolean(item.infoZipDownloaded);
+    // If release is pre-order or paid, studio audio is not downloadable; info zip completion marks item complete
+    if (item.isPaid || item.isPreorder) {
+      return Boolean(item.infoZipDownloaded);
+    }
     return Boolean(item.audioDownloaded && item.infoZipDownloaded);
   };
 
@@ -620,9 +681,9 @@ export default function App() {
         debugLog('pipeline', `[${qItem.title}] [${stage}] ${msg}`, err || '');
         const updated = appendItemLog(currentHostname, qItem.id, stage, msg, err);
         if (updated) {
-          setCurrentSession({ ...updated });
+          updateCurrentSession(updated);
         } else {
-          setCurrentSession((prev) => {
+          updateCurrentSession((prev) => {
             if (!prev) return prev;
             const prevItem = prev.items[qItem.id] || { ...qItem };
             const newLog: ItemStageLog = {
@@ -1003,8 +1064,13 @@ export default function App() {
         const finalAudioDl = Boolean(qItem.audioDownloaded || audioSuccess);
         const finalInfoDl = Boolean(qItem.infoZipDownloaded || infoSuccess);
 
+        qItem.audioDownloaded = finalAudioDl;
+        qItem.infoZipDownloaded = finalInfoDl;
+        qItem.stage = finalStage;
+        qItem.statusText = finalStatusText;
+
         logAndSync(finalStage, finalStatusText, audioError || infoError || undefined);
-        updateQueueItem(currentHostname, qItem.id, {
+        const updatedSess = updateQueueItem(currentHostname, qItem.id, {
           audioDownloaded: finalAudioDl,
           infoZipDownloaded: finalInfoDl,
           stage: finalStage,
@@ -1012,6 +1078,9 @@ export default function App() {
           stageProgress: 100,
           error: audioError ? `Audio: ${audioError}` : (infoError ? `Info: ${infoError}` : undefined),
         });
+        if (updatedSess) {
+          updateCurrentSession(updatedSess);
+        }
 
         setReleases((prev) =>
           prev.map((r) =>

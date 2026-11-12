@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#00b4d8" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="2"/>
+  <!-- Polished Bandcamp Slanted Plate -->
+  <path d="M26 86 L50 26 H86 L62 86 Z" fill="url(#cyanGrad)"/>
+  <!-- Crisp Center Down-Arrow Overlay with Drop Shadow -->
+  <path d="M68 38 V64 H56 L76 90 L96 64 H84 V38 Z" fill="#ffffff" filter="drop-shadow(0 2px 5px rgba(0,0,0,0.45))"/>
+  <!-- Base Sonic Tray -->
+  <rect x="56" y="96" width="40" height="6" rx="3" fill="#38bdf8"/>
+</svg>

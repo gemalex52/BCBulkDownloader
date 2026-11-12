@@ -1,0 +1,100 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  width: 340px;
+  background: #0b0f17;
+  color: #f1f5f9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  padding: 14px;
+}
+.top-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: #00b4d8;
+  font-size: 14px;
+}
+.opt-btn {
+  color: #94a3b8;
+  text-decoration: none;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #1e293b;
+}
+.opt-btn:hover { color: #fff; background: #334155; }
+.card-box {
+  background: #111827;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.site-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.session-badge {
+  font-size: 10px;
+  font-family: monospace;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #1e293b;
+  color: #94a3b8;
+}
+.session-badge.ready { background: #064e3b; color: #6ee7b7; }
+.session-badge.resume { background: #0284c7; color: #bae6fd; }
+.desc {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  border: none;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.btn.primary { background: #00b4d8; color: #0b0f17; }
+.btn.resume { background: #10b981; color: #0b0f17; }
+.btn:hover { opacity: 0.9; }
+.footer-info {
+  margin-top: 10px;
+  font-size: 10px;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.3;
+}

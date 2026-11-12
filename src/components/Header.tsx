@@ -24,9 +24,12 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
         {/* Zone 1: Brand title */}
         <div className="flex items-center gap-2.5 shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M0 18.75l7.437-13.5h16.563l-7.438 13.5z" />
+          <div className="w-8 h-8 rounded-lg bg-[#0b0f17] border border-cyan-500/30 flex items-center justify-center p-1 shadow-sm">
+            <svg className="w-full h-full" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect width="128" height="128" rx="26" fill="#0b0f17"/>
+              <path d="M26 86 L50 26 H86 L62 86 Z" fill="#00b4d8"/>
+              <path d="M68 38 V64 H56 L76 90 L96 64 H84 V38 Z" fill="#ffffff"/>
+              <rect x="56" y="96" width="40" height="6" rx="3" fill="#38bdf8"/>
             </svg>
           </div>
           <span className="text-base font-bold tracking-tight text-white whitespace-nowrap">

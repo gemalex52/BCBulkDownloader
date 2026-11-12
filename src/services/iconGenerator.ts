@@ -144,10 +144,40 @@ export function renderBandcamp2x2(
   w: number,
   h: number
 ): [number, number, number, number] {
+  // Pixel-perfect 16x16 rendering for Chrome toolbar and favicon
+  if (w <= 16 && h <= 16) {
+    // 4 Corner transparent pixels
+    if ((x === 0 && y === 0) || (x === 15 && y === 0) || (x === 0 && y === 15) || (x === 15 && y === 15)) {
+      return [0, 0, 0, 0];
+    }
+    // Sonic tray at bottom
+    if ((y === 12 && x >= 3 && x <= 12) || (y === 13 && x >= 4 && x <= 11)) {
+      return [56, 189, 248, 255]; // #38bdf8
+    }
+    // Crisp white download arrow
+    if ((y >= 3 && y <= 5 && (x === 7 || x === 8)) ||
+        (y === 6 && x >= 6 && x <= 9) ||
+        (y === 7 && x >= 5 && x <= 10) ||
+        (y === 8 && (x === 7 || x === 8))) {
+      return [255, 255, 255, 255]; // White
+    }
+    // Bandcamp slanted plate in electric cyan
+    if (y >= 2 && y <= 11) {
+      const p = (y - 2) / 9;
+      const left = Math.round(5 - p * 3);
+      const right = Math.round(12 - p * 3);
+      if (x >= left && x <= right) {
+        return [0, 180, 216, 255]; // #00b4d8
+      }
+    }
+    return [11, 15, 23, 255]; // #0b0f17 dark slate background
+  }
+
+  // Proportional rendering for 48x48 and 128x128
   const nx = x / w;
   const ny = y / h;
 
-  // Background: dark slate #0b0f17 with rounded corners
+  // Background rounded corners
   const rBg = 0.20;
   const inCorner =
     (nx < rBg && ny < rBg && Math.hypot(nx - rBg, ny - rBg) > rBg) ||
@@ -156,25 +186,26 @@ export function renderBandcamp2x2(
     (nx > 1 - rBg && ny > 1 - rBg && Math.hypot(nx - (1 - rBg), ny - (1 - rBg)) > rBg);
   if (inCorner) return [0, 0, 0, 0];
 
-  // 1. Crisp white download arrow
-  // Arrow stem
-  if (nx >= 0.53 && nx <= 0.65 && ny >= 0.30 && ny <= 0.52) {
-    return [255, 255, 255, 255];
-  }
-  // Arrow head
-  if (ny > 0.50 && ny <= 0.72 && Math.abs(nx - 0.59) <= (0.72 - ny) * 0.78) {
-    return [255, 255, 255, 255];
-  }
   // Sonic tray bar at base
-  if (nx >= 0.44 && nx <= 0.74 && ny >= 0.76 && ny <= 0.83) {
+  if (nx >= 0.38 && nx <= 0.76 && ny >= 0.77 && ny <= 0.84) {
     return [56, 189, 248, 255]; // #38bdf8
   }
 
-  // 2. Bandcamp slanted parallelogram in electric cyan
-  if (ny >= 0.22 && ny <= 0.70) {
-    const progress = (ny - 0.22) / (0.70 - 0.22);
-    const left = 0.40 - progress * 0.20;
-    const right = 0.72 - progress * 0.20;
+  // Crisp white download arrow
+  // Arrow stem
+  if (nx >= 0.52 && nx <= 0.64 && ny >= 0.28 && ny <= 0.52) {
+    return [255, 255, 255, 255];
+  }
+  // Arrow head
+  if (ny > 0.50 && ny <= 0.72 && Math.abs(nx - 0.58) <= (0.72 - ny) * 0.82) {
+    return [255, 255, 255, 255];
+  }
+
+  // Bandcamp slanted parallelogram in electric cyan
+  if (ny >= 0.20 && ny <= 0.72) {
+    const progress = (ny - 0.20) / (0.72 - 0.20);
+    const left = 0.38 - progress * 0.22;
+    const right = 0.74 - progress * 0.22;
     if (nx >= left && nx <= right) {
       return [0, 180, 216, 255]; // #00b4d8
     }

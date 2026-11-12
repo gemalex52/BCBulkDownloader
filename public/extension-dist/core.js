@@ -252,14 +252,27 @@ var BandcampCore = (() => {
       });
     };
     const extractPackageTitle = (block) => {
-      const mId = block.match(/<([a-z0-9]+)[^>]*id=["']package-title(?:-[^"']*)?["'][^>]*>([\s\S]*?)<\/\1>/i);
-      if (mId) {
-        const t = cleanPhotoSectionTitle(mId[2]);
+      const mSpan = block.match(/<span[^>]*id=["']package[-_]title(?:[-_][^"']*)?["'][^>]*>([\s\S]*?)<\/span>/i);
+      if (mSpan) {
+        const innerHtml = mSpan[1];
+        const subSpanMatch = innerHtml.match(/<span[^>]*class=["'][^"']*buyItemPackageTitle[^"']*primaryText[^"']*["'][^>]*>([\s\S]*?)<\/span>/i) || innerHtml.match(/<span[^>]*class=["'][^"']*buyItemPackageTitle[^"']*["'][^>]*>([\s\S]*?)<\/span>/i) || innerHtml.match(/<span[^>]*class=["'][^"']*primaryText[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
+        let rawText = "";
+        if (subSpanMatch) {
+          rawText = subSpanMatch[1];
+        } else {
+          rawText = innerHtml;
+        }
+        const t = cleanPhotoSectionTitle(cleanHtmlText(rawText));
         if (t && !/discography/i.test(t)) return t;
       }
-      const mIdLoose = block.match(/id=["']package-title(?:-[^"']*)?["'][^>]*>([^<]+)/i);
+      const mIdLoose = block.match(/id=["']package[-_]title(?:[-_][^"']*)?["'][^>]*>\s*([^<\r\n]+)/i);
       if (mIdLoose) {
         const t = cleanPhotoSectionTitle(mIdLoose[1]);
+        if (t && !/discography/i.test(t)) return t;
+      }
+      const mId = block.match(/<([a-z0-9]+)[^>]*id=["']package[-_]title(?:[-_][^"']*)?["'][^>]*>([\s\S]*?)<\/\1>/i);
+      if (mId) {
+        const t = cleanPhotoSectionTitle(mId[2].split("<")[0].trim() || mId[2]);
         if (t && !/discography/i.test(t)) return t;
       }
       const m1 = block.match(/<([a-z0-9]+)[^>]*class=["'][^"']*buyItemPackageTitle[^"']*["'][^>]*>([\s\S]*?)<\/\1>/i);
@@ -291,11 +304,16 @@ var BandcampCore = (() => {
       const startIndex = topLevelStarts[i].index;
       const nextIndex = i + 1 < topLevelStarts.length ? topLevelStarts[i + 1].index : html.length;
       let block = html.substring(startIndex, nextIndex);
-      const endBoundary = block.search(
-        /<(?:div|section)[^>]*(?:id=["']collectors-token["']|class=["'][^"']*(?:collected-by|collectors|fans)[^"']*["']|<div[^>]*id=["']footer["'])/i
-      );
-      if (endBoundary !== -1) {
-        block = block.substring(0, endBoundary);
+      const boundaryMatch = block.match(/<\/li>\s*(?=<li\s+id=|<li\s+class=|<table\s+class=|<div\s+class=["'](?:collected-by|collectors|fans)["']|<section|<footer)/i);
+      if (boundaryMatch && boundaryMatch.index !== void 0) {
+        block = block.substring(0, boundaryMatch.index + boundaryMatch[0].length);
+      } else {
+        const endBoundary = block.search(
+          /<(?:div|section|table|ul|ol)[^>]*(?:id=["']collectors-token["']|class=["'][^"']*(?:collected-by|collectors|fans)[^"']*|id=["']track_table["']|<footer)/i
+        );
+        if (endBoundary !== -1) {
+          block = block.substring(0, endBoundary);
+        }
       }
       if (/buyFullDiscography|full\s+digital\s+discography/i.test(block)) {
         const discoImgs = Array.from(
@@ -305,9 +323,6 @@ var BandcampCore = (() => {
           const id = extractImageNumericId(u);
           if (id) excludedImageIds.add(id);
         }
-        continue;
-      }
-      if (/collected-by|collectors|fans/i.test(block) || /id=["']collectors-token["']/i.test(block)) {
         continue;
       }
       if (/buyItemDigital|buyItem\s+digital|\bdigital\b/i.test(block) && !/package/i.test(block)) {
@@ -342,6 +357,40 @@ var BandcampCore = (() => {
         const cleanTitle = cleanPhotoSectionTitle(rawTitle);
         if (uMatch) {
           addPhoto(uMatch[1], cleanTitle || void 0);
+        }
+      }
+    }
+    for (const photo of extraPhotos) {
+      if (!photo.title || /^photo/i.test(photo.title)) {
+        const imgId = extractImageNumericId(photo.url);
+        if (imgId) {
+          let idx = -1;
+          let searchFrom = 0;
+          while ((idx = html.indexOf(imgId, searchFrom)) !== -1) {
+            searchFrom = idx + imgId.length;
+            const scriptStart = html.lastIndexOf("<script", idx);
+            const scriptEnd = html.indexOf("<\/script>", idx);
+            if (scriptStart !== -1 && scriptEnd !== -1 && scriptEnd > idx) {
+              const tag = html.substring(scriptStart, idx);
+              if (/application\/ld\+json/i.test(tag)) {
+                continue;
+              }
+            }
+            const start = Math.max(0, idx - 3e3);
+            const end = Math.min(html.length, idx + 3e3);
+            const snippet = html.substring(start, end);
+            const nearbySpan = snippet.match(/<span[^>]*id=["']package[-_]title(?:[-_][^"']*)?["'][^>]*>([\s\S]*?)<\/span>/i);
+            if (nearbySpan) {
+              const innerHtml = nearbySpan[1];
+              const sub = innerHtml.match(/<span[^>]*class=["'][^"']*buyItemPackageTitle[^"']*primaryText[^"']*["'][^>]*>([\s\S]*?)<\/span>/i) || innerHtml.match(/<span[^>]*class=["'][^"']*buyItemPackageTitle[^"']*["'][^>]*>([\s\S]*?)<\/span>/i) || innerHtml.match(/<span[^>]*class=["'][^"']*primaryText[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
+              const raw = sub ? sub[1] : innerHtml;
+              const clean = cleanPhotoSectionTitle(cleanHtmlText(raw));
+              if (clean && !/discography/i.test(clean)) {
+                photo.title = clean;
+                break;
+              }
+            }
+          }
         }
       }
     }

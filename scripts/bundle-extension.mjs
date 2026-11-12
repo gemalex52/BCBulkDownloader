@@ -74,4 +74,14 @@ try {
   console.warn('Tailwind CLI build warning:', e);
 }
 
-console.log('✓ Extension React dashboard assets compiled successfully in public/extension-dist!');
+console.log('3. Exporting unpacked extension package files to public/extension-dist...');
+try {
+  execSync('npx tsx scripts/export-unpacked.ts', {
+    stdio: 'inherit',
+  });
+} catch (e) {
+  console.warn('Export unpacked warning:', e);
+}
+
+console.log('✓ Extension React dashboard & unpacked assets compiled successfully in public/extension-dist!');
+

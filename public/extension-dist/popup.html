@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Bandcamp Bulk Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="top-header">
+    <div class="brand">
+      <img src="icons/icon16.png" width="16" height="16" alt="Icon">
+      <span>Bandcamp Bulk DL</span>
+    </div>
+    <div class="header-actions">
+      <a href="options.html" target="_blank" class="opt-btn" title="Settings">⚙️ Settings</a>
+    </div>
+  </div>
+
+  <div class="card-box">
+    <div class="site-header">
+      <span class="site-title" id="siteTitle">Detecting active page...</span>
+      <span class="session-badge" id="sessionBadge">Checking</span>
+    </div>
+    <p class="desc" id="statusDesc">Connect to any Bandcamp catalog to scan releases, negotiate FLAC/320, and download paired studio audio & companion (info).zip.</p>
+
+    <div class="actions">
+      <button id="btnOpenDashboard" class="btn primary">
+        ↗ Open Download Dashboard
+      </button>
+      <button id="btnQuickResume" class="btn resume" style="display:none;">
+        ▶ Resume Download in Download Dashboard
+      </button>
+    </div>
+  </div>
+
+  <div class="footer-info">
+    <span>Downloads run in a dedicated full tab to ensure worker and file streams stay alive.</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
