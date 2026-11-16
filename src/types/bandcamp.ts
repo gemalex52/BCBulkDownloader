@@ -39,6 +39,7 @@ export interface ScannedRelease {
   priceFormatted: string;
   requiresEmail: boolean;
   freeDownloadPageUrl?: string;
+  collectionUrl?: string;
   trackCount?: number;
   trackList?: string[];
   audioStreams?: TrackAudioStream[];
@@ -140,6 +141,7 @@ export interface QueueItem {
   infoZipFilename?: string;
   audioDownloadUrl?: string;
   freeDownloadPageUrl?: string;
+  collectionUrl?: string;
   infoText?: string;
   aboutText?: string;
   creditsText?: string;

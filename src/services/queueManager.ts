@@ -224,6 +224,7 @@ export function initSiteSession(
       infoZipFilename: prev?.infoZipFilename,
       audioDownloadUrl: prev?.audioDownloadUrl,
       freeDownloadPageUrl: rel.freeDownloadPageUrl || prev?.freeDownloadPageUrl,
+      collectionUrl: rel.collectionUrl || prev?.collectionUrl,
       retryCount: prev ? prev.retryCount : 0,
       lastUpdated: new Date().toISOString(),
       error: prev?.error,

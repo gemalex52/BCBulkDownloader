@@ -199,6 +199,25 @@ export const apiClient = {
     }
   },
 
+  async findCollectionDownload(params: {
+    albumUrl?: string;
+    itemId?: number;
+    title?: string;
+    artist?: string;
+    collectionUrl?: string;
+  }): Promise<{ found: boolean; downloadPageUrl?: string; collectionUrl?: string; source?: string; error?: string }> {
+    if (isExtension) {
+      return sendExtensionMessage({
+        action: 'FIND_COLLECTION_DOWNLOAD',
+        ...params,
+      }, 30000);
+    }
+    return {
+      found: false,
+      error: 'Bandcamp collection lookup requires the Chrome Extension browser session.',
+    };
+  },
+
   async checkGasWebhook(params: {
     webhookUrl: string;
     secret: string;

@@ -42,6 +42,7 @@ export interface ParsedReleaseDetails {
   priceFormatted: string;
   requireEmail: boolean;
   freeDlPage?: string | null;
+  collectionUrl?: string;
   trackListFormatted: string[];
   audioStreams: {
     trackNum: number;
@@ -151,6 +152,226 @@ export function extractBandcampTralbum(html: string): any {
     }
   } catch (err) {
     console.warn('Error extracting TralbumData:', err);
+  }
+  return null;
+}
+
+export function extractPagedataBlob(html: string): any {
+  if (!html) return null;
+  const patterns = [
+    /id=["']pagedata["'][^>]*data-blob=["']([^"']+)["']/i,
+    /data-blob=["']([^"']+)["'][^>]*id=["']pagedata["']/i,
+    /id=["']pagedata["'][^>]*data-blob="([\s\S]*?)"\s*(?:>|class|data-)/i,
+  ];
+  for (const rx of patterns) {
+    const m = html.match(rx);
+    if (m && m[1]) {
+      try {
+        const decoded = m[1]
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, '&')
+          .replace(/&#39;/g, "'")
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>');
+        return JSON.parse(decoded);
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+export function extractCollectionUrlFromHtml(html: string): string | undefined {
+  if (!html) return undefined;
+
+  const normalizeCollectionHref = (rawHref?: string): string | undefined => {
+    if (!rawHref) return undefined;
+    const cleaned = cleanHtmlText(rawHref).trim();
+    if (!cleaned || cleaned === '#' || cleaned.startsWith('javascript:')) return undefined;
+    try {
+      const u = cleaned.startsWith('http')
+        ? new URL(cleaned)
+        : new URL(cleaned.startsWith('/') ? cleaned : `/${cleaned}`, 'https://bandcamp.com');
+      if (!u.hostname.endsWith('bandcamp.com')) return undefined;
+      const path = u.pathname.replace(/\/+$/, '');
+      if (!path || path === '/') return undefined;
+      return `https://bandcamp.com${path}`;
+    } catch (e) {
+      return undefined;
+    }
+  };
+
+  // 1. Direct "You own this" link: <a class="you-own-this-link" href="https://bandcamp.com/<user_id>">
+  const linkMatch =
+    html.match(/<a[^>]*class=["'][^"']*you-own-this-link[^"']*["'][^>]*href=["']([^"']+)["']/i) ||
+    html.match(/<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*you-own-this-link[^"']*["']/i) ||
+    html.match(/class=["'][^"']*you-own-this[^"']*["'][^>]*>[\s\S]{0,400}?<a[^>]*href=["']([^"']+)["']/i);
+  if (linkMatch?.[1]) {
+    const norm = normalizeCollectionHref(linkMatch[1]);
+    if (norm) return norm;
+  }
+
+  // 2. Fallback from #pagedata identities.fan
+  const pagedata = extractPagedataBlob(html);
+  const fan = pagedata?.identities?.fan || pagedata?.current_fan || pagedata?.fan_data;
+  if (fan?.url) {
+    const norm = normalizeCollectionHref(fan.url);
+    if (norm) return norm;
+  }
+  if (fan?.username) {
+    return `https://bandcamp.com/${encodeURIComponent(String(fan.username).trim())}`;
+  }
+
+  return undefined;
+}
+
+export function matchCollectionDownloadUrl(
+  items: any[],
+  redownloadUrls: Record<string, string> | undefined,
+  target: { itemId?: number; title?: string; url?: string; artist?: string }
+): string | null {
+  if (!redownloadUrls || typeof redownloadUrls !== 'object') return null;
+
+  const normUrl = (raw?: string): string => {
+    if (!raw) return '';
+    try {
+      const u = new URL(raw, 'https://bandcamp.com');
+      return `${u.hostname.toLowerCase()}${u.pathname.replace(/\/+$/, '').toLowerCase()}`;
+    } catch (e) {
+      return String(raw).split('?')[0].replace(/\/+$/, '').toLowerCase();
+    }
+  };
+
+  const normText = (raw?: string): string =>
+    cleanHtmlText(raw || '')
+      .toLowerCase()
+      .replace(/['"`’“”]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const stripParens = (raw: string): string =>
+    raw.replace(/\s*[\(\[][^)\]]*[\)\]]\s*/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const targetUrlNorm = normUrl(target.url);
+  const targetTitleNorm = normText(target.title);
+  const targetTitleBase = stripParens(targetTitleNorm);
+  const targetArtistNorm = normText(target.artist);
+  const targetIdNum = target.itemId ? Number(target.itemId) : 0;
+
+  const findRedownloadForItem = (it: any): string | null => {
+    if (!it) return null;
+    const typeChar = it.item_type === 'package' ? 'p' : (it.item_type === 'track' ? 't' : (it.item_type === 'album' ? 'a' : ''));
+    const candidateKeys: string[] = [];
+    if (it.sale_item_id) {
+      if (it.sale_item_type) candidateKeys.push(`${it.sale_item_type}${it.sale_item_id}`);
+      candidateKeys.push(`p${it.sale_item_id}`, `a${it.sale_item_id}`, `t${it.sale_item_id}`, String(it.sale_item_id));
+    }
+    if (it.item_id) {
+      if (typeChar) candidateKeys.push(`${typeChar}${it.item_id}`);
+      candidateKeys.push(`p${it.item_id}`, `a${it.item_id}`, `t${it.item_id}`);
+    }
+    if (it.tralbum_id) {
+      if (it.tralbum_type) candidateKeys.push(`${it.tralbum_type}${it.tralbum_id}`);
+      candidateKeys.push(`a${it.tralbum_id}`, `t${it.tralbum_id}`, `p${it.tralbum_id}`);
+    }
+    if (it.why_key) {
+      candidateKeys.push(String(it.why_key));
+    }
+
+    for (const k of candidateKeys) {
+      if (k && redownloadUrls[k]) {
+        return String(redownloadUrls[k]).replace(/&amp;/g, '&').trim();
+      }
+    }
+
+    if (it.sale_item_id) {
+      const sIdStr = String(it.sale_item_id);
+      for (const val of Object.values(redownloadUrls)) {
+        if (typeof val === 'string' && val.includes(`sitem_id=${sIdStr}`)) {
+          return val.replace(/&amp;/g, '&').trim();
+        }
+      }
+    }
+    return null;
+  };
+
+  const scored: { score: number; dlUrl: string }[] = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it || typeof it !== 'object') continue;
+    const dlUrl = findRedownloadForItem(it);
+    if (!dlUrl) continue;
+
+    let score = 0;
+    const itTralbumId = Number(it.tralbum_id || 0);
+    const itItemId = Number(it.item_id || 0);
+    const itUrlNorm = normUrl(it.item_url || it.tralbum_url);
+    const itTitleNorm = normText(it.item_title || it.title);
+    const itTitleBase = stripParens(itTitleNorm);
+    const itArtistNorm = normText(it.band_name || it.artist);
+
+    if (targetIdNum && (itTralbumId === targetIdNum || itItemId === targetIdNum)) {
+      score = 100;
+    } else if (targetUrlNorm && itUrlNorm && itUrlNorm === targetUrlNorm) {
+      score = 90;
+    } else if (targetTitleNorm && itTitleNorm && itTitleNorm === targetTitleNorm) {
+      score = 70 + (targetArtistNorm && itArtistNorm && itArtistNorm.includes(targetArtistNorm) ? 15 : 0);
+    } else if (targetTitleBase && itTitleBase && itTitleBase === targetTitleBase) {
+      score = 50 + (targetArtistNorm && itArtistNorm && itArtistNorm.includes(targetArtistNorm) ? 15 : 0);
+    } else if (targetTitleBase && itTitleNorm && (itTitleNorm.includes(targetTitleBase) || targetTitleBase.includes(itTitleNorm))) {
+      score = 35 + (targetArtistNorm && itArtistNorm && itArtistNorm.includes(targetArtistNorm) ? 15 : 0);
+    }
+
+    if (score > 0) {
+      scored.push({ score, dlUrl });
+    }
+  }
+
+  if (scored.length > 0) {
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].dlUrl;
+  }
+
+  // Fallback direct lookup by target.itemId
+  if (targetIdNum) {
+    for (const k of [`a${targetIdNum}`, `t${targetIdNum}`, `p${targetIdNum}`]) {
+      if (redownloadUrls[k]) {
+        return String(redownloadUrls[k]).replace(/&amp;/g, '&').trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+export function matchCollectionDownloadUrlFromHtml(
+  html: string,
+  target: { itemId?: number; title?: string; url?: string; artist?: string }
+): string | null {
+  if (!html) return null;
+  const targetTitle = cleanHtmlText(target.title || '').toLowerCase().trim();
+  const targetIdStr = target.itemId ? String(target.itemId) : '';
+  const liBlocks = Array.from(
+    html.matchAll(/<li[^>]*class=["'][^"']*collection-item-container[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi)
+  );
+
+  for (const m of liBlocks) {
+    const fullLi = m[0];
+    const dlMatch = fullLi.match(/class=["'][^"']*redownload-item[^"']*["'][^>]*>[\s\S]*?<a[^>]*href=["']([^"']+)["']/i);
+    if (!dlMatch?.[1]) continue;
+
+    const dlUrl = dlMatch[1].replace(/&amp;/g, '&').trim();
+    if (targetIdStr && (fullLi.includes(`data-tralbumid="${targetIdStr}"`) || fullLi.includes(`data-itemid="${targetIdStr}"`))) {
+      return dlUrl;
+    }
+    if (target.url && fullLi.toLowerCase().includes(target.url.replace(/\/+$/, '').toLowerCase())) {
+      return dlUrl;
+    }
+    if (targetTitle) {
+      const liTitleMatch = fullLi.match(/data-title=["']([^"']+)["']/i) || fullLi.match(/class=["'][^"']*collection-item-title[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
+      const liTitle = cleanHtmlText(liTitleMatch?.[1] || '').toLowerCase().trim();
+      if (liTitle && (liTitle === targetTitle || liTitle.includes(targetTitle))) {
+        return dlUrl;
+      }
+    }
   }
   return null;
 }
@@ -547,6 +768,7 @@ export function parseReleasePageData(
     tralbum?.you_own_it ||
     /you\s+own\s+this|you\s+own\s+it|class="[^"]*you-own-this/i.test(subHtml)
   );
+  const collectionUrl = extractCollectionUrlFromHtml(subHtml);
 
   const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
   const isSetPrice = Boolean(current?.is_set_price);
@@ -882,6 +1104,7 @@ export function parseReleasePageData(
     priceFormatted,
     requireEmail,
     freeDlPage: freeDlPage || undefined,
+    collectionUrl,
     trackListFormatted,
     audioStreams,
     aboutText,

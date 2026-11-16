@@ -564,6 +564,7 @@ export default function App() {
 
         return {
           ...existing,
+          collectionUrl: r.collectionUrl || existing.collectionUrl,
           downloadScope: targetScope,
           stage: isComplete ? 'completed' : 'pending',
           error: undefined,
@@ -606,6 +607,7 @@ export default function App() {
         audioDownloaded: false,
         infoZipDownloaded: false,
         freeDownloadPageUrl: r.freeDownloadPageUrl,
+        collectionUrl: r.collectionUrl,
         retryCount: 0,
         lastUpdated: new Date().toISOString(),
         logs: [],
@@ -715,7 +717,13 @@ export default function App() {
 
       try {
         let downloadPageUrl = qItem.freeDownloadPageUrl || rel.freeDownloadPageUrl;
-        const isEmailEligible = Boolean(
+        const isOwned = Boolean(
+          qItem.isPurchased ||
+          rel.isPurchased ||
+          qItem.badgeType === 'own' ||
+          rel.badgeType === 'own'
+        );
+        const isEmailEligible = !isOwned && Boolean(
           qItem.requiresEmail ||
           rel.requiresEmail ||
           qItem.isNameYourPrice ||
@@ -736,11 +744,11 @@ export default function App() {
           rel.badgeType === 'preorder'
         );
 
-        const isPaidOnly = isPreorder || (!isEmailEligible && !qItem.isPurchased && !rel.isPurchased && Boolean(
+        const isPaidOnly = isPreorder || (!isEmailEligible && !isOwned && Boolean(
           (qItem.badgeType === 'paid' || rel.badgeType === 'paid') ||
           (!downloadPageUrl && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0) && !qItem.isFree && !rel.isFree)
         ));
-        const isDirectFree = !isPaidOnly && !isPreorder && Boolean(downloadPageUrl || qItem.isPurchased || rel.isPurchased || qItem.badgeType === 'own' || rel.badgeType === 'own' || (!isEmailEligible && (qItem.isFree || rel.isFree || qItem.badgeType === 'free' || rel.badgeType === 'free')));
+        const isDirectFree = !isPaidOnly && !isPreorder && Boolean(downloadPageUrl || isOwned || (!isEmailEligible && (qItem.isFree || rel.isFree || qItem.badgeType === 'free' || rel.badgeType === 'free')));
 
         const hasGasWatchdog = Boolean(settings.gasWebhookUrl && settings.gasWebhookUrl.trim());
 
@@ -817,8 +825,8 @@ export default function App() {
                 }
               }
 
-              // Stage 2: Trigger Email on Bandcamp if still needed
-              const isEmailWalled = (qItem.requiresEmail || qItem.isNameYourPrice) && !downloadPageUrl;
+              // Stage 2: Trigger Email on Bandcamp if still needed (never for Own purchases)
+              const isEmailWalled = !isOwned && (qItem.requiresEmail || qItem.isNameYourPrice) && !downloadPageUrl;
               if (!downloadPageUrl && isEmailWalled) {
                 logAndSync('triggering_email', `Triggering Bandcamp email dispatch to ${settings.fallbackEmail || 'listener'}...`);
 
@@ -883,6 +891,29 @@ export default function App() {
                   if (!foundFromPoll && !downloadPageUrl) {
                     logAndSync('polling_gas', 'Notice: Signed Bandcamp download link not detected in Gmail yet.');
                   }
+                }
+              }
+
+              // Stage 3b: If release is "Own" (purchased) and no email download link was found, look it up in the signed-in Bandcamp user collection
+              if (isOwned && !downloadPageUrl && apiClient.isExtension) {
+                logAndSync('resolving_stat', `Searching your Bandcamp collection for purchased download link ("${qItem.title}")...`);
+                try {
+                  const colData = await apiClient.findCollectionDownload({
+                    albumUrl: qItem.url,
+                    itemId: qItem.itemId,
+                    title: qItem.title,
+                    artist: effectiveArtist,
+                    collectionUrl: qItem.collectionUrl || rel.collectionUrl,
+                  });
+                  debugLog('pipeline', 'Collection search response:', colData);
+                  if (colData && colData.found && colData.downloadPageUrl) {
+                    downloadPageUrl = colData.downloadPageUrl;
+                    logAndSync('resolving_stat', 'Found download link in your Bandcamp collection!');
+                  } else if (colData?.error) {
+                    logAndSync('resolving_stat', `Collection lookup note: ${colData.error}`);
+                  }
+                } catch (colErr: any) {
+                  debugLog('pipeline', 'Collection search warning:', colErr);
                 }
               }
 

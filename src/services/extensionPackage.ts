@@ -205,6 +205,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
 
         const res = await fetch(targetUrl, {
+          credentials: 'include',
           headers: {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
           }
@@ -299,6 +300,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             priceFormatted: parsed.priceFormatted,
             requiresEmail: parsed.requireEmail,
             freeDownloadPageUrl: parsed.freeDlPage || undefined,
+            collectionUrl: parsed.collectionUrl || undefined,
             trackCount: parsed.trackListFormatted.length,
             trackList: parsed.trackListFormatted,
             audioStreams: parsed.audioStreams,
@@ -316,13 +318,177 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // Collection lookup helper & cache for "Own" (purchased) releases
+  let cachedBandcampFan = { collectionUrl: '', fanId: 0 };
+
+  async function resolveOwnedCollectionDownload(params) {
+    const { albumUrl, itemId, title, artist, collectionUrl } = params || {};
+    let effectiveCollectionUrl = collectionUrl || cachedBandcampFan.collectionUrl || '';
+    let resolvedItemId = itemId ? Number(itemId) : 0;
+    let resolvedTitle = title || '';
+    let resolvedArtist = artist || '';
+
+    // 1. If we don't know the user's collection URL (bandcamp.com/<user_id>), extract it from albumUrl ("you-own-this-link") or bandcamp.com
+    if (!effectiveCollectionUrl && albumUrl) {
+      try {
+        const albumRes = await fetch(albumUrl, {
+          credentials: 'include',
+          headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*' }
+        });
+        if (albumRes.ok) {
+          const albumHtml = await albumRes.text();
+          if (typeof extractCollectionUrlFromHtml === 'function') {
+            effectiveCollectionUrl = extractCollectionUrlFromHtml(albumHtml) || '';
+          }
+          if (!resolvedItemId && typeof extractBandcampTralbum === 'function') {
+            const tr = extractBandcampTralbum(albumHtml);
+            if (tr?.current?.id) resolvedItemId = Number(tr.current.id);
+            if (!resolvedTitle && tr?.current?.title) resolvedTitle = String(tr.current.title);
+            if (!resolvedArtist && tr?.artist) resolvedArtist = String(tr.artist);
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (!effectiveCollectionUrl) {
+      try {
+        const homeRes = await fetch('https://bandcamp.com', {
+          credentials: 'include',
+          headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*' }
+        });
+        if (homeRes.ok) {
+          const homeHtml = await homeRes.text();
+          if (typeof extractCollectionUrlFromHtml === 'function') {
+            effectiveCollectionUrl = extractCollectionUrlFromHtml(homeHtml) || '';
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (!effectiveCollectionUrl) {
+      return {
+        found: false,
+        error: 'Could not determine logged-in Bandcamp user collection URL. Make sure you are signed in on bandcamp.com.'
+      };
+    }
+
+    cachedBandcampFan.collectionUrl = effectiveCollectionUrl;
+    const target = { itemId: resolvedItemId, title: resolvedTitle, url: albumUrl, artist: resolvedArtist };
+
+    // 2. Fetch collection page to obtain fan_id and check initial cached items / DOM redownload links
+    let fanId = cachedBandcampFan.collectionUrl === effectiveCollectionUrl ? cachedBandcampFan.fanId : 0;
+    try {
+      const colRes = await fetch(effectiveCollectionUrl, {
+        credentials: 'include',
+        headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*' }
+      });
+      if (colRes.ok) {
+        const colHtml = await colRes.text();
+        if (typeof extractPagedataBlob === 'function') {
+          const blob = extractPagedataBlob(colHtml);
+          if (blob) {
+            const detectedFanId = Number(blob?.fan_data?.fan_id || blob?.current_fan?.fan_id || blob?.identities?.fan?.id || 0);
+            if (detectedFanId) {
+              fanId = detectedFanId;
+              cachedBandcampFan.fanId = fanId;
+            }
+            const colItems = Object.values(blob?.item_cache?.collection || {});
+            const hiddenItems = Object.values(blob?.item_cache?.hidden || {});
+            if (typeof matchCollectionDownloadUrl === 'function') {
+              const directHit =
+                matchCollectionDownloadUrl(colItems, blob?.collection_data?.redownload_urls, target) ||
+                matchCollectionDownloadUrl(hiddenItems, blob?.hidden_data?.redownload_urls || blob?.collection_data?.redownload_urls, target);
+              if (directHit) {
+                return { found: true, downloadPageUrl: directHit, source: 'collection_cache', collectionUrl: effectiveCollectionUrl };
+              }
+            }
+          }
+        }
+        if (typeof matchCollectionDownloadUrlFromHtml === 'function') {
+          const htmlHit = matchCollectionDownloadUrlFromHtml(colHtml, target);
+          if (htmlHit) {
+            return { found: true, downloadPageUrl: htmlHit, source: 'collection_html', collectionUrl: effectiveCollectionUrl };
+          }
+        }
+      }
+    } catch (e) {}
+
+    if (!fanId) {
+      return {
+        found: false,
+        collectionUrl: effectiveCollectionUrl,
+        error: 'Could not read fan_id from collection page. Ensure you are logged into bandcamp.com in this browser.'
+      };
+    }
+
+    // 3. Query Bandcamp collection search API (same endpoint behind <input class="search-box" placeholder="search your collection...">)
+    const searchCandidates = [];
+    if (resolvedTitle) {
+      const trimmed = resolvedTitle.trim();
+      if (trimmed) searchCandidates.push(trimmed);
+      const noParens = trimmed.replace(/\s*[\(\[][^)\]]*[\)\]]\s*/g, ' ').replace(/\s+/g, ' ').trim();
+      if (noParens && noParens !== trimmed) searchCandidates.push(noParens);
+    }
+    if (resolvedArtist && resolvedArtist.trim() && !searchCandidates.includes(resolvedArtist.trim())) {
+      searchCandidates.push(resolvedArtist.trim());
+    }
+
+    for (const searchKey of searchCandidates) {
+      try {
+        const searchRes = await fetch('https://bandcamp.com/api/fancollection/1/search_items', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: JSON.stringify({
+            fan_id: fanId,
+            search_key: searchKey,
+            search_type: 'collection'
+          })
+        });
+        if (!searchRes.ok) continue;
+        const searchJson = await searchRes.json();
+        const items = Array.isArray(searchJson?.tralbums) ? searchJson.tralbums : [];
+        if (typeof matchCollectionDownloadUrl === 'function') {
+          const hit = matchCollectionDownloadUrl(items, searchJson?.redownload_urls, target);
+          if (hit) {
+            return { found: true, downloadPageUrl: hit, source: 'collection_search', collectionUrl: effectiveCollectionUrl };
+          }
+        }
+      } catch (e) {}
+    }
+
+    return {
+      found: false,
+      collectionUrl: effectiveCollectionUrl,
+      error: 'Item not matched in collection redownload links.'
+    };
+  }
+
+  // 3a. Search Bandcamp user collection for purchased "Own" release download link
+  if (request.action === 'FIND_COLLECTION_DOWNLOAD') {
+    (async () => {
+      try {
+        const result = await resolveOwnedCollectionDownload(request);
+        sendResponse({ success: Boolean(result.found), ...result });
+      } catch (err) {
+        sendResponse({ success: false, found: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
   // 3. Resolve download link via statdownload / popplers CDN
   if (request.action === 'RESOLVE_DOWNLOAD') {
     (async () => {
       try {
         const { downloadPageUrl, format, albumUrl, release } = request;
         let effectivePageUrl = downloadPageUrl || release?.freeDownloadPageUrl;
-        const isEmailWalled = Boolean(
+        const isOwned = Boolean(release?.isPurchased || release?.badgeType === 'own');
+        const isEmailWalled = !isOwned && Boolean(
           release?.requiresEmail ||
           release?.badgeType === 'email' ||
           release?.isNameYourPrice
@@ -333,10 +499,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           effectivePageUrl = undefined;
         }
 
+        // If no downloadPageUrl and this is an Own (purchased) release, search user collection first
+        if (!effectivePageUrl && isOwned) {
+          try {
+            const colResult = await resolveOwnedCollectionDownload({
+              albumUrl: albumUrl || release?.url,
+              itemId: request.itemId || release?.itemId,
+              title: release?.title,
+              artist: release?.artist,
+              collectionUrl: release?.collectionUrl,
+            });
+            if (colResult?.found && colResult.downloadPageUrl) {
+              effectivePageUrl = colResult.downloadPageUrl;
+            }
+          } catch (colErr) {}
+        }
+
         // If no downloadPageUrl but albumUrl is present, fetch album page to see if freeDownloadPage is available (only for direct free releases)
-        if (!effectivePageUrl && albumUrl && !isEmailWalled) {
+        if (!effectivePageUrl && albumUrl && !isEmailWalled && !isOwned) {
           try {
             const pageRes = await fetch(albumUrl, {
+              credentials: 'include',
               headers: {
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
               }
@@ -354,7 +537,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (effectivePageUrl) {
           let resolved = await resolveBandcampDownload(effectivePageUrl, format || 'flac');
           // If cached freeDownloadPageUrl failed/expired and this is a direct free release, re-fetch albumUrl for a fresh token
-          if ((!resolved || !resolved.success) && !isEmailWalled && albumUrl) {
+          if ((!resolved || !resolved.success) && !isEmailWalled && !isOwned && albumUrl) {
             try {
               const freshRes = await fetch(albumUrl, {
                 credentials: 'include',
@@ -382,7 +565,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
         } else {
           const isPreorder = Boolean(release?.badgeType === 'preorder' || release?.isPreorder);
-          const isPaid = isPreorder || Boolean(release?.badgeType === 'paid' || release?.isPaid);
+          const isPaid = !isOwned && (isPreorder || Boolean(release?.badgeType === 'paid' || release?.isPaid));
           sendResponse({
             success: false,
             isPaid,
@@ -390,7 +573,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             skipAudio: isPaid,
             message: isPreorder
               ? 'Pre-order release: audio master is not yet available prior to official release date. Packaging companion info ZIP.'
-              : (isPaid ? 'Paid release: audio skipped per policy. Packaging companion info ZIP.' : 'Direct download link not yet resolved from mailbox.'),
+              : (isOwned
+                ? 'Owned release: download link not found in Gmail or your Bandcamp collection (verify you are signed in to bandcamp.com).'
+                : (isPaid ? 'Paid release: audio skipped per policy. Packaging companion info ZIP.' : 'Direct download link not yet resolved from mailbox.')),
             title: release?.title,
             artist: release?.artist,
             artUrl: release?.artUrl,
