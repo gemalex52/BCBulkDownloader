@@ -772,31 +772,34 @@ export function parseReleasePageData(
 
   const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
   const isSetPrice = Boolean(current?.is_set_price);
+  const rawFreeDlPage = tralbum?.freeDownloadPage || null;
   const digitalBuyMatch = subHtml.match(/<li[^>]*class="[^"]*buyItem[^"]*\bdigital\b[^"]*"[^>]*>([\s\S]*?)<\/li>/i);
   const digitalBuyBlock = digitalBuyMatch ? digitalBuyMatch[1] : '';
   const hasFreeDownloadButton = Boolean(
     /<button[^>]*class="[^"]*(?:buy-link|download-link)[^"]*"[^>]*>\s*free\s+download\s*<\/button>/i.test(digitalBuyBlock || subHtml) ||
     (digitalBuyBlock && /<button[^>]*>[\s\S]*?\bfree\s+download\b[\s\S]*?<\/button>/i.test(digitalBuyBlock))
   );
-  const hasFreeButton = hasFreeDownloadButton || (minPrice === 0 && current?.download_pref === 1);
+  const hasFreeButton = hasFreeDownloadButton || current?.download_pref === 1;
   const hasNypText = /name\s+your\s+price/i.test(digitalBuyBlock || subHtml) || /buyItemNyp/i.test(digitalBuyBlock || subHtml) || (minPrice === 0 && current?.download_pref === 2);
 
-  // A release can ONLY be an email download if $0 checkout is allowed:
-  // 1. Explicit require_email_0 flag (Bandcamp's specific property for email required for $0 download)
-  // 2. OR minPrice is 0 and email is required (current.require_email === 1 || download_pref === 2 || (hasNypText && !hasFreeButton))
-  // 3. BUT if minPrice > 0 and no require_email_0 and not hasFreeButton, it is strictly PAID!
-  const isZeroEligible = (minPrice === 0) || Boolean(current?.require_email_0 === 1) || hasFreeButton;
+  // $0 / Free download is available ONLY if:
+  // 1. minPrice === 0 ($0 NYP or Free)
+  // 2. OR Bandcamp explicitly exposes a Free Download button / download_pref === 1 (even if a legacy minPrice > 0 is set alongside Free Download + email)
+  // If minPrice > 0 and download_pref !== 1 (Buy Digital Album button), stale require_email_0 flags do NOT make it free/email!
+  const isZeroEligible = (minPrice === 0) || hasFreeButton;
+  const emailFlagSet = current?.require_email === 1 || current?.require_email_0 === 1;
 
   const isEmailWalled = Boolean(
-    current?.require_email_0 === 1 ||
-    (isZeroEligible && (current?.require_email === 1 || current?.download_pref === 2 || hasNypText) && !hasFreeButton)
+    isZeroEligible && (
+      (hasFreeButton && (emailFlagSet || !rawFreeDlPage)) ||
+      (!hasFreeButton && (emailFlagSet || current?.download_pref === 2 || hasNypText))
+    )
   );
 
-  const isNypEligible = isZeroEligible && (hasNypText || current?.require_email_0 === 1);
+  const isNypEligible = isZeroEligible && (hasNypText || emailFlagSet);
 
-  // freeDownloadPage is ONLY a direct download link if the release is NOT email-walled and has a direct free download button without email required
-  const rawFreeDlPage = tralbum?.freeDownloadPage || null;
-  const freeDlPage = (!isEmailWalled && hasFreeButton && current?.require_email_0 !== 1) ? rawFreeDlPage : null;
+  // freeDownloadPage is ONLY a direct download link if it exists and email is NOT required
+  const freeDlPage = (!isEmailWalled && hasFreeButton && !emailFlagSet) ? rawFreeDlPage : null;
   const requireEmail = isEmailWalled;
 
   // Check for pre-order status
