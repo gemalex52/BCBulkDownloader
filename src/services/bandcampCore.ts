@@ -550,8 +550,14 @@ export function parseReleasePageData(
 
   const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
   const isSetPrice = Boolean(current?.is_set_price);
-  const hasFreeButton = /free\s+download/i.test(subHtml) || (minPrice === 0 && current?.download_pref === 1);
-  const hasNypText = /name\s+your\s+price/i.test(subHtml) || /buyItemNyp/i.test(subHtml) || (minPrice === 0 && current?.download_pref === 2);
+  const digitalBuyMatch = subHtml.match(/<li[^>]*class="[^"]*buyItem[^"]*\bdigital\b[^"]*"[^>]*>([\s\S]*?)<\/li>/i);
+  const digitalBuyBlock = digitalBuyMatch ? digitalBuyMatch[1] : '';
+  const hasFreeDownloadButton = Boolean(
+    /<button[^>]*class="[^"]*(?:buy-link|download-link)[^"]*"[^>]*>\s*free\s+download\s*<\/button>/i.test(digitalBuyBlock || subHtml) ||
+    (digitalBuyBlock && /<button[^>]*>[\s\S]*?\bfree\s+download\b[\s\S]*?<\/button>/i.test(digitalBuyBlock))
+  );
+  const hasFreeButton = hasFreeDownloadButton || (minPrice === 0 && current?.download_pref === 1);
+  const hasNypText = /name\s+your\s+price/i.test(digitalBuyBlock || subHtml) || /buyItemNyp/i.test(digitalBuyBlock || subHtml) || (minPrice === 0 && current?.download_pref === 2);
 
   // A release can ONLY be an email download if $0 checkout is allowed:
   // 1. Explicit require_email_0 flag (Bandcamp's specific property for email required for $0 download)

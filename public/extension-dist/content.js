@@ -170,18 +170,12 @@
 
     const host = document.createElement('div');
     host.id = 'bc-bulk-open-tab-host';
-    host.style.cssText = 'all: initial !important; position: fixed !important; bottom: 20px !important; left: 20px !important; z-index: 2147483647 !important; pointer-events: auto !important; display: block !important;';
+    host.style.cssText = 'all: initial !important; position: fixed !important; bottom: 20px !important; left: 20px !important; top: auto !important; right: auto !important; z-index: 2147483647 !important; pointer-events: auto !important; display: block !important; width: auto !important; height: auto !important; margin: 0 !important; padding: 0 !important;';
 
     const shadow = host.attachShadow({ mode: 'open' });
 
     const style = document.createElement('style');
     style.textContent = `
-      :host {
-        all: initial !important;
-        position: fixed !important;
-        z-index: 2147483647 !important;
-        display: block !important;
-      }
       .bc-dl-btn {
         all: unset !important;
         display: inline-flex !important;
@@ -234,28 +228,30 @@
 
     // Restore saved non-overlapping position if user dragged the button previously
     const clampPos = (leftPx, topPx) => {
-      const maxX = Math.max(12, window.innerWidth - 160);
-      const maxY = Math.max(12, window.innerHeight - 52);
+      const btnWidth = host.offsetWidth || 150;
+      const btnHeight = host.offsetHeight || 42;
+      const maxX = Math.max(12, window.innerWidth - btnWidth - 12);
+      const maxY = Math.max(12, window.innerHeight - btnHeight - 12);
       return {
-        left: Math.min(Math.max(12, leftPx), maxX),
-        top: Math.min(Math.max(12, topPx), maxY),
+        left: Math.round(Math.min(Math.max(12, leftPx), maxX)),
+        top: Math.round(Math.min(Math.max(12, topPx), maxY)),
       };
     };
 
-    const applySavedPos = (pos) => {
-      if (!pos || typeof pos.left !== 'number' || typeof pos.top !== 'number') return;
-      const clamped = clampPos(pos.left, pos.top);
+    const setHostPosition = (leftPx, topPx) => {
+      const clamped = clampPos(leftPx, topPx);
       host.style.setProperty('bottom', 'auto', 'important');
       host.style.setProperty('right', 'auto', 'important');
       host.style.setProperty('left', clamped.left + 'px', 'important');
       host.style.setProperty('top', clamped.top + 'px', 'important');
+      return clamped;
     };
 
     try {
       if (chrome?.storage?.local) {
-        chrome.storage.local.get(['bc_floating_btn_pos'], (res) => {
-          if (res && res.bc_floating_btn_pos) {
-            applySavedPos(res.bc_floating_btn_pos);
+        chrome.storage.local.get(['bc_floating_btn_pos_v2'], (res) => {
+          if (res && res.bc_floating_btn_pos_v2 && typeof res.bc_floating_btn_pos_v2.left === 'number' && typeof res.bc_floating_btn_pos_v2.top === 'number') {
+            setHostPosition(res.bc_floating_btn_pos_v2.left, res.bc_floating_btn_pos_v2.top);
           }
         });
       }
@@ -268,8 +264,39 @@
     let origLeft = 0;
     let origTop = 0;
 
+    const onPointerMove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!dragMoved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        dragMoved = true;
+      }
+      if (dragMoved) {
+        e.preventDefault();
+        setHostPosition(origLeft + dx, origTop + dy);
+      }
+    };
+
+    const finishDrag = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      window.removeEventListener('pointermove', onPointerMove, true);
+      window.removeEventListener('pointerup', finishDrag, true);
+      window.removeEventListener('pointercancel', finishDrag, true);
+      if (dragMoved) {
+        const rect = host.getBoundingClientRect();
+        const clamped = setHostPosition(rect.left, rect.top);
+        try {
+          if (chrome?.storage?.local) {
+            chrome.storage.local.set({ bc_floating_btn_pos_v2: clamped });
+          }
+        } catch (err) {}
+      }
+    };
+
     btn.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      e.preventDefault();
       const rect = host.getBoundingClientRect();
       isDragging = true;
       dragMoved = false;
@@ -277,38 +304,9 @@
       startY = e.clientY;
       origLeft = rect.left;
       origTop = rect.top;
-      try { btn.setPointerCapture(e.pointerId); } catch (err) {}
-    });
-
-    btn.addEventListener('pointermove', (e) => {
-      if (!isDragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if (!dragMoved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
-        dragMoved = true;
-      }
-      if (dragMoved) {
-        const clamped = clampPos(origLeft + dx, origTop + dy);
-        host.style.setProperty('bottom', 'auto', 'important');
-        host.style.setProperty('right', 'auto', 'important');
-        host.style.setProperty('left', clamped.left + 'px', 'important');
-        host.style.setProperty('top', clamped.top + 'px', 'important');
-      }
-    });
-
-    btn.addEventListener('pointerup', (e) => {
-      if (!isDragging) return;
-      isDragging = false;
-      try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
-      if (dragMoved) {
-        const rect = host.getBoundingClientRect();
-        const clamped = clampPos(rect.left, rect.top);
-        try {
-          if (chrome?.storage?.local) {
-            chrome.storage.local.set({ bc_floating_btn_pos: clamped });
-          }
-        } catch (err) {}
-      }
+      window.addEventListener('pointermove', onPointerMove, true);
+      window.addEventListener('pointerup', finishDrag, true);
+      window.addEventListener('pointercancel', finishDrag, true);
     });
 
     btn.addEventListener('click', (e) => {
