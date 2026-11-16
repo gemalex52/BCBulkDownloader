@@ -155,9 +155,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           throw new Error('Missing release URL in item');
         }
         const res = await fetch(item.url, {
+          credentials: 'include',
           headers: {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
           }
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -268,7 +268,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
 
         if (effectivePageUrl) {
-          const resolved = await resolveBandcampDownload(effectivePageUrl, format || 'flac');
+          let resolved = await resolveBandcampDownload(effectivePageUrl, format || 'flac');
+          // If cached freeDownloadPageUrl failed/expired and this is a direct free release, re-fetch albumUrl for a fresh token
+          if ((!resolved || !resolved.success) && !isEmailWalled && albumUrl) {
+            try {
+              const freshRes = await fetch(albumUrl, {
+                credentials: 'include',
+                headers: {
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
+                }
+              });
+              if (freshRes.ok) {
+                const freshHtml = await freshRes.text();
+                const freshTralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(freshHtml) : null;
+                if (freshTralbum && freshTralbum.freeDownloadPage && freshTralbum.freeDownloadPage !== effectivePageUrl) {
+                  resolved = await resolveBandcampDownload(freshTralbum.freeDownloadPage, format || 'flac');
+                }
+              }
+            } catch (freshErr) {}
+          }
           sendResponse({
             ...resolved,
             infoText: release?.infoText,

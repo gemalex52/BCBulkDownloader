@@ -21,6 +21,7 @@ import { DownloadManager } from './components/DownloadManager';
 import { ExtensionPackageCenter } from './components/ExtensionPackageCenter';
 import { InstallGuide } from './components/InstallGuide';
 import { SettingsView } from './components/SettingsView';
+import { ScanListModal } from './components/ScanListModal';
 import { createExtensionZip } from './services/extensionPackage';
 import { buildCompanionInfoZip } from './services/companionZipBuilder';
 import {
@@ -73,6 +74,7 @@ export default function App() {
   const [skipTrackSubpages, setSkipTrackSubpages] = useState(true);
   const [selectedFormat, setSelectedFormat] = useState('flac');
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [isScanListOpen, setIsScanListOpen] = useState(false);
   const [scanMeta, setScanMeta] = useState<{ source: string; timestamp?: string }>({ source: '', timestamp: '' });
 
   // Persistent Queue Session State
@@ -1267,6 +1269,56 @@ export default function App() {
     });
   };
 
+  // Toggle selection state for currently displayed/filtered items
+  const handleToggleDisplayed = (displayedIds: string[]) => {
+    if (!displayedIds || displayedIds.length === 0) return;
+    const idSet = new Set(displayedIds);
+    setReleases((prev) => {
+      const displayed = prev.filter((r) => idSet.has(r.id));
+      if (displayed.length === 0) return prev;
+      const allSelected = displayed.every((r) => Boolean(r.selected));
+      return prev.map((r) => (idSet.has(r.id) ? { ...r, selected: !allSelected } : r));
+    });
+  };
+
+  // Apply matched list items: de-select from queue and mark as Audio Downloaded
+  const handleApplyScanList = (matchedReleaseIds: string[], alsoMarkInfoZip?: boolean) => {
+    if (!matchedReleaseIds || matchedReleaseIds.length === 0) return;
+    const matchSet = new Set(matchedReleaseIds);
+
+    const updated = releases.map((r) => {
+      if (matchSet.has(r.id)) {
+        return {
+          ...r,
+          selected: false,
+          audioDownloaded: true,
+          ...(alsoMarkInfoZip ? { infoZipDownloaded: true } : {}),
+        };
+      }
+      return r;
+    });
+
+    setReleases(updated);
+
+    // Update persistent queue session items
+    matchedReleaseIds.forEach((id) => {
+      updateQueueItem(currentHostname, id, {
+        audioDownloaded: true,
+        ...(alsoMarkInfoZip ? { infoZipDownloaded: true } : {}),
+      });
+    });
+
+    const refreshed = syncSessionFromStorage(currentHostname);
+    if (refreshed) updateCurrentSession(refreshed);
+
+    // Persist to local & extension storage cache
+    saveToLocalCache(url, releases[0]?.artist || 'Artist', updated);
+
+    setScanProgressText(
+      `List Scan: De-selected & marked ${matchedReleaseIds.length} release${matchedReleaseIds.length === 1 ? '' : 's'} as Audio Downloaded.`
+    );
+  };
+
   // Download Single Release
   const handleDownloadSingle = async (release: ScannedRelease) => {
     debugLog('pipeline', `handleDownloadSingle clicked for "${release.title}".`);
@@ -1490,6 +1542,8 @@ export default function App() {
               onSetBatchScope={handleSetBatchScope}
               onResetReleaseState={handleResetReleaseState}
               onToggleGroupSelect={handleToggleGroupSelect}
+              onToggleDisplayed={handleToggleDisplayed}
+              onOpenScanList={() => setIsScanListOpen(true)}
             />
           </div>
         )}
@@ -1553,6 +1607,14 @@ export default function App() {
           createCompanionInfoZip={settings.createCompanionInfoZip}
         />
       )}
+
+      {/* Scan List Modal */}
+      <ScanListModal
+        isOpen={isScanListOpen}
+        onClose={() => setIsScanListOpen(false)}
+        releases={releases}
+        onApplyMatches={handleApplyScanList}
+      />
     </div>
   );
 }

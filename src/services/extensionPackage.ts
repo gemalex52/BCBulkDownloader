@@ -239,9 +239,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           throw new Error('Missing release URL in item');
         }
         const res = await fetch(item.url, {
+          credentials: 'include',
           headers: {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
           }
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -352,7 +352,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
 
         if (effectivePageUrl) {
-          const resolved = await resolveBandcampDownload(effectivePageUrl, format || 'flac');
+          let resolved = await resolveBandcampDownload(effectivePageUrl, format || 'flac');
+          // If cached freeDownloadPageUrl failed/expired and this is a direct free release, re-fetch albumUrl for a fresh token
+          if ((!resolved || !resolved.success) && !isEmailWalled && albumUrl) {
+            try {
+              const freshRes = await fetch(albumUrl, {
+                credentials: 'include',
+                headers: {
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
+                }
+              });
+              if (freshRes.ok) {
+                const freshHtml = await freshRes.text();
+                const freshTralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(freshHtml) : null;
+                if (freshTralbum && freshTralbum.freeDownloadPage && freshTralbum.freeDownloadPage !== effectivePageUrl) {
+                  resolved = await resolveBandcampDownload(freshTralbum.freeDownloadPage, format || 'flac');
+                }
+              }
+            } catch (freshErr) {}
+          }
           sendResponse({
             ...resolved,
             infoText: release?.infoText,
@@ -781,7 +799,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     const host = document.createElement('div');
     host.id = 'bc-bulk-open-tab-host';
-    host.style.cssText = 'all: initial !important; position: fixed !important; bottom: 24px !important; right: 24px !important; z-index: 2147483647 !important; pointer-events: auto !important; display: block !important;';
+    host.style.cssText = 'all: initial !important; position: fixed !important; bottom: 20px !important; left: 20px !important; z-index: 2147483647 !important; pointer-events: auto !important; display: block !important;';
 
     const shadow = host.attachShadow({ mode: 'open' });
 
@@ -790,8 +808,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       :host {
         all: initial !important;
         position: fixed !important;
-        bottom: 24px !important;
-        right: 24px !important;
         z-index: 2147483647 !important;
         display: block !important;
       }
@@ -807,20 +823,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         font-weight: 800 !important;
         letter-spacing: 0.3px !important;
         line-height: 1 !important;
-        padding: 9px 15px !important;
+        padding: 9px 14px !important;
         border-radius: 9999px !important;
         border: 2px solid #ffffff !important;
         box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6), 0 0 10px rgba(0, 180, 216, 0.4) !important;
-        cursor: pointer !important;
+        cursor: grab !important;
         user-select: none !important;
+        touch-action: none !important;
         transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s ease !important;
       }
       .bc-dl-btn:hover {
-        transform: scale(1.07) translateY(-1px) !important;
+        transform: scale(1.06) translateY(-1px) !important;
         box-shadow: 0 6px 22px rgba(0, 0, 0, 0.7), 0 0 16px rgba(0, 180, 216, 0.6) !important;
       }
       .bc-dl-btn:active {
         transform: scale(0.97) !important;
+        cursor: grabbing !important;
       }
       .bc-icon-svg {
         width: 18px !important;
@@ -832,7 +850,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const btn = document.createElement('button');
     btn.className = 'bc-dl-btn';
     btn.setAttribute('type', 'button');
-    btn.setAttribute('title', 'Open Bandcamp Bulk Downloader Dashboard for this artist');
+    btn.setAttribute('title', 'Open Bandcamp Bulk Downloader Dashboard (drag to reposition)');
     btn.innerHTML = \`
       <svg class="bc-icon-svg" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect width="128" height="128" rx="26" fill="#0b0f17"/>
@@ -843,9 +861,92 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       <span>Downloader</span>
     \`;
 
+    // Restore saved non-overlapping position if user dragged the button previously
+    const clampPos = (leftPx, topPx) => {
+      const maxX = Math.max(12, window.innerWidth - 160);
+      const maxY = Math.max(12, window.innerHeight - 52);
+      return {
+        left: Math.min(Math.max(12, leftPx), maxX),
+        top: Math.min(Math.max(12, topPx), maxY),
+      };
+    };
+
+    const applySavedPos = (pos) => {
+      if (!pos || typeof pos.left !== 'number' || typeof pos.top !== 'number') return;
+      const clamped = clampPos(pos.left, pos.top);
+      host.style.setProperty('bottom', 'auto', 'important');
+      host.style.setProperty('right', 'auto', 'important');
+      host.style.setProperty('left', clamped.left + 'px', 'important');
+      host.style.setProperty('top', clamped.top + 'px', 'important');
+    };
+
+    try {
+      if (chrome?.storage?.local) {
+        chrome.storage.local.get(['bc_floating_btn_pos'], (res) => {
+          if (res && res.bc_floating_btn_pos) {
+            applySavedPos(res.bc_floating_btn_pos);
+          }
+        });
+      }
+    } catch (e) {}
+
+    let isDragging = false;
+    let dragMoved = false;
+    let startX = 0;
+    let startY = 0;
+    let origLeft = 0;
+    let origTop = 0;
+
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const rect = host.getBoundingClientRect();
+      isDragging = true;
+      dragMoved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      origLeft = rect.left;
+      origTop = rect.top;
+      try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+
+    btn.addEventListener('pointermove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!dragMoved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+        dragMoved = true;
+      }
+      if (dragMoved) {
+        const clamped = clampPos(origLeft + dx, origTop + dy);
+        host.style.setProperty('bottom', 'auto', 'important');
+        host.style.setProperty('right', 'auto', 'important');
+        host.style.setProperty('left', clamped.left + 'px', 'important');
+        host.style.setProperty('top', clamped.top + 'px', 'important');
+      }
+    });
+
+    btn.addEventListener('pointerup', (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (dragMoved) {
+        const rect = host.getBoundingClientRect();
+        const clamped = clampPos(rect.left, rect.top);
+        try {
+          if (chrome?.storage?.local) {
+            chrome.storage.local.set({ bc_floating_btn_pos: clamped });
+          }
+        } catch (err) {}
+      }
+    });
+
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (dragMoved) {
+        dragMoved = false;
+        return;
+      }
       try {
         chrome.runtime.sendMessage({
           action: 'OPEN_DASHBOARD_TAB',

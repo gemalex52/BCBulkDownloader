@@ -2,16 +2,9 @@
 import { ExtraPhotoItem } from '../types/bandcamp';
 
 export const BANDCAMP_FETCH_HEADERS: Record<string, string> = {
-  'User-Agent':
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
   'Accept':
-    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9',
-  'Sec-Fetch-Dest': 'document',
-  'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none',
-  'Sec-Fetch-User': '?1',
-  'Upgrade-Insecure-Requests': '1',
 };
 
 let _debugLoggingEnabled = false;
@@ -939,9 +932,9 @@ export async function resolveBandcampDownload(
 
     debugLog('resolver', 'Fetching Bandcamp download page:', cleanUrl);
     const dlRes = await fetch(cleanUrl, {
+      credentials: 'include',
       headers: {
         ...BANDCAMP_FETCH_HEADERS,
-        Referer: cleanUrl,
       },
     });
 
@@ -1078,40 +1071,7 @@ export async function resolveBandcampDownload(
     }
 
     let finalUrl = '';
-
-    // Direct check: Bandcamp single tracks and prepared archives often return immediate HTTP 302 redirect or direct 200 zip stream
-    try {
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const directCheck = await fetch(target.url, {
-        method: 'GET',
-        headers: {
-          ...BANDCAMP_FETCH_HEADERS,
-          Referer: cleanUrl,
-          ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-        },
-        redirect: 'manual',
-        signal: controller ? controller.signal : undefined,
-      });
-
-      const contentType = (directCheck.headers.get('content-type') || '').toLowerCase();
-      if ([301, 302, 303, 307, 308].includes(directCheck.status)) {
-        const loc = directCheck.headers.get('location');
-        if (loc) {
-          finalUrl = loc.startsWith('http') ? loc : (loc.startsWith('//') ? `https:${loc}` : `https://${loc}`);
-        }
-      } else if (directCheck.status === 200 && (
-        contentType.includes('application/zip') ||
-        contentType.includes('application/octet-stream') ||
-        contentType.includes('audio/')
-      )) {
-        finalUrl = target.url;
-      }
-      if (controller) {
-        controller.abort(); // Immediately release socket so we do not stream the 500MB zip into memory during resolution!
-      }
-    } catch (e) {
-      // Aborting throws AbortError which is expected
-    }
+    let nextStatUrl = target.url;
 
     // Helper to call statdownload
     async function callStat(urlToStat: string): Promise<any> {
@@ -1120,12 +1080,13 @@ export async function resolveBandcampDownload(
         const fullUrl = urlToStat.startsWith('//') ? `https:${urlToStat}` : (urlToStat.startsWith('http') ? urlToStat : `https://${urlToStat}`);
         const parsed = new URL(fullUrl);
         parsed.pathname = parsed.pathname.replace('/download/', '/statdownload/');
-        parsed.searchParams.set('.rand', String(Math.floor(Math.random() * 1000000)));
+        parsed.searchParams.set('.rand', String(Math.floor(Math.random() * 1000000000)));
         parsed.searchParams.set('.vrs', '1');
         const statUrl = parsed.toString();
 
         const res = await fetch(statUrl, {
           method: 'GET',
+          credentials: 'include',
           headers: {
             ...BANDCAMP_FETCH_HEADERS,
             Referer: cleanUrl,
@@ -1146,11 +1107,12 @@ export async function resolveBandcampDownload(
       return null;
     }
 
-    if (!finalUrl) {
+    // Primary Resolution: Bandcamp statdownload polling (handles ready links, busy preparation, and ExpiredFreeDownloadError retry_url rotation)
+    {
       let attempts = 0;
       const maxAttempts = 45; // 45 attempts * 2s = ~90s max waiting for Bandcamp to prepare audio
-      let nextStatUrl = target.url;
       let lastStat: any = null;
+      let errRetryCount = 0;
 
       while (attempts < maxAttempts) {
         attempts++;
@@ -1162,15 +1124,21 @@ export async function resolveBandcampDownload(
             finalUrl = stat.download_url.startsWith('http') ? stat.download_url : (stat.download_url.startsWith('//') ? `https:${stat.download_url}` : `https://${stat.download_url}`);
             break;
           }
+          if (stat.retry_url) {
+            nextStatUrl = stat.retry_url.startsWith('http') ? stat.retry_url : (stat.retry_url.startsWith('//') ? `https:${stat.retry_url}` : `https://${stat.retry_url}`);
+          }
           if (stat.result === 'err') {
-            debugLog('resolver', `Statdownload error on attempt ${attempts}:`, stat);
+            debugLog('resolver', `Statdownload returned err (${stat.errortype || 'unknown'}) on attempt ${attempts}:`, stat);
+            if (stat.retry_url && errRetryCount < 6) {
+              errRetryCount++;
+              debugLog('resolver', `Following retry_url (${errRetryCount}/6):`, nextStatUrl);
+              await new Promise(r => setTimeout(r, 600));
+              continue;
+            }
             break;
           }
           if (stat.result === 'busy') {
             debugLog('resolver', `Statdownload busy (attempt ${attempts}/${maxAttempts}), waiting 2s...`);
-          }
-          if (stat.retry_url) {
-            nextStatUrl = stat.retry_url.startsWith('http') ? stat.retry_url : (stat.retry_url.startsWith('//') ? `https:${stat.retry_url}` : `https://${stat.retry_url}`);
           }
         }
         await new Promise(r => setTimeout(r, 2000));
@@ -1181,25 +1149,40 @@ export async function resolveBandcampDownload(
       }
     }
 
-    // Final attempt if still no URL: check target.url redirect once more or use directFormatUrl
+    // Fallback attempt if still no URL: check redirect on nextStatUrl / target.url or use directFormatUrl
     if (!finalUrl && directFormatUrl) {
       finalUrl = directFormatUrl;
     }
 
     if (!finalUrl) {
       try {
-        const retryCheck = await fetch(target.url, {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const retryCheck = await fetch(nextStatUrl || target.url, {
           method: 'GET',
+          credentials: 'include',
           headers: {
             ...BANDCAMP_FETCH_HEADERS,
             Referer: cleanUrl,
             ...(cookieHeader ? { Cookie: cookieHeader } : {}),
           },
           redirect: 'manual',
+          signal: controller ? controller.signal : undefined,
         });
+        const contentType = (retryCheck.headers.get('content-type') || '').toLowerCase();
         if ([301, 302, 303, 307, 308].includes(retryCheck.status)) {
           const loc = retryCheck.headers.get('location');
-          if (loc) finalUrl = loc;
+          if (loc) {
+            finalUrl = loc.startsWith('http') ? loc : (loc.startsWith('//') ? `https:${loc}` : `https://${loc}`);
+          }
+        } else if (retryCheck.status === 200 && (
+          contentType.includes('application/zip') ||
+          contentType.includes('application/octet-stream') ||
+          contentType.includes('audio/')
+        )) {
+          finalUrl = nextStatUrl || target.url;
+        }
+        if (controller) {
+          controller.abort();
         }
       } catch (e) {}
     }

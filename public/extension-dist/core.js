@@ -39,14 +39,8 @@ var BandcampCore = (() => {
     setDebugLogging: () => setDebugLogging
   });
   var BANDCAMP_FETCH_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1"
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9"
   };
   var _debugLoggingEnabled = false;
   function setDebugLogging(enabled) {
@@ -727,9 +721,9 @@ ${divider}
       }
       debugLog("resolver", "Fetching Bandcamp download page:", cleanUrl);
       const dlRes = await fetch(cleanUrl, {
+        credentials: "include",
         headers: {
-          ...BANDCAMP_FETCH_HEADERS,
-          Referer: cleanUrl
+          ...BANDCAMP_FETCH_HEADERS
         }
       });
       if (!dlRes.ok) throw new Error(`Download page HTTP ${dlRes.status}`);
@@ -831,43 +825,19 @@ ${divider}
         throw new Error("No target download URL available");
       }
       let finalUrl = "";
-      try {
-        const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-        const directCheck = await fetch(target.url, {
-          method: "GET",
-          headers: {
-            ...BANDCAMP_FETCH_HEADERS,
-            Referer: cleanUrl,
-            ...cookieHeader ? { Cookie: cookieHeader } : {}
-          },
-          redirect: "manual",
-          signal: controller ? controller.signal : void 0
-        });
-        const contentType = (directCheck.headers.get("content-type") || "").toLowerCase();
-        if ([301, 302, 303, 307, 308].includes(directCheck.status)) {
-          const loc = directCheck.headers.get("location");
-          if (loc) {
-            finalUrl = loc.startsWith("http") ? loc : loc.startsWith("//") ? `https:${loc}` : `https://${loc}`;
-          }
-        } else if (directCheck.status === 200 && (contentType.includes("application/zip") || contentType.includes("application/octet-stream") || contentType.includes("audio/"))) {
-          finalUrl = target.url;
-        }
-        if (controller) {
-          controller.abort();
-        }
-      } catch (e) {
-      }
+      let nextStatUrl = target.url;
       async function callStat(urlToStat) {
         try {
           if (!urlToStat) return null;
           const fullUrl = urlToStat.startsWith("//") ? `https:${urlToStat}` : urlToStat.startsWith("http") ? urlToStat : `https://${urlToStat}`;
           const parsed = new URL(fullUrl);
           parsed.pathname = parsed.pathname.replace("/download/", "/statdownload/");
-          parsed.searchParams.set(".rand", String(Math.floor(Math.random() * 1e6)));
+          parsed.searchParams.set(".rand", String(Math.floor(Math.random() * 1e9)));
           parsed.searchParams.set(".vrs", "1");
           const statUrl = parsed.toString();
           const res = await fetch(statUrl, {
             method: "GET",
+            credentials: "include",
             headers: {
               ...BANDCAMP_FETCH_HEADERS,
               Referer: cleanUrl,
@@ -887,11 +857,11 @@ ${divider}
         }
         return null;
       }
-      if (!finalUrl) {
+      {
         let attempts = 0;
         const maxAttempts = 45;
-        let nextStatUrl = target.url;
         let lastStat = null;
+        let errRetryCount = 0;
         while (attempts < maxAttempts) {
           attempts++;
           const stat = await callStat(nextStatUrl);
@@ -902,15 +872,21 @@ ${divider}
               finalUrl = stat.download_url.startsWith("http") ? stat.download_url : stat.download_url.startsWith("//") ? `https:${stat.download_url}` : `https://${stat.download_url}`;
               break;
             }
+            if (stat.retry_url) {
+              nextStatUrl = stat.retry_url.startsWith("http") ? stat.retry_url : stat.retry_url.startsWith("//") ? `https:${stat.retry_url}` : `https://${stat.retry_url}`;
+            }
             if (stat.result === "err") {
-              debugLog("resolver", `Statdownload error on attempt ${attempts}:`, stat);
+              debugLog("resolver", `Statdownload returned err (${stat.errortype || "unknown"}) on attempt ${attempts}:`, stat);
+              if (stat.retry_url && errRetryCount < 6) {
+                errRetryCount++;
+                debugLog("resolver", `Following retry_url (${errRetryCount}/6):`, nextStatUrl);
+                await new Promise((r) => setTimeout(r, 600));
+                continue;
+              }
               break;
             }
             if (stat.result === "busy") {
               debugLog("resolver", `Statdownload busy (attempt ${attempts}/${maxAttempts}), waiting 2s...`);
-            }
-            if (stat.retry_url) {
-              nextStatUrl = stat.retry_url.startsWith("http") ? stat.retry_url : stat.retry_url.startsWith("//") ? `https:${stat.retry_url}` : `https://${stat.retry_url}`;
             }
           }
           await new Promise((r) => setTimeout(r, 2e3));
@@ -924,18 +900,29 @@ ${divider}
       }
       if (!finalUrl) {
         try {
-          const retryCheck = await fetch(target.url, {
+          const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+          const retryCheck = await fetch(nextStatUrl || target.url, {
             method: "GET",
+            credentials: "include",
             headers: {
               ...BANDCAMP_FETCH_HEADERS,
               Referer: cleanUrl,
               ...cookieHeader ? { Cookie: cookieHeader } : {}
             },
-            redirect: "manual"
+            redirect: "manual",
+            signal: controller ? controller.signal : void 0
           });
+          const contentType = (retryCheck.headers.get("content-type") || "").toLowerCase();
           if ([301, 302, 303, 307, 308].includes(retryCheck.status)) {
             const loc = retryCheck.headers.get("location");
-            if (loc) finalUrl = loc;
+            if (loc) {
+              finalUrl = loc.startsWith("http") ? loc : loc.startsWith("//") ? `https:${loc}` : `https://${loc}`;
+            }
+          } else if (retryCheck.status === 200 && (contentType.includes("application/zip") || contentType.includes("application/octet-stream") || contentType.includes("audio/"))) {
+            finalUrl = nextStatUrl || target.url;
+          }
+          if (controller) {
+            controller.abort();
           }
         } catch (e) {
         }

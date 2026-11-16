@@ -18,6 +18,7 @@ import {
   Loader2,
   FileText,
   FolderArchive,
+  ClipboardList,
 } from 'lucide-react';
 
 interface ReleaseCatalogProps {
@@ -33,6 +34,8 @@ interface ReleaseCatalogProps {
   onSetBatchScope?: (scope: 'both' | 'audio' | 'info') => void;
   onResetReleaseState?: (releaseId: string) => void;
   onToggleGroupSelect?: (group: 'both' | 'audio' | 'info' | 'failed' | 'none') => void;
+  onToggleDisplayed?: (displayedIds: string[]) => void;
+  onOpenScanList?: () => void;
 }
 
 export function getReleaseBadgeInfo(r: ScannedRelease) {
@@ -130,8 +133,10 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   onSetBatchScope,
   onResetReleaseState,
   onToggleGroupSelect,
+  onToggleDisplayed,
+  onOpenScanList,
 }) => {
-  const [filterType, setFilterType] = useState<'all' | 'free' | 'email' | 'paid' | 'preorder' | 'own'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'selected' | 'free' | 'email' | 'paid' | 'preorder' | 'own'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [expandedTracklists, setExpandedTracklists] = useState<Record<string, boolean>>({});
@@ -154,6 +159,8 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
       if (!matchTitle && !matchTags) return false;
     }
 
+    if (filterType === 'selected') return Boolean(r.selected);
+
     const badge = getReleaseBadgeInfo(r);
     if (filterType === 'free') return badge.type === 'free';
     if (filterType === 'email') return badge.type === 'email';
@@ -162,6 +169,9 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
     if (filterType === 'own') return badge.type === 'own';
     return true;
   });
+
+  const isAllDisplayedSelected =
+    filteredReleases.length > 0 && filteredReleases.every((r) => Boolean(r.selected));
 
   const totalCount = releases.length;
   const ownCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'own').length;
@@ -290,8 +300,8 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Metrics and Controls Toolbar */}
-      <div className="bg-[#111827] border border-slate-800 rounded-xl p-4">
+      {/* Sticky Metrics and Controls Toolbar */}
+      <div className="sticky top-16 z-30 bg-[#111827]/95 backdrop-blur-md border border-slate-800 rounded-xl p-4 shadow-lg shadow-black/40">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           {/* Quick Selection Buttons */}
           <div className="flex flex-wrap items-center gap-2">
@@ -314,6 +324,38 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
             >
               Deselect All
             </button>
+            {onToggleDisplayed && (
+              <button
+                type="button"
+                onClick={() => onToggleDisplayed(filteredReleases.map((r) => r.id))}
+                disabled={filteredReleases.length === 0}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+                  isAllDisplayedSelected
+                    ? 'bg-cyan-950/80 border-cyan-500 text-cyan-200'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700 disabled:opacity-40'
+                }`}
+                title={
+                  isAllDisplayedSelected
+                    ? `Deselect all ${filteredReleases.length} currently displayed items`
+                    : `Select all ${filteredReleases.length} currently displayed items`
+                }
+              >
+                <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Toggle Displayed ({filteredReleases.length})</span>
+              </button>
+            )}
+
+            {onOpenScanList && (
+              <button
+                type="button"
+                onClick={onOpenScanList}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/70 hover:bg-cyan-900/80 active:bg-cyan-950 text-cyan-300 border border-cyan-700/60 rounded-lg text-xs font-semibold transition shadow-sm"
+                title="De-select already downloaded releases from a pasted file list"
+              >
+                <ClipboardList className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Scan List</span>
+              </button>
+            )}
 
             {/* State-Based Group Selection Toggles */}
             {onToggleGroupSelect && (
@@ -446,6 +488,16 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
               }`}
             >
               All ({totalCount})
+            </button>
+            <button
+              onClick={() => setFilterType('selected')}
+              className={`px-2.5 py-1 rounded-md transition ${
+                filterType === 'selected'
+                  ? 'bg-cyan-950/70 border border-cyan-400/60 text-cyan-200 font-semibold'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Selected ({selectedCount})
             </button>
             <button
               onClick={() => setFilterType('free')}

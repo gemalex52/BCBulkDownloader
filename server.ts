@@ -373,7 +373,20 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
     }
 
     if (effectiveDownloadPageUrl) {
-      const resolved = await resolveBandcampDownload(effectiveDownloadPageUrl, formatInfo.id);
+      let resolved = await resolveBandcampDownload(effectiveDownloadPageUrl, formatInfo.id);
+      if ((!resolved.success || !resolved.downloadUrl) && !isEmailRelease && albumUrl) {
+        try {
+          const freshRes = await fetch(albumUrl, { headers: BANDCAMP_FETCH_HEADERS });
+          if (freshRes.ok) {
+            const freshHtml = await freshRes.text();
+            const freshTralbum = extractBandcampTralbum(freshHtml);
+            if (freshTralbum?.freeDownloadPage && freshTralbum.freeDownloadPage !== effectiveDownloadPageUrl) {
+              resolved = await resolveBandcampDownload(freshTralbum.freeDownloadPage, formatInfo.id);
+            }
+          }
+        } catch (freshErr) {}
+      }
+
       if (resolved.success && resolved.downloadUrl) {
         return res.json({
           success: true,
