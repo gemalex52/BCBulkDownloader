@@ -5,8 +5,10 @@ import { ScannedRelease } from '../types/bandcamp';
 
 export const isExtension = typeof chrome !== 'undefined' && Boolean(chrome.runtime && chrome.runtime.id);
 
+const memoryStorageFallback = new Map<string, any>();
+
 /**
- * Storage adapter supporting chrome.storage.local (unlimited) and localStorage fallback
+ * Storage adapter using chrome.storage.local (unlimitedStorage) with in-memory fallback outside extension
  */
 export const storage = {
   async get<T = any>(key: string, defaultValue?: T): Promise<T> {
@@ -22,12 +24,9 @@ export const storage = {
       });
     }
 
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw !== null) {
-        return JSON.parse(raw);
-      }
-    } catch (e) {}
+    if (memoryStorageFallback.has(key)) {
+      return memoryStorageFallback.get(key) as T;
+    }
     return defaultValue as T;
   },
 
@@ -38,11 +37,7 @@ export const storage = {
       });
     }
 
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch (e) {
-      console.warn('localStorage.setItem error:', e);
-    }
+    memoryStorageFallback.set(key, value);
   },
 
   async remove(key: string): Promise<void> {
@@ -52,9 +47,7 @@ export const storage = {
       });
     }
 
-    try {
-      localStorage.removeItem(key);
-    } catch (e) {}
+    memoryStorageFallback.delete(key);
   }
 };
 
@@ -224,40 +217,67 @@ export const apiClient = {
     releaseId?: string | number;
     title?: string;
     since?: number;
-    hours?: number;
-    days?: number;
-    startDate?: string;
     timeoutSeconds?: number;
   }): Promise<any> {
+    const batchRes = await this.checkGasWebhookBatch({
+      webhookUrl: params.webhookUrl,
+      secret: params.secret,
+      since: params.since,
+      timeoutSeconds: params.timeoutSeconds,
+      items: [
+        {
+          id: params.releaseId ?? '',
+          title: params.title || '',
+          ...(params.since !== undefined ? { since: params.since } : {}),
+        },
+      ],
+    });
+    if (Array.isArray(batchRes?.results) && batchRes.results.length > 0) {
+      return batchRes.results[0];
+    }
+    return { found: false, error: batchRes?.error || 'No result returned from GAS batch lookup' };
+  },
+
+  async checkGasWebhookBatch(params: {
+    webhookUrl: string;
+    secret: string;
+    since?: number;
+    items: Array<{
+      id: string | number;
+      title: string;
+      since?: number;
+    }>;
+    timeoutSeconds?: number;
+  }): Promise<{ success: boolean; results: any[]; error?: string }> {
     const timeoutSec = params.timeoutSeconds || 90;
     const timeoutMs = timeoutSec * 1000;
 
     if (isExtension) {
       return sendExtensionMessage({
-        action: 'CHECK_GAS_WEBHOOK',
+        action: 'CHECK_GAS_WEBHOOK_BATCH',
         ...params,
         timeoutMs,
-      }, timeoutMs + 10000);
+      }, timeoutMs + 15000);
     }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch('/api/bandcamp/check-gas-webhook', {
+      const res = await fetch('/api/bandcamp/check-gas-webhook-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
         signal: controller.signal,
       });
       clearTimeout(timeout);
-      if (!res.ok) throw new Error(`GAS check HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`GAS batch check HTTP ${res.status}`);
       return res.json();
     } catch (err: any) {
       clearTimeout(timeout);
       if (err.name === 'AbortError') {
-        return { found: false, error: `GAS check timed out after ${timeoutSec}s` };
+        return { success: false, results: [], error: `GAS batch check timed out after ${timeoutSec}s` };
       }
-      throw err;
+      return { success: false, results: [], error: err?.message || String(err) };
     }
   },
 

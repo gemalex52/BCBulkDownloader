@@ -8,12 +8,22 @@ import {
   ScannedRelease,
   AppSettings,
   DEFAULT_APP_SETTINGS,
+  getStageDefaultProgress,
 } from '../types/bandcamp';
 
 const SETTINGS_KEY = 'bc_global_settings_v2';
 const SESSIONS_INDEX_KEY = 'bc_sessions_index_v2';
 
 const sessionMemoryCache = new Map<string, SiteQueueSession>();
+let settingsMemoryCache: AppSettings = { ...DEFAULT_APP_SETTINGS };
+let sessionIndexMemoryCache: string[] = [];
+
+function cloneSession(session: SiteQueueSession): SiteQueueSession {
+  return {
+    ...session,
+    items: { ...session.items },
+  };
+}
 
 export function getDomainHostname(urlOrOrigin: string): string {
   try {
@@ -40,19 +50,9 @@ export function getSessionKey(hostname: string): string {
   return `bc_session_v2_${hostname.toLowerCase()}`;
 }
 
-// 1. Settings persistence
+// 1. Settings persistence (chrome.storage.local + memory cache)
 export function loadAppSettings(): AppSettings {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      if (raw) {
-        return { ...DEFAULT_APP_SETTINGS, ...JSON.parse(raw) };
-      }
-    }
-  } catch (e) {
-    console.warn('Failed to load app settings from localStorage:', e);
-  }
-  return { ...DEFAULT_APP_SETTINGS };
+  return { ...settingsMemoryCache };
 }
 
 export async function loadAppSettingsAsync(): Promise<AppSettings> {
@@ -60,52 +60,40 @@ export async function loadAppSettingsAsync(): Promise<AppSettings> {
     return new Promise<AppSettings>((resolve) => {
       chrome.storage.local.get([SETTINGS_KEY], (res: any) => {
         if (res && res[SETTINGS_KEY]) {
-          resolve({ ...DEFAULT_APP_SETTINGS, ...res[SETTINGS_KEY] });
+          settingsMemoryCache = { ...DEFAULT_APP_SETTINGS, ...res[SETTINGS_KEY] };
+          resolve({ ...settingsMemoryCache });
         } else {
-          resolve(loadAppSettings());
+          resolve({ ...settingsMemoryCache });
         }
       });
     });
   }
-  return loadAppSettings();
+  return { ...settingsMemoryCache };
 }
 
 export function saveAppSettings(settings: AppSettings): void {
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    }
+    settingsMemoryCache = { ...DEFAULT_APP_SETTINGS, ...settings };
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-      chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+      chrome.storage.local.set({ [SETTINGS_KEY]: settingsMemoryCache });
     }
   } catch (e) {
     console.warn('Failed to save app settings:', e);
   }
 }
 
-// 2. Multi-site session tracking
+// 2. Multi-site session tracking (chrome.storage.local + memory cache)
 export function getStoredSessionHostnames(): string[] {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(SESSIONS_INDEX_KEY);
-      if (raw) {
-        return JSON.parse(raw);
-      }
-    }
-  } catch (e) {}
-  return [];
+  return [...sessionIndexMemoryCache];
 }
 
 export function registerSessionHostname(hostname: string): void {
   try {
-    const current = getStoredSessionHostnames();
-    if (!current.includes(hostname)) {
-      current.unshift(hostname);
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(SESSIONS_INDEX_KEY, JSON.stringify(current.slice(0, 30)));
-      }
+    if (!hostname) return;
+    if (!sessionIndexMemoryCache.includes(hostname)) {
+      sessionIndexMemoryCache = [hostname, ...sessionIndexMemoryCache].slice(0, 30);
       if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-        chrome.storage.local.set({ [SESSIONS_INDEX_KEY]: current.slice(0, 30) });
+        chrome.storage.local.set({ [SESSIONS_INDEX_KEY]: sessionIndexMemoryCache });
       }
     }
   } catch (e) {}
@@ -115,19 +103,6 @@ export function loadSiteSession(hostname: string): SiteQueueSession | null {
   const norm = (hostname || '').toLowerCase();
   if (sessionMemoryCache.has(norm)) {
     return sessionMemoryCache.get(norm)!;
-  }
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const key = getSessionKey(norm);
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const sess = JSON.parse(raw);
-        sessionMemoryCache.set(norm, sess);
-        return sess;
-      }
-    }
-  } catch (e) {
-    console.warn(`Failed loading session for ${hostname}:`, e);
   }
   return null;
 }
@@ -145,32 +120,31 @@ export async function loadSiteSessionAsync(hostname: string): Promise<SiteQueueS
           sessionMemoryCache.set(norm, res[key]);
           resolve(res[key]);
         } else {
-          resolve(loadSiteSession(hostname));
+          resolve(null);
         }
       });
     });
   }
-  return loadSiteSession(hostname);
+  return null;
 }
 
-export function saveSiteSession(session: SiteQueueSession): void {
+export function saveSiteSession(session: SiteQueueSession): SiteQueueSession {
+  const cloned = cloneSession({
+    ...session,
+    updatedAt: new Date().toISOString(),
+  });
   try {
-    const norm = (session.hostname || '').toLowerCase();
+    const norm = (cloned.hostname || '').toLowerCase();
     const key = getSessionKey(norm);
-    session.updatedAt = new Date().toISOString();
-    sessionMemoryCache.set(norm, session);
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(key, JSON.stringify(session));
-      } catch (e) {}
-    }
+    sessionMemoryCache.set(norm, cloned);
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-      chrome.storage.local.set({ [key]: session });
+      chrome.storage.local.set({ [key]: cloned });
     }
-    registerSessionHostname(session.hostname);
+    registerSessionHostname(cloned.hostname);
   } catch (e) {
     console.warn(`Failed saving session for ${session.hostname}:`, e);
   }
+  return cloned;
 }
 
 export function initSiteSession(
@@ -216,7 +190,7 @@ export function initSiteSession(
       minPrice: rel.minPrice,
       requiresEmail: rel.requiresEmail,
       stage: prev ? prev.stage : 'pending',
-      stageProgress: prev ? prev.stageProgress : 0,
+      stageProgress: prev ? (prev.stageProgress ?? getStageDefaultProgress(prev.stage)) : 0,
       statusText: prev ? prev.statusText : (rel.priceFormatted || 'Pending'),
       audioDownloaded: prev ? prev.audioDownloaded : false,
       infoZipDownloaded: prev ? prev.infoZipDownloaded : false,
@@ -244,8 +218,7 @@ export function initSiteSession(
     inProgress: false,
   };
 
-  saveSiteSession(session);
-  return session;
+  return saveSiteSession(session);
 }
 
 export function updateQueueItem(
@@ -256,14 +229,21 @@ export function updateQueueItem(
   const session = loadSiteSession(hostname);
   if (!session || !session.items[itemId]) return null;
 
-  session.items[itemId] = {
+  const updatedItem: QueueItem = {
     ...session.items[itemId],
     ...updates,
     lastUpdated: new Date().toISOString(),
   };
 
-  saveSiteSession(session);
-  return session;
+  const nextSession: SiteQueueSession = {
+    ...session,
+    items: {
+      ...session.items,
+      [itemId]: updatedItem,
+    },
+  };
+
+  return saveSiteSession(nextSession);
 }
 
 export function appendItemLog(
@@ -271,12 +251,13 @@ export function appendItemLog(
   itemId: string,
   stage: QueueItemStage,
   message: string,
-  error?: string
+  error?: string,
+  progressOverride?: number
 ): SiteQueueSession | null {
   const session = loadSiteSession(hostname);
   if (!session || !session.items[itemId]) return null;
 
-  const item = session.items[itemId];
+  const prevItem = session.items[itemId];
   const newLog: ItemStageLog = {
     timestamp: new Date().toLocaleTimeString(),
     stage,
@@ -284,14 +265,30 @@ export function appendItemLog(
     error,
   };
 
-  item.stage = stage;
-  item.statusText = message;
-  if (error) item.error = error;
-  item.logs = [...(item.logs || []), newLog].slice(-25); // retain last 25 logs
-  item.lastUpdated = new Date().toISOString();
+  const nextProgress =
+    typeof progressOverride === 'number'
+      ? Math.max(0, Math.min(100, Math.round(progressOverride)))
+      : getStageDefaultProgress(stage);
 
-  saveSiteSession(session);
-  return session;
+  const updatedItem: QueueItem = {
+    ...prevItem,
+    stage,
+    stageProgress: nextProgress,
+    statusText: message,
+    error: error !== undefined ? error : prevItem.error,
+    logs: [...(prevItem.logs || []), newLog].slice(-25),
+    lastUpdated: new Date().toISOString(),
+  };
+
+  const nextSession: SiteQueueSession = {
+    ...session,
+    items: {
+      ...session.items,
+      [itemId]: updatedItem,
+    },
+  };
+
+  return saveSiteSession(nextSession);
 }
 
 export function resetItemForRetry(
@@ -302,23 +299,36 @@ export function resetItemForRetry(
   const session = loadSiteSession(hostname);
   if (!session || !session.items[itemId]) return null;
 
-  const item = session.items[itemId];
-  item.stage = 'pending';
-  item.stageProgress = 0;
-  item.statusText = 'Ready for retry';
-  item.error = undefined;
-  item.retryCount = (item.retryCount || 0) + 1;
-  if (updates) {
-    Object.assign(item, updates);
-  }
-  item.logs.push({
-    timestamp: new Date().toLocaleTimeString(),
+  const prevItem = session.items[itemId];
+  const nextRetry = (prevItem.retryCount || 0) + 1;
+  const updatedItem: QueueItem = {
+    ...prevItem,
+    ...(updates || {}),
     stage: 'pending',
-    message: `Manual retry requested (Attempt #${item.retryCount + 1})`,
-  });
+    stageProgress: 0,
+    statusText: 'Ready for retry',
+    error: undefined,
+    retryCount: nextRetry,
+    lastUpdated: new Date().toISOString(),
+    logs: [
+      ...(prevItem.logs || []),
+      {
+        timestamp: new Date().toLocaleTimeString(),
+        stage: 'pending' as QueueItemStage,
+        message: `Manual retry requested (Attempt #${nextRetry + 1})`,
+      },
+    ].slice(-25),
+  };
 
-  saveSiteSession(session);
-  return session;
+  const nextSession: SiteQueueSession = {
+    ...session,
+    items: {
+      ...session.items,
+      [itemId]: updatedItem,
+    },
+  };
+
+  return saveSiteSession(nextSession);
 }
 
 /**
@@ -331,18 +341,29 @@ export function resetItemState(
   const session = loadSiteSession(hostname);
   if (!session || !session.items[itemId]) return null;
 
-  const item = session.items[itemId];
-  item.audioDownloaded = false;
-  item.infoZipDownloaded = false;
-  item.stage = 'pending';
-  item.stageProgress = 0;
-  item.statusText = 'State reset';
-  item.error = undefined;
-  item.retryCount = 0;
-  item.logs = [];
+  const prevItem = session.items[itemId];
+  const updatedItem: QueueItem = {
+    ...prevItem,
+    audioDownloaded: false,
+    infoZipDownloaded: false,
+    stage: 'pending',
+    stageProgress: 0,
+    statusText: 'State reset',
+    error: undefined,
+    retryCount: 0,
+    logs: [],
+    lastUpdated: new Date().toISOString(),
+  };
 
-  saveSiteSession(session);
-  return session;
+  const nextSession: SiteQueueSession = {
+    ...session,
+    items: {
+      ...session.items,
+      [itemId]: updatedItem,
+    },
+  };
+
+  return saveSiteSession(nextSession);
 }
 
 /**
@@ -354,19 +375,27 @@ export function resetAllItemsState(
   const session = loadSiteSession(hostname);
   if (!session) return null;
 
-  Object.values(session.items).forEach((item) => {
-    item.audioDownloaded = false;
-    item.infoZipDownloaded = false;
-    item.stage = 'pending';
-    item.stageProgress = 0;
-    item.statusText = 'State reset';
-    item.error = undefined;
-    item.retryCount = 0;
-    item.logs = [];
+  const nextItems: Record<string, QueueItem> = {};
+  const now = new Date().toISOString();
+  Object.entries(session.items).forEach(([id, item]) => {
+    nextItems[id] = {
+      ...item,
+      audioDownloaded: false,
+      infoZipDownloaded: false,
+      stage: 'pending',
+      stageProgress: 0,
+      statusText: 'State reset',
+      error: undefined,
+      retryCount: 0,
+      logs: [],
+      lastUpdated: now,
+    };
   });
 
-  saveSiteSession(session);
-  return session;
+  return saveSiteSession({
+    ...session,
+    items: nextItems,
+  });
 }
 
 // 3. Anti-captcha jitter & pacing calculations

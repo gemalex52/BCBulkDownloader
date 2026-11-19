@@ -48,6 +48,8 @@ export interface ScannedRelease {
   infoText?: string;
   description?: string;
   tags?: string[];
+  audioQuality?: string;
+  isHiRes?: boolean;
   selected?: boolean;
   audioDownloaded?: boolean;
   infoZipDownloaded?: boolean;
@@ -178,11 +180,12 @@ export interface AppSettings {
   gasWebhookUrl: string;
   gasSecret: string;
   gasSearchWindowSeconds: number; // legacy fallback
-  gasSearchFilterType: 'offset_hours' | 'start_date'; // filter mode
-  gasSearchOffsetHours: number; // e.g. 1, 6, 24, 72, 168 (7d), 720 (30d)
+  gasSearchFilterType: 'no_offset' | 'offset_hours' | 'start_date'; // filter mode
+  gasSearchOffsetHours: number; // e.g. 0.25 (15m), 1, 6, 24, 72, 168 (7d), 720 (30d)
   gasSearchStartDate: string; // e.g. "2026-01-01"
   gasMailCheckTimeoutSeconds?: number; // wait timeout for incoming email link via GAS (default: 90s)
   gasMaxPollCycles?: number; // max watchdog poll attempts (default: 18, 90s total)
+  gasBatchSize?: number; // max items bundled per GAS POST request (0 = all in one batch, default: 10)
   // Anti-captcha & rate-limit pacing
   pacingBaseDelaySeconds: number; // default: 2.5
   pacingJitterPercent: number; // default: 40 (meaning 2.5 +/- 1.0s)
@@ -211,12 +214,67 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   gasSearchStartDate: '',
   gasMailCheckTimeoutSeconds: 90, // default 90s wait
   gasMaxPollCycles: 18, // default 18 cycles (18 * 5s = 90s)
+  gasBatchSize: 10, // default 10 email releases per batch POST request
   pacingBaseDelaySeconds: 2.5,
   pacingJitterPercent: 40,
   cooldownBatchInterval: 5,
   cooldownDurationSeconds: 12,
   debugLogging: false,
 };
+
+export function getStageDefaultProgress(stage?: QueueItemStage): number {
+  switch (stage) {
+    case 'checking_mail':
+      return 12;
+    case 'triggering_email':
+      return 24;
+    case 'polling_gas':
+      return 38;
+    case 'resolving_stat':
+      return 58;
+    case 'downloading_audio':
+      return 74;
+    case 'packaging_info':
+      return 88;
+    case 'pacing':
+      return 95;
+    case 'completed':
+    case 'failed':
+    case 'skipped':
+      return 100;
+    case 'pending':
+    default:
+      return 0;
+  }
+}
+
+export function getStageDisplayName(stage?: QueueItemStage): string {
+  switch (stage) {
+    case 'checking_mail':
+      return 'Checking Mailbox';
+    case 'triggering_email':
+      return 'Sending Email Request';
+    case 'polling_gas':
+      return 'Awaiting Download Link';
+    case 'resolving_stat':
+      return 'Resolving Studio Link';
+    case 'downloading_audio':
+      return 'Downloading Audio';
+    case 'packaging_info':
+      return 'Building Info ZIP';
+    case 'pacing':
+      return 'Pacing Pause';
+    case 'completed':
+      return 'Completed';
+    case 'failed':
+      return 'Failed';
+    case 'skipped':
+      return 'Skipped';
+    case 'pending':
+    default:
+      return 'Queued';
+  }
+}
 
 export function formatDateToDotString(raw?: string): string {
   if (!raw) return '';

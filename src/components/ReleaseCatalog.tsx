@@ -120,6 +120,35 @@ export function getReleaseBadgeInfo(r: ScannedRelease) {
   };
 }
 
+export function getAudioQualityBadgeInfo(audioQuality?: string, isHiRes?: boolean) {
+  if (!audioQuality && !isHiRes) return null;
+  const spec = (audioQuality || '').trim();
+  const lower = spec.toLowerCase();
+
+  let badgeClass = 'bg-slate-900/90 text-slate-300 border-slate-700';
+  if (isHiRes || lower.includes('24-bit') || lower.includes('32-bit')) {
+    if (lower.includes('96') || lower.includes('192') || lower.includes('88.2') || lower.includes('176.4')) {
+      badgeClass = 'bg-fuchsia-950/90 text-fuchsia-300 border-fuchsia-500/50';
+    } else if (lower.includes('48')) {
+      badgeClass = 'bg-amber-950/90 text-amber-300 border-amber-500/50';
+    } else {
+      badgeClass = 'bg-orange-950/90 text-orange-300 border-orange-500/50';
+    }
+  } else if (lower.includes('16-bit')) {
+    if (lower.includes('48')) {
+      badgeClass = 'bg-teal-950/90 text-teal-300 border-teal-500/40';
+    } else {
+      badgeClass = 'bg-sky-950/90 text-sky-300 border-sky-500/40';
+    }
+  }
+
+  return {
+    spec: spec || 'Hi-Res',
+    isHiRes: Boolean(isHiRes),
+    badgeClass,
+  };
+}
+
 export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   releases,
   queueItems,
@@ -155,8 +184,9 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchTitle = r.title.toLowerCase().includes(q);
+      const matchArtist = (r.artist || '').toLowerCase().includes(q);
       const matchTags = r.tags?.some((t) => t.toLowerCase().includes(q));
-      if (!matchTitle && !matchTags) return false;
+      if (!matchTitle && !matchArtist && !matchTags) return false;
     }
 
     if (filterType === 'selected') return Boolean(r.selected);
@@ -445,7 +475,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search albums..."
+              placeholder="Search albums or artists..."
               className="w-48 sm:w-60 px-3 py-1.5 bg-[#0b0f17] border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
             />
             <div className="flex items-center bg-[#0b0f17] border border-slate-700 rounded-lg p-0.5">
@@ -669,7 +699,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                       {release.title}
                     </h3>
                     
-                    <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-1">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400 mt-1">
                       <span>{release.artist}</span>
                       {release.releaseDate && (
                         <>
@@ -684,6 +714,26 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                         </>
                       ) : null}
                     </div>
+
+                    {(() => {
+                      const aq = getAudioQualityBadgeInfo(release.audioQuality, release.isHiRes);
+                      if (!aq) return null;
+                      return (
+                        <div className="mt-2 flex items-center gap-1.5">
+                          <span
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold ${aq.badgeClass}`}
+                            title={`Studio master quality: ${aq.spec}${aq.isHiRes ? ' (Hi-Res Audio)' : ''}`}
+                          >
+                            {aq.isHiRes && (
+                              <span className="uppercase tracking-wider text-[9px] font-bold px-1 rounded bg-white/10">
+                                Hi-Res
+                              </span>
+                            )}
+                            <span>{aq.spec}</span>
+                          </span>
+                        </div>
+                      );
+                    })()}
 
                     {/* Email note if required */}
                     {release.requiresEmail && (
@@ -950,7 +1000,18 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                       </td>
                       <td className="p-3">
                         <div className="font-semibold text-white">{release.title}</div>
-                        <div className="text-slate-400 text-[11px]">{release.artist}</div>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                          <span className="text-slate-400 text-[11px]">{release.artist}</span>
+                          {(() => {
+                            const aq = getAudioQualityBadgeInfo(release.audioQuality, release.isHiRes);
+                            if (!aq) return null;
+                            return (
+                              <span className={`inline-flex items-center gap-1 px-1.5 py-0 rounded border text-[10px] font-mono font-semibold ${aq.badgeClass}`}>
+                                {aq.isHiRes ? `Hi-Res · ${aq.spec}` : aq.spec}
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </td>
                       <td className="p-3">
                         {(() => {

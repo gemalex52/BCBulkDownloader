@@ -58,6 +58,8 @@ export interface ParsedReleaseDetails {
   tagsMatches: string[];
   infoText: string;
   fromAlbumTitle?: string;
+  audioQuality?: string;
+  isHiRes?: boolean;
 }
 
 export function cleanHtmlText(raw?: string): string {
@@ -1087,6 +1089,22 @@ export function parseReleasePageData(
 
   infoText += `${divider}\nDownloaded with Bandcamp Free & NYP Bulk Downloader\n${divider}\n`;
 
+  // Audio quality parameter extraction (e.g. class="audio-quality hi-res" -> "24-bit/48kHz")
+  const aqMatch = subHtml.match(/<([a-z0-9]+)\b[^>]*class=["']([^"']*\baudio-quality\b[^"']*)["'][^>]*>([\s\S]*?)<\/\1>/i);
+  const aqClasses = aqMatch?.[2] || '';
+  const isHiRes = /\bhi-res\b/i.test(aqClasses) || undefined;
+  let audioQuality: string | undefined = undefined;
+  if (aqMatch && aqMatch[3]) {
+    const rawAq = cleanHtmlText(aqMatch[3]);
+    const specMatch = rawAq.match(/(\d+\s*-?\s*bit\s*\/\s*[\d.]+\s*k?Hz)/i);
+    const cleanedAq = specMatch
+      ? specMatch[1].replace(/\s+/g, '')
+      : rawAq.replace(/^Download\s+available\s+in\s+/i, '').replace(/\.+$/, '').trim();
+    if (cleanedAq) {
+      audioQuality = cleanedAq;
+    }
+  }
+
   return {
     releaseTitle,
     artist,
@@ -1116,6 +1134,8 @@ export function parseReleasePageData(
     tagsMatches,
     infoText,
     fromAlbumTitle,
+    audioQuality,
+    isHiRes,
   };
 }
 

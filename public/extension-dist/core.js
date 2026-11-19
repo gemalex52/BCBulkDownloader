@@ -846,6 +846,18 @@ ${tagsMatches.join(", ")}
 Downloaded with Bandcamp Free & NYP Bulk Downloader
 ${divider}
 `;
+    const aqMatch = subHtml.match(/<([a-z0-9]+)\b[^>]*class=["']([^"']*\baudio-quality\b[^"']*)["'][^>]*>([\s\S]*?)<\/\1>/i);
+    const aqClasses = aqMatch?.[2] || "";
+    const isHiRes = /\bhi-res\b/i.test(aqClasses) || void 0;
+    let audioQuality = void 0;
+    if (aqMatch && aqMatch[3]) {
+      const rawAq = cleanHtmlText(aqMatch[3]);
+      const specMatch = rawAq.match(/(\d+\s*-?\s*bit\s*\/\s*[\d.]+\s*k?Hz)/i);
+      const cleanedAq = specMatch ? specMatch[1].replace(/\s+/g, "") : rawAq.replace(/^Download\s+available\s+in\s+/i, "").replace(/\.+$/, "").trim();
+      if (cleanedAq) {
+        audioQuality = cleanedAq;
+      }
+    }
     return {
       releaseTitle,
       artist,
@@ -874,7 +886,9 @@ ${divider}
       licenseText,
       tagsMatches,
       infoText,
-      fromAlbumTitle
+      fromAlbumTitle,
+      audioQuality,
+      isHiRes
     };
   }
   async function resolveBandcampDownload(downloadPageUrl, requestedFormat = "flac") {

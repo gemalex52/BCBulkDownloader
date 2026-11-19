@@ -308,6 +308,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             creditsText: parsed.creditsText,
             infoText: parsed.infoText,
             tags: parsed.tagsMatches,
+            audioQuality: parsed.audioQuality,
+            isHiRes: parsed.isHiRes,
             selected: parsed.badgeType !== 'paid' && parsed.badgeType !== 'preorder',
           }
         });
@@ -682,7 +684,91 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 5b. Test Google Apps Script Webhook connection
+  // 5a. Batch Query Google Apps Script Webhook (POST { secret, since?, items } -> JSON array)
+  if (request.action === 'CHECK_GAS_WEBHOOK_BATCH') {
+    (async () => {
+      try {
+        const { webhookUrl, secret, since, items, timeoutSeconds, timeoutMs } = request;
+        if (!webhookUrl || !secret) {
+          sendResponse({ success: false, results: [], error: 'Missing webhookUrl or secret' });
+          return;
+        }
+        const effectiveTimeoutMs = timeoutMs || ((timeoutSeconds || 90) * 1000);
+        const url = new URL(webhookUrl);
+
+        const cleanItems = Array.isArray(items) ? items.map((it) => {
+          const obj = {
+            title: it.title || '',
+            id: it.id !== undefined ? it.id : ''
+          };
+          if (it.since !== undefined && it.since !== null && Number(it.since) > 0) {
+            obj.since = Number(it.since);
+          }
+          return obj;
+        }) : [];
+
+        const payload = {
+          secret: String(secret),
+          items: cleanItems
+        };
+        if (since !== undefined && since !== null && Number(since) > 0) {
+          payload.since = Number(since);
+        }
+
+        const res = await fetch(url.toString(), {
+          method: 'POST',
+          redirect: 'follow',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+            'Accept': 'application/json, text/plain, */*'
+          },
+          body: JSON.stringify(payload),
+          signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(effectiveTimeoutMs) : undefined
+        });
+        const text = await res.text();
+        if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
+          sendResponse({
+            success: false,
+            results: [],
+            error: 'Google Login required: In Google Apps Script, click Deploy -> Manage deployments -> Edit (pencil icon), and set "Who has access" to "Anyone" (currently set to "Only myself").',
+            raw: text.slice(0, 300)
+          });
+          return;
+        }
+        if (text.includes('Script function not found: doPost')) {
+          sendResponse({
+            success: false,
+            results: [],
+            error: 'Google Apps Script deployment is missing doPost(). Please copy the updated Code.gs from Settings and deploy a New version.'
+          });
+          return;
+        }
+        try {
+          const parsed = JSON.parse(text);
+          const rawResults = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.results) ? parsed.results : [parsed]);
+          const firstError = rawResults.find((e) => e && e.error)?.error;
+          const normalized = rawResults.map((entry) => {
+            if (entry && entry.downloadPageUrl) {
+              return { ...entry, downloadPageUrl: String(entry.downloadPageUrl).replace(/&amp;/g, '&').trim() };
+            }
+            return entry;
+          });
+          sendResponse({
+            success: !firstError || normalized.some((e) => e && e.found),
+            results: normalized,
+            ...(firstError ? { error: firstError } : {})
+          });
+        } catch (e) {
+          sendResponse({ success: false, results: [], error: 'Non-JSON response from GAS batch webhook', raw: text.slice(0, 300) });
+        }
+      } catch (err) {
+        sendResponse({ success: false, results: [], error: err && err.message ? err.message : String(err) });
+      }
+    })();
+    return true;
+  }
+
+  // 5b. Test Google Apps Script Webhook connection (POST { secret, test: true })
   if (request.action === 'TEST_GAS_WEBHOOK') {
     (async () => {
       try {
@@ -692,12 +778,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
         const url = new URL(webhookUrl);
-        url.searchParams.set('secret', secret);
-        url.searchParams.set('test', 'true');
 
         const res = await fetch(url.toString(), {
+          method: 'POST',
           redirect: 'follow',
-          headers: { 'Accept': 'application/json, text/plain, */*' },
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+            'Accept': 'application/json, text/plain, */*'
+          },
+          body: JSON.stringify({ secret: String(secret), test: true }),
           signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined
         });
         const text = await res.text();
@@ -710,7 +799,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
         try {
-          const data = JSON.parse(text);
+          const parsed = JSON.parse(text);
+          const data = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
           if (data.test || data.ok || data.success) {
             sendResponse({ success: true, ok: true, message: data.message || 'Connected successfully! Webhook verified.' });
           } else if (data.error) {

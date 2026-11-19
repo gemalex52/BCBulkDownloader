@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AppSettings,
   AUDIO_FORMATS,
@@ -41,6 +41,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     ...DEFAULT_APP_SETTINGS,
     ...settings,
   });
+
+  useEffect(() => {
+    setFormState({
+      ...DEFAULT_APP_SETTINGS,
+      ...settings,
+    });
+  }, [settings]);
   const [saved, setSaved] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [testResult, setTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
@@ -313,17 +320,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Mail Search Timeframe & Start Date Filter */}
             <div className="pt-2 border-t border-slate-800 space-y-3">
               <label className="block text-xs font-semibold text-slate-300 flex items-center justify-between">
-                <span>Mailbox Search Timeframe (Start Date / Offset):</span>
-                <span className="text-[11px] text-amber-400 font-normal">Drastically reduces scanned emails</span>
+                <span>Default Mailbox Search Offset (Also adjustable on Download Footer):</span>
+                <span className="text-[11px] text-amber-400 font-normal">Used for pre-loop batch check only</span>
               </label>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] text-slate-400 mb-1">Time Offset Preset:</label>
                   <select
-                    value={formState.gasSearchFilterType === 'start_date' ? 'custom' : String(formState.gasSearchOffsetHours || 72)}
+                    value={
+                      formState.gasSearchFilterType === 'no_offset'
+                        ? 'no_offset'
+                        : formState.gasSearchFilterType === 'start_date'
+                        ? 'custom'
+                        : String(formState.gasSearchOffsetHours || 72)
+                    }
                     onChange={(e) => {
-                      if (e.target.value === 'custom') {
+                      if (e.target.value === 'no_offset') {
+                        setFormState((prev) => ({
+                          ...prev,
+                          gasSearchFilterType: 'no_offset',
+                        }));
+                      } else if (e.target.value === 'custom') {
                         setFormState((prev) => ({
                           ...prev,
                           gasSearchFilterType: 'start_date',
@@ -333,12 +351,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         setFormState((prev) => ({
                           ...prev,
                           gasSearchFilterType: 'offset_hours',
-                          gasSearchOffsetHours: parseInt(e.target.value, 10),
+                          gasSearchOffsetHours: parseFloat(e.target.value),
                         }));
                       }
                     }}
                     className="w-full px-3 py-2 bg-[#111827] border border-slate-700 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                   >
+                    <option value="no_offset">No offset (Skip pre-check; per-item trigger timestamp)</option>
+                    <option value="0.25">Last 15 min</option>
                     <option value="1">Last 1 Hour</option>
                     <option value="6">Last 6 Hours</option>
                     <option value="24">Last 24 Hours (1 Day)</option>
@@ -365,9 +385,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       className="w-full px-3 py-1.5 bg-[#111827] border border-slate-700 rounded text-xs text-amber-300 font-mono focus:outline-none focus:border-amber-400"
                     />
                   </div>
+                ) : formState.gasSearchFilterType === 'no_offset' ? (
+                  <div className="flex items-center text-xs text-slate-400 px-2 pt-4">
+                    <span>Skips initial batch mail check and checks only emails received after each trigger.</span>
+                  </div>
                 ) : (
                   <div className="flex items-center text-xs text-slate-400 px-2 pt-4">
-                    <span>Searching Gmail for releases delivered in the past {formState.gasSearchOffsetHours || 72} hours.</span>
+                    <span>
+                      Pre-checks Gmail for links delivered in the past{' '}
+                      {formState.gasSearchOffsetHours === 0.25 ? '15 minutes' : `${formState.gasSearchOffsetHours || 72} hours`}.
+                    </span>
                   </div>
                 )}
               </div>
@@ -397,6 +424,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     />
                     <span className="text-[11px] text-slate-400">
                       seconds ({Math.ceil((formState.gasMailCheckTimeoutSeconds ?? 90) / 5)} poll cycles at 5s)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-[#111827] border border-slate-700 rounded space-y-1">
+                  <label className="text-xs font-semibold text-white flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Batch Mail Lookup Size (per GAS POST):</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={formState.gasBatchSize ?? 10}
+                      onChange={(e) => {
+                        const raw = parseInt(e.target.value, 10);
+                        setFormState((prev) => ({
+                          ...prev,
+                          gasBatchSize: isNaN(raw) ? 10 : Math.max(0, raw),
+                        }));
+                      }}
+                      className="w-20 px-2.5 py-1 bg-[#0b0f17] border border-slate-700 rounded text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                    <span className="text-[11px] text-slate-400">
+                      {(formState.gasBatchSize ?? 10) === 0
+                        ? 'All items bundled in 1 request'
+                        : `up to ${formState.gasBatchSize ?? 10} items / request (0 = all)`}
                     </span>
                   </div>
                 </div>

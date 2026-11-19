@@ -168,6 +168,8 @@ async function inspectReleaseSubpage(
       creditsText: parsed.creditsText,
       infoText: parsed.infoText,
       tags: parsed.tagsMatches,
+      audioQuality: parsed.audioQuality,
+      isHiRes: parsed.isHiRes,
       selected: parsed.badgeType !== 'paid' && parsed.badgeType !== 'preorder',
     };
   } catch (e: any) {
@@ -613,7 +615,7 @@ app.post('/api/bandcamp/check-gas-webhook', async (req: Request, res: Response) 
       if (data && data.downloadPageUrl) {
         data.downloadPageUrl = data.downloadPageUrl.replace(/&amp;/g, '&').trim();
       }
-      return res.json(data);
+    return res.json(data);
     } catch (e) {
       return res.json({
         found: false,
@@ -626,7 +628,101 @@ app.post('/api/bandcamp/check-gas-webhook', async (req: Request, res: Response) 
   }
 });
 
-// Test Google Apps Script Webhook connection
+// Proxy endpoint for batched Google Apps Script POST lookup ({ secret, since?, items } -> JSON array)
+app.post('/api/bandcamp/check-gas-webhook-batch', async (req: Request, res: Response) => {
+  const webhookUrl = req.body.webhookUrl || req.body.gasUrl;
+  const secret = req.body.secret;
+  const since = req.body.since;
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+  if (!webhookUrl || !secret) {
+    return res.status(400).json({ success: false, results: [], error: 'Missing webhookUrl or secret' });
+  }
+
+  try {
+    const url = new URL(webhookUrl);
+
+    const cleanItems = items.map((it: any) => {
+      const obj: any = {
+        title: it.title || '',
+        id: it.id !== undefined ? it.id : '',
+      };
+      if (it.since !== undefined && it.since !== null && Number(it.since) > 0) {
+        obj.since = Number(it.since);
+      }
+      return obj;
+    });
+
+    const payload: any = {
+      secret: String(secret),
+      items: cleanItems,
+    };
+    if (since !== undefined && since !== null && Number(since) > 0) {
+      payload.since = Number(since);
+    }
+
+    const timeoutMs = (Number(req.body.timeoutSeconds) || 90) * 1000;
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      redirect: 'follow',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+        'Accept': 'application/json, text/plain, */*',
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    const text = await response.text();
+
+    if (text.includes('accounts.google.com') || text.includes('ServiceLogin') || text.includes('Google Accounts')) {
+      return res.json({
+        success: false,
+        results: [],
+        error: 'Google Login required: In Google Apps Script, click Deploy -> Manage deployments -> Edit (pencil icon), and set "Who has access" to "Anyone".',
+      });
+    }
+
+    if (text.includes('Script function not found: doPost')) {
+      return res.json({
+        success: false,
+        results: [],
+        error: 'Google Apps Script deployment is missing doPost(). Please copy the updated Code.gs from Settings and deploy a New version.',
+      });
+    }
+
+    try {
+      const parsed = JSON.parse(text);
+      const rawResults = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.results) ? parsed.results : [parsed]);
+      const firstError = rawResults.find((e: any) => e && e.error)?.error;
+      const normalized = rawResults.map((entry: any) => {
+        if (entry && entry.downloadPageUrl) {
+          return {
+            ...entry,
+            downloadPageUrl: String(entry.downloadPageUrl).replace(/&amp;/g, '&').trim(),
+          };
+        }
+        return entry;
+      });
+      return res.json({
+        success: !firstError || normalized.some((e: any) => e && e.found),
+        results: normalized,
+        ...(firstError ? { error: firstError } : {}),
+      });
+    } catch (e) {
+      return res.json({
+        success: false,
+        results: [],
+        error: 'Non-JSON response from Google Apps Script. Ensure "Who has access" is set to "Anyone" and Code.gs is updated with doPost().',
+        raw: text.slice(0, 300),
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ success: false, results: [], error: err.message });
+  }
+});
+
+// Test Google Apps Script Webhook connection (POST { secret, test: true })
 app.post('/api/bandcamp/test-gas-webhook', async (req: Request, res: Response) => {
   const webhookUrl = req.body.webhookUrl || req.body.gasUrl;
   const secret = req.body.secret;
@@ -637,14 +733,15 @@ app.post('/api/bandcamp/test-gas-webhook', async (req: Request, res: Response) =
 
   try {
     const url = new URL(webhookUrl);
-    url.searchParams.set('secret', secret);
-    url.searchParams.set('test', 'true');
 
     const response = await fetch(url.toString(), {
+      method: 'POST',
       redirect: 'follow',
       headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
         'Accept': 'application/json, text/plain, */*'
       },
+      body: JSON.stringify({ secret: String(secret), test: true }),
       signal: AbortSignal.timeout(12000),
     });
 
@@ -660,7 +757,8 @@ app.post('/api/bandcamp/test-gas-webhook', async (req: Request, res: Response) =
     }
 
     try {
-      const data = JSON.parse(text);
+      const parsed = JSON.parse(text);
+      const data = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
       if (data.test) {
         return res.json({ ok: true, success: true, message: data.message || 'Connected successfully!' });
       }
