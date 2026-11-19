@@ -1033,7 +1033,7 @@ export function parseReleasePageData(
   }
 
   // Build complete, untruncated info.txt
-  let infoText = `Artist: ${artist}\nTitle: ${releaseTitle}\n`;
+  let infoText = `Artist       : ${artist}\nTitle        : ${releaseTitle}\n`;
   infoText += `Release Date : ${humanDate || 'Unknown'}${dotDate && humanDate !== dotDate ? ` (${dotDate})` : ''}\n`;
   infoText += `Type         : ${item.type.toUpperCase()}\n`;
   if (fromAlbumTitle) {

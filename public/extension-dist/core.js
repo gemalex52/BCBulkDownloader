@@ -761,8 +761,8 @@ ${pageLyrics}
 
 `;
     }
-    let infoText = `Artist: ${artist}
-Title: ${releaseTitle}
+    let infoText = `Artist       : ${artist}
+Title        : ${releaseTitle}
 `;
     infoText += `Release Date : ${humanDate || "Unknown"}${dotDate && humanDate !== dotDate ? ` (${dotDate})` : ""}
 `;
