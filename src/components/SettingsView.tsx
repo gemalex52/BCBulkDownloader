@@ -88,15 +88,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTestResult(null);
 
     try {
+      const tBefore = Date.now();
       const data = await apiClient.testGasWebhook({
         webhookUrl: formState.gasWebhookUrl.trim(),
         secret: formState.gasSecret.trim(),
       });
+      const tAfter = Date.now();
 
       if (data && (data.success || data.ok)) {
+        let msg = data.message || 'Webhook responded successfully! Connection verified.';
+        if (typeof data.serverTime === 'number' && data.serverTime > 0) {
+          const midClientEpoch = Math.round((tBefore + tAfter) / 2000);
+          const clientAheadSec = midClientEpoch - data.serverTime;
+          if (clientAheadSec > 0) {
+            const suggestedSkew = Math.max(formState.gasClockSkewSeconds ?? 5, clientAheadSec + 3);
+            setFormState((prev) => ({
+              ...prev,
+              gasClockSkewSeconds: suggestedSkew,
+            }));
+            msg += ` Clock drift detected: your device is +${clientAheadSec}s ahead of Google server (compensation adjusted to ${suggestedSkew}s).`;
+          } else {
+            msg += ` Server clock aligned (offset ${clientAheadSec}s).`;
+          }
+        }
         setTestResult({
           success: true,
-          message: data.message || 'Webhook responded successfully! Connection verified.',
+          message: msg,
         });
       } else {
         setTestResult({
@@ -399,11 +416,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 )}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
                 <div className="p-2.5 bg-[#111827] border border-slate-700 rounded space-y-1">
                   <label className="text-xs font-semibold text-white flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    <span>GAS Mail Check Timeout (seconds):</span>
+                    <span>GAS Mail Check Timeout (sec):</span>
                   </label>
                   <div className="flex items-center gap-2">
                     <input
@@ -423,7 +440,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       className="w-20 px-2.5 py-1 bg-[#0b0f17] border border-slate-700 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                     />
                     <span className="text-[11px] text-slate-400">
-                      seconds ({Math.ceil((formState.gasMailCheckTimeoutSeconds ?? 90) / 5)} poll cycles at 5s)
+                      {Math.ceil((formState.gasMailCheckTimeoutSeconds ?? 90) / 5)} poll cycles
                     </span>
                   </div>
                 </div>
@@ -431,7 +448,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="p-2.5 bg-[#111827] border border-slate-700 rounded space-y-1">
                   <label className="text-xs font-semibold text-white flex items-center gap-1.5">
                     <Mail className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Batch Mail Lookup Size (per GAS POST):</span>
+                    <span>Batch Lookup Size:</span>
                   </label>
                   <div className="flex items-center gap-2">
                     <input
@@ -451,15 +468,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     />
                     <span className="text-[11px] text-slate-400">
                       {(formState.gasBatchSize ?? 10) === 0
-                        ? 'All items bundled in 1 request'
-                        : `up to ${formState.gasBatchSize ?? 10} items / request (0 = all)`}
+                        ? 'all in 1 request'
+                        : `max / POST (0=all)`}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-[#111827] border border-slate-700 rounded space-y-1">
+                  <label className="text-xs font-semibold text-white flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Clock Skew Offset (sec):</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="300"
+                      step="1"
+                      value={formState.gasClockSkewSeconds ?? 5}
+                      onChange={(e) => {
+                        const raw = parseInt(e.target.value, 10);
+                        setFormState((prev) => ({
+                          ...prev,
+                          gasClockSkewSeconds: isNaN(raw) ? 5 : Math.max(0, raw),
+                        }));
+                      }}
+                      className="w-20 px-2.5 py-1 bg-[#0b0f17] border border-slate-700 rounded text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                    <span className="text-[11px] text-slate-400" title="Subtracted from per-item trigger timestamp to absorb client vs Google server clock drift">
+                      before trigger
                     </span>
                   </div>
                 </div>
               </div>
 
               <p className="text-[11px] text-slate-400">
-                <strong>Policy:</strong> Never sends new Bandcamp download request emails if an active download link is already found in your mailbox.
+                <strong>Policy:</strong> Never sends new Bandcamp download request emails if an active download link is already found in your mailbox. Clock Skew Offset subtracts seconds from per-item <code className="text-amber-300">since</code> timestamps to prevent missed emails from client/Google clock drift.
               </p>
             </div>
 

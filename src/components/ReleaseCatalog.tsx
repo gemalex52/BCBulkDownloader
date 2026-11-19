@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { QueueItem, ScannedRelease } from '../types/bandcamp';
+import { QueueItem, ScannedRelease, getStageDefaultProgress } from '../types/bandcamp';
 import {
   CheckSquare,
   Square,
@@ -775,23 +775,17 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                             }`}
                             style={{
                               width: `${
-                                qItem.stage === 'completed' || qItem.stage === 'failed'
+                                qItem.stage === 'completed' || qItem.stage === 'failed' || qItem.stage === 'skipped'
                                   ? 100
-                                  : qItem.stage === 'pacing'
-                                  ? 95
-                                  : qItem.stage === 'packaging_info'
-                                  ? 85
-                                  : qItem.stage === 'downloading_audio'
-                                  ? 70
-                                  : qItem.stage === 'resolving_stat'
-                                  ? 55
-                                  : qItem.stage === 'polling_gas'
-                                  ? 40
-                                  : qItem.stage === 'triggering_email'
-                                  ? 25
-                                  : qItem.stage === 'checking_mail'
-                                  ? 15
-                                  : 10
+                                  : Math.max(
+                                      10,
+                                      Math.min(
+                                        100,
+                                        typeof qItem.stageProgress === 'number'
+                                          ? qItem.stageProgress
+                                          : getStageDefaultProgress(qItem.stage)
+                                      )
+                                    )
                               }%`,
                             }}
                           />
@@ -1082,23 +1076,17 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                               }`}
                               style={{
                                 width: `${
-                                  qItem.stage === 'completed' || qItem.stage === 'failed'
+                                  qItem.stage === 'completed' || qItem.stage === 'failed' || qItem.stage === 'skipped'
                                     ? 100
-                                    : qItem.stage === 'pacing'
-                                    ? 95
-                                    : qItem.stage === 'packaging_info'
-                                    ? 85
-                                    : qItem.stage === 'downloading_audio'
-                                    ? 70
-                                    : qItem.stage === 'resolving_stat'
-                                    ? 55
-                                    : qItem.stage === 'polling_gas'
-                                    ? 40
-                                    : qItem.stage === 'triggering_email'
-                                    ? 25
-                                    : qItem.stage === 'checking_mail'
-                                    ? 15
-                                    : 10
+                                    : Math.max(
+                                        10,
+                                        Math.min(
+                                          100,
+                                          typeof qItem.stageProgress === 'number'
+                                            ? qItem.stageProgress
+                                            : getStageDefaultProgress(qItem.stage)
+                                        )
+                                      )
                                 }%`,
                               }}
                             />

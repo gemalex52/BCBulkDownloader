@@ -802,11 +802,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const parsed = JSON.parse(text);
           const data = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
           if (data.test || data.ok || data.success) {
-            sendResponse({ success: true, ok: true, message: data.message || 'Connected successfully! Webhook verified.' });
+            sendResponse({
+              success: true,
+              ok: true,
+              serverTime: typeof data.serverTime === 'number' ? data.serverTime : undefined,
+              message: data.message || 'Connected successfully! Webhook verified.'
+            });
           } else if (data.error) {
             sendResponse({ success: false, ok: false, error: data.error });
           } else {
-            sendResponse({ success: true, ok: true, message: 'Connected to Webhook!' });
+            sendResponse({
+              success: true,
+              ok: true,
+              serverTime: typeof data.serverTime === 'number' ? data.serverTime : undefined,
+              message: 'Connected to Webhook!'
+            });
           }
         } catch(e) {
           sendResponse({

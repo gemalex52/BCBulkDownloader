@@ -194,6 +194,7 @@ function doGet(e) {
         found: false,
         test: true,
         batchSupported: true,
+        serverTime: Math.floor(Date.now() / 1000),
         message: 'Google Apps Script Webhook is active (POST batch mode enabled) and authorized successfully!'
       });
     }
@@ -237,6 +238,7 @@ function doPost(e) {
         found: false,
         test: true,
         batchSupported: true,
+        serverTime: Math.floor(Date.now() / 1000),
         message: 'Google Apps Script POST Batch Webhook is active and authorized!'
       });
     }

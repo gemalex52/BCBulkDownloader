@@ -186,6 +186,7 @@ export interface AppSettings {
   gasMailCheckTimeoutSeconds?: number; // wait timeout for incoming email link via GAS (default: 90s)
   gasMaxPollCycles?: number; // max watchdog poll attempts (default: 18, 90s total)
   gasBatchSize?: number; // max items bundled per GAS POST request (0 = all in one batch, default: 10)
+  gasClockSkewSeconds?: number; // clock drift compensation subtracted from per-item trigger timestamps (default: 5s)
   // Anti-captcha & rate-limit pacing
   pacingBaseDelaySeconds: number; // default: 2.5
   pacingJitterPercent: number; // default: 40 (meaning 2.5 +/- 1.0s)
@@ -215,6 +216,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   gasMailCheckTimeoutSeconds: 90, // default 90s wait
   gasMaxPollCycles: 18, // default 18 cycles (18 * 5s = 90s)
   gasBatchSize: 10, // default 10 email releases per batch POST request
+  gasClockSkewSeconds: 5, // default 5s compensation for client vs Google/Bandcamp clock drift
   pacingBaseDelaySeconds: 2.5,
   pacingJitterPercent: 40,
   cooldownBatchInterval: 5,

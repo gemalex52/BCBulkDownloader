@@ -670,7 +670,7 @@ export default function App() {
       if (updated) {
         updateCurrentSession(updated);
       } else {
-        const fallbackProgress =
+        const candidateProgress =
           typeof progressOverride === 'number'
             ? Math.max(0, Math.min(100, Math.round(progressOverride)))
             : getStageDefaultProgress(stage);
@@ -678,6 +678,10 @@ export default function App() {
           if (!prev) return prev;
           const prevItem = prev.items[targetId] || targetItem;
           if (!prevItem) return prev;
+          const fallbackProgress =
+            stage !== 'pending' && prevItem.stage !== 'pending'
+              ? Math.max(prevItem.stageProgress || 0, candidateProgress)
+              : candidateProgress;
           const newLog: ItemStageLog = {
             timestamp: new Date().toLocaleTimeString(),
             stage,
@@ -880,7 +884,8 @@ export default function App() {
       qItem: QueueItem,
       rel: any,
       audioFilename: string,
-      resolveData?: any
+      resolveData?: any,
+      progressRange: { start: number; end: number } = { start: 86, end: 94 }
     ): Promise<{ infoSuccess: boolean; infoError?: string }> => {
       try {
         logAndSyncForItem(
@@ -888,7 +893,7 @@ export default function App() {
           'packaging_info',
           'Packaging companion (info).zip (info.txt, cover.jpg, artist.jpg, photos/, .lrc)...',
           undefined,
-          86
+          progressRange.start
         );
 
         const companionResult = await buildCompanionInfoZip({
@@ -921,13 +926,13 @@ export default function App() {
           'packaging_info',
           `Created companion ZIP: ${companionName} (${companionResult.filesCount} files)`,
           undefined,
-          92
+          progressRange.end
         );
         return { infoSuccess: true };
       } catch (iErr: any) {
         const infoError = iErr.message || 'Failed packaging info archive';
         debugLog('pipeline', `Info archive error for "${qItem.title}":`, infoError);
-        logAndSyncForItem(qItem.id, 'packaging_info', `Info ZIP failed: ${infoError}`, infoError, 92);
+        logAndSyncForItem(qItem.id, 'packaging_info', `Info ZIP failed: ${infoError}`, infoError, progressRange.end);
         return { infoSuccess: false, infoError };
       }
     };
@@ -1222,6 +1227,9 @@ export default function App() {
       setPacingNotice(label);
 
       snapshot.forEach((entry) => {
+        const pollProg = cycleNum
+          ? Math.min(54, 42 + Math.round((cycleNum / Math.max(1, maxCycles || 1)) * 12))
+          : 42;
         logAndSyncForItem(
           entry.qItem.id,
           'polling_gas',
@@ -1229,7 +1237,7 @@ export default function App() {
             ? `Batch polling Gmail (attempt ${cycleNum}/${maxCycles} · ${snapshot.length} pending)...`
             : `Running batch mail check (${snapshot.length} pending)...`,
           undefined,
-          cycleNum ? Math.min(54, 42 + Math.round((cycleNum / Math.max(1, maxCycles || 1)) * 12)) : 44
+          pollProg
         );
       });
 
@@ -1262,6 +1270,9 @@ export default function App() {
             );
             enqueueAsyncAudioDownload(entry, hit.downloadPageUrl);
           } else {
+            const missProg = cycleNum
+              ? Math.min(54, 42 + Math.round((cycleNum / Math.max(1, maxCycles || 1)) * 12))
+              : 43;
             logAndSyncForItem(
               entry.qItem.id,
               'polling_gas',
@@ -1269,7 +1280,7 @@ export default function App() {
                 ? `Email link not in Gmail yet (attempt ${cycleNum}/${maxCycles})...`
                 : 'Email not received yet; remaining pending until next check.',
               undefined,
-              46
+              missProg
             );
             stillPending.push(entry);
           }
@@ -1390,13 +1401,14 @@ export default function App() {
             );
           } else if (!downloadPageUrl && isEmailEligible) {
             // Trigger Bandcamp email dispatch asynchronously and mark item as pending mail lookup!
-            triggeredSinceEpoch = Math.floor(Date.now() / 1000);
+            const clockSkewSec = Math.max(0, settings.gasClockSkewSeconds ?? 5);
+            triggeredSinceEpoch = Math.max(0, Math.floor(Date.now() / 1000) - clockSkewSec);
             logAndSyncForItem(
               qItem.id,
               'triggering_email',
               `Triggering Bandcamp email dispatch to ${settings.fallbackEmail || 'listener'}...`,
               undefined,
-              28
+              26
             );
             try {
               const itemOrigin = qItem.url.startsWith('http')
@@ -1419,19 +1431,19 @@ export default function App() {
                     'polling_gas',
                     'Email triggered; queued for asynchronous batch mail lookup.',
                     undefined,
-                    38
+                    30
                   );
                 } else {
                   audioError = trigData?.error || 'Bandcamp did not confirm email dispatch';
-                  logAndSyncForItem(qItem.id, 'triggering_email', `Email request failed: ${audioError}`, audioError, 32);
+                  logAndSyncForItem(qItem.id, 'triggering_email', `Email request failed: ${audioError}`, audioError, 30);
                 }
               } else {
                 audioError = 'Email triggered; configure GAS webhook in Settings to retrieve links automatically.';
-                logAndSyncForItem(qItem.id, 'triggering_email', audioError, audioError, 32);
+                logAndSyncForItem(qItem.id, 'triggering_email', audioError, audioError, 30);
               }
             } catch (trigErr: any) {
               audioError = trigErr?.message || 'Failed triggering email download';
-              logAndSyncForItem(qItem.id, 'triggering_email', `Email trigger error: ${audioError}`, audioError, 32);
+              logAndSyncForItem(qItem.id, 'triggering_email', `Email trigger error: ${audioError}`, audioError, 30);
             }
           } else {
             // Synchronous audio resolution (Free / Own / Pre-resolved email link)
@@ -1449,7 +1461,13 @@ export default function App() {
 
         // --- SECTION 2: Companion Info Archive Packaging ---
         if (shouldDownloadInfo) {
-          const infoRes = await runCompanionInfoForItem(qItem, rel, audioFilename, resolveData);
+          const infoRes = await runCompanionInfoForItem(
+            qItem,
+            rel,
+            audioFilename,
+            resolveData,
+            queuedForAsyncMail ? { start: 32, end: 36 } : { start: 86, end: 94 }
+          );
           infoSuccess = infoRes.infoSuccess;
           infoError = infoRes.infoError;
         }
@@ -1459,7 +1477,7 @@ export default function App() {
           const updatedSess = updateQueueItem(currentHostname, qItem.id, {
             infoZipDownloaded: Boolean(qItem.infoZipDownloaded || infoSuccess),
             stage: 'polling_gas',
-            stageProgress: 42,
+            stageProgress: 40,
             statusText: infoSuccess
               ? 'Info ZIP saved · Pending batch mail lookup...'
               : 'Email triggered · Pending batch mail lookup...',
@@ -1497,12 +1515,8 @@ export default function App() {
           });
         }
 
-        // --- SECTION 4: Anti-Captcha Jitter Pacing & Cool-Down ---
+        // --- SECTION 4: Anti-Captcha Jitter Pacing & Cool-Down (global notice only; preserve item completed/polling stage) ---
         if (i < itemsToProcess.length - 1 && !isCancelledRef.current) {
-          if (!queuedForAsyncMail) {
-            logAndSyncForItem(qItem.id, 'pacing', 'Applying anti-captcha pacing delay...', undefined, 95);
-          }
-
           if (
             settings.cooldownBatchInterval > 0 &&
             successfulDownloadsCount > 0 &&

@@ -759,13 +759,23 @@ app.post('/api/bandcamp/test-gas-webhook', async (req: Request, res: Response) =
     try {
       const parsed = JSON.parse(text);
       const data = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
-      if (data.test) {
-        return res.json({ ok: true, success: true, message: data.message || 'Connected successfully!' });
+      if (data.test || data.ok || data.success) {
+        return res.json({
+          ok: true,
+          success: true,
+          serverTime: typeof data.serverTime === 'number' ? data.serverTime : undefined,
+          message: data.message || 'Connected successfully!'
+        });
       }
       if (data.error) {
         return res.json({ ok: false, success: false, error: data.error });
       }
-      return res.json({ ok: true, success: true, message: 'Connected to Webhook!' });
+      return res.json({
+        ok: true,
+        success: true,
+        serverTime: typeof data.serverTime === 'number' ? data.serverTime : undefined,
+        message: 'Connected to Webhook!'
+      });
     } catch (e) {
       return res.json({
         ok: false,

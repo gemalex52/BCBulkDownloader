@@ -1021,30 +1021,24 @@ export function parseReleasePageData(
     : ['1. ' + releaseTitle];
 
   // Track lyrics
+  const eqDivider = '='.repeat(80);
+  const dashDivider = '-'.repeat(80);
   const tracksWithLyrics = audioStreams.filter(s => s.lyrics && s.lyrics.trim().length > 0);
   let lyricsBlock = '';
   if (tracksWithLyrics.length > 0) {
-    lyricsBlock = `================================================================================\nLYRICS\n================================================================================\n(Track lyrics are also saved as separate .lrc files inside info ZIP)\n\n` +
+    lyricsBlock = `${eqDivider}\nLYRICS\n${dashDivider}\n(Track lyrics are also saved as separate .lrc files inside info ZIP)\n\n` +
       tracksWithLyrics.map(t => `--- Track ${t.trackNum}: ${t.title} ---\n${t.lyrics}\n`).join('\n') + '\n';
   } else if (pageLyrics) {
-    lyricsBlock = `================================================================================\nLYRICS\n================================================================================\n${pageLyrics}\n\n`;
+    lyricsBlock = `${eqDivider}\nLYRICS\n${dashDivider}\n${pageLyrics}\n\n`;
   }
 
   // Build complete, untruncated info.txt
-  const divider = '='.repeat(80);
-  let infoText = `${divider}\n${releaseTitle.toUpperCase()} by ${artist}\n${divider}\n`;
+  let infoText = `Artist: ${artist}\nTitle: ${releaseTitle}\n`;
   infoText += `Release Date : ${humanDate || 'Unknown'}${dotDate && humanDate !== dotDate ? ` (${dotDate})` : ''}\n`;
   infoText += `Type         : ${item.type.toUpperCase()}\n`;
   if (fromAlbumTitle) {
     infoText += `From Album   : ${fromAlbumTitle}\n`;
   }
-  let statusDetail = priceFormatted;
-  if (badgeType === 'preorder') {
-    statusDetail += ' (Pre-order - Audio master is not yet available prior to official release date. Artwork, photos & info bundled)';
-  } else if (isPaid) {
-    statusDetail += ' (Paid release - Audio skipped unless purchased. Artwork, photos & info bundled)';
-  }
-  infoText += `Status       : ${statusDetail}\n`;
   infoText += `Bandcamp URL : ${item.url}\n`;
   infoText += `Artist Page  : ${origin}\n\n`;
 
@@ -1064,30 +1058,26 @@ export function parseReleasePageData(
     }
     const countStr = `${trackListFormatted.length} Track${trackListFormatted.length > 1 ? 's' : ''}`;
     const headerDetails = totalDurationFormatted ? `${countStr}, ${totalDurationFormatted}` : countStr;
-    infoText += `${divider}\nTRACKLIST (${headerDetails})\n${divider}\n${trackListFormatted.join('\n')}\n\n`;
+    infoText += `${eqDivider}\nTRACKLIST (${headerDetails})\n${dashDivider}\n${trackListFormatted.join('\n')}\n\n`;
   }
 
   if (aboutText) {
-    infoText += `${divider}\nLINER NOTES / ABOUT\n${divider}\n${aboutText}\n\n`;
+    infoText += `${eqDivider}\nLINER NOTES / ABOUT\n${dashDivider}\n${aboutText}\n\n`;
   }
 
   if (creditsText) {
-    infoText += `${divider}\nCREDITS\n${divider}\n${creditsText}\n\n`;
-  }
-
-  if (licenseText) {
-    infoText += `${divider}\nLICENSE\n${divider}\n${licenseText}\n\n`;
+    infoText += `${eqDivider}\nCREDITS\n${dashDivider}\n${creditsText}\n\n`;
   }
 
   if (tagsMatches.length > 0) {
-    infoText += `${divider}\nTAGS & GENRES\n${divider}\n${tagsMatches.join(', ')}\n\n`;
+    infoText += `${eqDivider}\nTAGS & GENRES\n${dashDivider}\n${tagsMatches.join(', ')}\n\n`;
   }
 
   if (lyricsBlock) {
     infoText += lyricsBlock;
   }
 
-  infoText += `${divider}\nDownloaded with Bandcamp Free & NYP Bulk Downloader\n${divider}\n`;
+  infoText += `${eqDivider}\nDownloaded with Bandcamp Free & NYP Bulk Downloader\n`;
 
   // Audio quality parameter extraction (e.g. class="audio-quality hi-res" -> "24-bit/48kHz")
   const aqMatch = subHtml.match(/<([a-z0-9]+)\b[^>]*class=["']([^"']*\baudio-quality\b[^"']*)["'][^>]*>([\s\S]*?)<\/\1>/i);

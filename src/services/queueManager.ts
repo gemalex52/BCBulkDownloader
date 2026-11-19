@@ -229,9 +229,20 @@ export function updateQueueItem(
   const session = loadSiteSession(hostname);
   if (!session || !session.items[itemId]) return null;
 
+  const prevItem = session.items[itemId];
+  let nextStageProgress = updates.stageProgress;
+  if (
+    typeof nextStageProgress === 'number' &&
+    prevItem.stage !== 'pending' &&
+    updates.stage !== 'pending'
+  ) {
+    nextStageProgress = Math.max(prevItem.stageProgress || 0, Math.min(100, Math.round(nextStageProgress)));
+  }
+
   const updatedItem: QueueItem = {
-    ...session.items[itemId],
+    ...prevItem,
     ...updates,
+    ...(typeof nextStageProgress === 'number' ? { stageProgress: nextStageProgress } : {}),
     lastUpdated: new Date().toISOString(),
   };
 
@@ -265,10 +276,15 @@ export function appendItemLog(
     error,
   };
 
-  const nextProgress =
+  const candidateProgress =
     typeof progressOverride === 'number'
       ? Math.max(0, Math.min(100, Math.round(progressOverride)))
       : getStageDefaultProgress(stage);
+
+  const nextProgress =
+    stage !== 'pending' && prevItem.stage !== 'pending'
+      ? Math.max(prevItem.stageProgress || 0, candidateProgress)
+      : candidateProgress;
 
   const updatedItem: QueueItem = {
     ...prevItem,

@@ -740,29 +740,29 @@ var BandcampCore = (() => {
       return ` (${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")})`;
     };
     const trackListFormatted = audioStreams.length > 0 ? audioStreams.map((s) => `${s.trackNum}. ${s.title}${formatDuration(s.duration)}`) : ["1. " + releaseTitle];
+    const eqDivider = "=".repeat(80);
+    const dashDivider = "-".repeat(80);
     const tracksWithLyrics = audioStreams.filter((s) => s.lyrics && s.lyrics.trim().length > 0);
     let lyricsBlock = "";
     if (tracksWithLyrics.length > 0) {
-      lyricsBlock = `================================================================================
+      lyricsBlock = `${eqDivider}
 LYRICS
-================================================================================
+${dashDivider}
 (Track lyrics are also saved as separate .lrc files inside info ZIP)
 
 ` + tracksWithLyrics.map((t) => `--- Track ${t.trackNum}: ${t.title} ---
 ${t.lyrics}
 `).join("\n") + "\n";
     } else if (pageLyrics) {
-      lyricsBlock = `================================================================================
+      lyricsBlock = `${eqDivider}
 LYRICS
-================================================================================
+${dashDivider}
 ${pageLyrics}
 
 `;
     }
-    const divider = "=".repeat(80);
-    let infoText = `${divider}
-${releaseTitle.toUpperCase()} by ${artist}
-${divider}
+    let infoText = `Artist: ${artist}
+Title: ${releaseTitle}
 `;
     infoText += `Release Date : ${humanDate || "Unknown"}${dotDate && humanDate !== dotDate ? ` (${dotDate})` : ""}
 `;
@@ -772,14 +772,6 @@ ${divider}
       infoText += `From Album   : ${fromAlbumTitle}
 `;
     }
-    let statusDetail = priceFormatted;
-    if (badgeType === "preorder") {
-      statusDetail += " (Pre-order - Audio master is not yet available prior to official release date. Artwork, photos & info bundled)";
-    } else if (isPaid) {
-      statusDetail += " (Paid release - Audio skipped unless purchased. Artwork, photos & info bundled)";
-    }
-    infoText += `Status       : ${statusDetail}
-`;
     infoText += `Bandcamp URL : ${item.url}
 `;
     infoText += `Artist Page  : ${origin}
@@ -800,41 +792,33 @@ ${divider}
       }
       const countStr = `${trackListFormatted.length} Track${trackListFormatted.length > 1 ? "s" : ""}`;
       const headerDetails = totalDurationFormatted ? `${countStr}, ${totalDurationFormatted}` : countStr;
-      infoText += `${divider}
+      infoText += `${eqDivider}
 TRACKLIST (${headerDetails})
-${divider}
+${dashDivider}
 ${trackListFormatted.join("\n")}
 
 `;
     }
     if (aboutText) {
-      infoText += `${divider}
+      infoText += `${eqDivider}
 LINER NOTES / ABOUT
-${divider}
+${dashDivider}
 ${aboutText}
 
 `;
     }
     if (creditsText) {
-      infoText += `${divider}
+      infoText += `${eqDivider}
 CREDITS
-${divider}
+${dashDivider}
 ${creditsText}
 
 `;
     }
-    if (licenseText) {
-      infoText += `${divider}
-LICENSE
-${divider}
-${licenseText}
-
-`;
-    }
     if (tagsMatches.length > 0) {
-      infoText += `${divider}
+      infoText += `${eqDivider}
 TAGS & GENRES
-${divider}
+${dashDivider}
 ${tagsMatches.join(", ")}
 
 `;
@@ -842,9 +826,8 @@ ${tagsMatches.join(", ")}
     if (lyricsBlock) {
       infoText += lyricsBlock;
     }
-    infoText += `${divider}
+    infoText += `${eqDivider}
 Downloaded with Bandcamp Free & NYP Bulk Downloader
-${divider}
 `;
     const aqMatch = subHtml.match(/<([a-z0-9]+)\b[^>]*class=["']([^"']*\baudio-quality\b[^"']*)["'][^>]*>([\s\S]*?)<\/\1>/i);
     const aqClasses = aqMatch?.[2] || "";
