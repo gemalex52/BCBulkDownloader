@@ -33,7 +33,8 @@ export interface ScannedRelease {
   isPurchased?: boolean;
   isPaid?: boolean;
   isPreorder?: boolean;
-  badgeType?: 'own' | 'free' | 'email' | 'paid' | 'preorder';
+  isNoDigital?: boolean;
+  badgeType?: 'own' | 'free' | 'email' | 'paid' | 'preorder' | 'no_digital';
   minPrice: number;
   currency: string;
   priceFormatted: string;
@@ -131,7 +132,8 @@ export interface QueueItem {
   isPurchased?: boolean;
   isPaid?: boolean;
   isPreorder?: boolean;
-  badgeType?: 'own' | 'free' | 'email' | 'paid' | 'preorder';
+  isNoDigital?: boolean;
+  badgeType?: 'own' | 'free' | 'email' | 'paid' | 'preorder' | 'no_digital';
   minPrice?: number;
   requiresEmail: boolean;
   stage: QueueItemStage;
@@ -327,6 +329,70 @@ export function processConditionalBrackets(
     .replace(new RegExp(ESC_CLOSE, 'g'), ']');
 }
 
+export function sanitizeDownloadFilenameStrict(
+  rawFilename: string,
+  options: { allowSubfolders?: boolean; maxLength?: number } = {}
+): string {
+  const allowSubfolders = options.allowSubfolders ?? false;
+  const maxLength = options.maxLength ?? 160;
+  let str = String(rawFilename || 'download.zip');
+  try {
+    if (typeof str.normalize === 'function') {
+      str = str.normalize('NFC');
+    }
+  } catch {}
+
+  // Strip control characters (C0/C1) and invisible formatting characters
+  str = str.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\uFEFF]/g, ' ');
+
+  const sanitizePart = (part: string, isLastSegment: boolean): string => {
+    let p = part
+      .replace(/[<>:"/\\|?*]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Strip leading dots and spaces
+    while (p.startsWith('.') || p.startsWith(' ')) {
+      p = p.slice(1);
+    }
+
+    if (isLastSegment) {
+      const lastDot = p.lastIndexOf('.');
+      if (lastDot > 0) {
+        let stem = p.slice(0, lastDot).replace(/[. ]+$/g, '').trim();
+        let ext = p.slice(lastDot + 1).replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        if (!stem) stem = 'download';
+        if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)) {
+          stem = '_' + stem;
+        }
+        const extSuffix = ext ? `.${ext}` : '';
+        const maxStemLen = Math.max(24, maxLength - extSuffix.length);
+        if (stem.length > maxStemLen) {
+          stem = stem.slice(0, maxStemLen).replace(/[. ]+$/g, '').trim() || 'download';
+        }
+        return `${stem}${extSuffix}`;
+      }
+    }
+
+    p = p.replace(/[. ]+$/g, '').trim();
+    if (!p) p = 'download';
+    if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(p)) {
+      p = '_' + p;
+    }
+    return p;
+  };
+
+  if (allowSubfolders) {
+    const parts = str.replace(/\\/g, '/').split('/').filter(Boolean);
+    if (parts.length === 0) return 'download.zip';
+    return parts.map((part, idx) => sanitizePart(part, idx === parts.length - 1)).join('/');
+  }
+
+  // Flat filename: replace any slashes first so artist/album names with "/" never turn into folders
+  str = str.replace(/[\\/]/g, ' - ').replace(/\s*-\s*-\s*/g, ' - ');
+  return sanitizePart(str, true);
+}
+
 export function formatFilenameBySchema(
   schema: string,
   meta: {
@@ -346,7 +412,7 @@ export function formatFilenameBySchema(
   } = {}
 ): string {
   const allowSubfolders = options.allowSubfolders ?? false;
-  let template = schema || '%artist% - %date% - %album%[%title%.%format%]';
+  const template = schema || '%artist% - %date% - %album%[%title%.%format%]';
 
   const isAlbumArchive = meta.isArchive || (meta.type === 'album' && meta.format === 'zip');
 
@@ -364,8 +430,15 @@ export function formatFilenameBySchema(
   const fullDate = formatDateToDotString(meta.date || (meta.year ? String(meta.year) : ''));
   const yearStr = fullDate ? fullDate.slice(0, 4) : String(meta.year || new Date().getFullYear());
 
-  const sanitizeSegment = (s: string) =>
-    String(s || '').replace(/[:*?"<>|]/g, '_').trim();
+  const sanitizeSegment = (s: string) => {
+    let clean = String(s || '')
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+      .replace(/[:*?"<>|]/g, '_');
+    if (!allowSubfolders) {
+      clean = clean.replace(/[\\/]/g, ' - ');
+    }
+    return clean.replace(/\s+/g, ' ').trim();
+  };
 
   // For album archives or standalone single-track releases, automatically drop track-specific title token
   const isSingleTrackRelease = meta.type === 'track' && (meta.album === meta.title || !meta.album || total <= 1);
@@ -407,7 +480,6 @@ export function formatFilenameBySchema(
       .filter(Boolean)
       .join('/');
   } else {
-    // Replace / and \ with hyphen for individual file downloads
     formatted = formatted
       .replace(/[\\/]/g, ' - ')
       .replace(/\s*-\s*-\s*/g, ' - ')
@@ -430,12 +502,12 @@ export function formatFilenameBySchema(
     formatted = `${formatted}.${ext}`;
   }
 
-  return formatted;
+  return sanitizeDownloadFilenameStrict(formatted, { allowSubfolders });
 }
 
 export function getCompanionInfoZipName(audioFilename: string): string {
   const clean = audioFilename.replace(/\.[^/.]+$/, '');
-  return `${clean} (info).zip`;
+  return sanitizeDownloadFilenameStrict(`${clean} (info).zip`, { allowSubfolders: false });
 }
 
 export function formatInfoZipFilenameBySchema(
@@ -462,7 +534,7 @@ export function formatInfoZipFilenameBySchema(
   if (!formatted.toLowerCase().endsWith('.zip')) {
     formatted = `${formatted.replace(/\.[^/.]+$/, '')}.zip`;
   }
-  return formatted;
+  return sanitizeDownloadFilenameStrict(formatted, { allowSubfolders: false });
 }
 
 export interface ExtensionFileItem {

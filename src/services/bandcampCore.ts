@@ -37,7 +37,8 @@ export interface ParsedReleaseDetails {
   isPurchased: boolean;
   isPaid: boolean;
   isPreorder?: boolean;
-  badgeType: 'own' | 'free' | 'email' | 'paid' | 'preorder';
+  isNoDigital: boolean;
+  badgeType: 'own' | 'free' | 'email' | 'paid' | 'preorder' | 'no_digital';
   minPrice: number;
   priceFormatted: string;
   requireEmail: boolean;
@@ -775,20 +776,112 @@ export function parseReleasePageData(
   const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
   const isSetPrice = Boolean(current?.is_set_price);
   const rawFreeDlPage = tralbum?.freeDownloadPage || null;
-  const digitalBuyMatch = subHtml.match(/<li[^>]*class="[^"]*buyItem[^"]*\bdigital\b[^"]*"[^>]*>([\s\S]*?)<\/li>/i);
-  const digitalBuyBlock = digitalBuyMatch ? digitalBuyMatch[1] : '';
-  const hasFreeDownloadButton = Boolean(
-    /<button[^>]*class="[^"]*(?:buy-link|download-link)[^"]*"[^>]*>\s*free\s+download\s*<\/button>/i.test(digitalBuyBlock || subHtml) ||
-    (digitalBuyBlock && /<button[^>]*>[\s\S]*?\bfree\s+download\b[\s\S]*?<\/button>/i.test(digitalBuyBlock))
-  );
-  const hasFreeButton = hasFreeDownloadButton || current?.download_pref === 1;
-  const hasNypText = /name\s+your\s+price/i.test(digitalBuyBlock || subHtml) || /buyItemNyp/i.test(digitalBuyBlock || subHtml) || (minPrice === 0 && current?.download_pref === 2);
 
-  // $0 / Free download is available ONLY if:
+  // Exclude "Full Digital Discography" block so its digital links never bleed into single-release detection
+  const cmdScanHtml = subHtml
+    .replace(/<li[^>]*class=["'][^"']*buyFullDiscography[^"']*["'][^>]*>(?:(?!<li\b)[\s\S])*?<\/li>/gi, '')
+    .replace(/<(?:li|div)[^>]*id=["']buyFullDiscography["'][^>]*>(?:(?!<(?:li|div)\b)[\s\S])*?<\/(?:li|div)>/gi, '');
+
+  const tralbumCmdsMatch = cmdScanHtml.match(
+    /<ul[^>]*class=["'][^"']*tralbumCommands[^"']*["'][^>]*>([\s\S]*?)(?=<div\b[^>]*(?:id=["']trackInfo|class=["'][^"']*tralbum-(?:about|credits))|<table\b|$)/i
+  );
+  const cmdsScopeHtml = tralbumCmdsMatch ? tralbumCmdsMatch[1] : cmdScanHtml;
+
+  const digitalBuyMatch = cmdsScopeHtml.match(
+    /<li\b([^>]*class=["'][^"']*(?:\bbuyItem\b[^"']*\bdigital\b|\bdigital\b[^"']*\bbuyItem\b|buyItemDigital)[^"']*["'][^>]*)>([\s\S]*?)<\/li>/i
+  );
+  const isDigitalBuyHidden = Boolean(
+    digitalBuyMatch && /style=["'][^"']*display\s*:\s*none/i.test(digitalBuyMatch[1] || '')
+  );
+  const digitalBuyBlock = digitalBuyMatch && !isDigitalBuyHidden ? digitalBuyMatch[2] : '';
+
+  // Strictly inspect individual <button> / <a> elements without crossing closing tags
+  const extractActionLinks = (htmlFragment: string): Array<{ classes: string; text: string }> => {
+    const links: Array<{ classes: string; text: string }> = [];
+    const rx = /<(button|a)\b([^>]*)>([\s\S]{0,450}?)<\/\1>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = rx.exec(htmlFragment)) !== null) {
+      const attrs = m[2] || '';
+      const classMatch = attrs.match(/class=["']([^"']*)["']/i);
+      const classes = classMatch ? classMatch[1] : '';
+      if (!/(?:buy-link|download-link)/i.test(classes)) continue;
+      const text = cleanHtmlText((m[3] || '').replace(/<[^>]+>/g, ' '));
+      if (text) links.push({ classes, text });
+    }
+    return links;
+  };
+
+  const digitalBlockLinks = digitalBuyBlock ? extractActionLinks(digitalBuyBlock) : [];
+  const scopedCmdLinks = extractActionLinks(cmdsScopeHtml);
+
+  const isFreeButtonLabel = (text: string) => /^free\s+download$/i.test(text.trim());
+  const isDigitalActionLabel = (text: string) =>
+    /^(?:buy\s+digital(?:\s+(?:album|track))?|pre-?order\s+digital(?:\s+(?:album|track))?|free\s+download|download\s+(?:album|track))$/i.test(
+      text.trim()
+    );
+
+  const hasFreeDownloadButton = Boolean(
+    digitalBlockLinks.some((l) => isFreeButtonLabel(l.text)) ||
+    (digitalBuyBlock && /<(?:button|a)\b[^>]*>[\s\S]{0,200}?\bfree\s+download\b[\s\S]{0,200}?<\/(?:button|a)>/i.test(digitalBuyBlock)) ||
+    scopedCmdLinks.some((l) => isFreeButtonLabel(l.text))
+  );
+
+  const isSubscriberOnlyDigitalBlock = Boolean(
+    digitalBuyBlock &&
+    /\bsubscrib/i.test(digitalBuyBlock) &&
+    !digitalBlockLinks.some((l) => isDigitalActionLabel(l.text)) &&
+    !/\bname\s+your\s+price\b/i.test(digitalBuyBlock)
+  );
+
+  const hasExplicitNoDigitalFlag =
+    tralbum?.has_digital_download === false ||
+    current?.has_digital_download === false;
+  const isFullPageHtml =
+    /class=["'][^"']*tralbumCommands[^"']*["']|<li[^>]*class=["'][^"']*buyItem[^"']*["']|band-name-location|name-section|trackView/i.test(subHtml);
+  const hasDigitalBuyBlock = Boolean(
+    (digitalBuyBlock && !isSubscriberOnlyDigitalBlock) ||
+    (!tralbumCmdsMatch && /class=["'][^"']*buyItemDigital[^"']*["']/i.test(cmdScanHtml) && !isSubscriberOnlyDigitalBlock) ||
+    scopedCmdLinks.some((l) => isDigitalActionLabel(l.text))
+  );
+
+  const hasDownloadDescId = Boolean(
+    current?.download_desc_id != null && Number(current.download_desc_id) > 0
+  );
+  // Bandcamp populates tralbum.freeDownloadPage, download_pref, and even download_desc_id on
+  // physical-only releases whose merch packages carry a download voucher (download_type: "a").
+  // On full release HTML pages, NEVER let download_desc_id / download_pref / freeDownloadPage
+  // imply standalone digital availability when <li class="buyItem digital"> and digital buttons are absent.
+  const hasDigitalDownload = Boolean(
+    isPurchased ||
+    (!hasExplicitNoDigitalFlag && (
+      hasDigitalBuyBlock ||
+      hasFreeDownloadButton ||
+      (!isFullPageHtml && (
+        hasDownloadDescId ||
+        Boolean(rawFreeDlPage) ||
+        current?.download_pref === 1 ||
+        (current?.minimum_price != null && current.minimum_price > 0)
+      ))
+    ))
+  );
+  const hasFreeButton = Boolean(
+    hasFreeDownloadButton ||
+    (hasDigitalDownload && !digitalBuyBlock && current?.download_pref === 1) ||
+    (hasDigitalDownload && digitalBuyBlock && current?.download_pref === 1 && minPrice === 0)
+  );
+  // IMPORTANT: Check Name Your Price / buyItemNyp ONLY inside digitalBuyBlock (physical merch also uses class="buyItemNyp")
+  const hasNypText = Boolean(
+    digitalBuyBlock && (
+      /name\s+your\s+price/i.test(digitalBuyBlock) ||
+      /buyItemNyp/i.test(digitalBuyBlock)
+    )
+  );
+
+  // $0 / Free download is available ONLY if digital exists and:
   // 1. minPrice === 0 ($0 NYP or Free)
-  // 2. OR Bandcamp explicitly exposes a Free Download button / download_pref === 1 (even if a legacy minPrice > 0 is set alongside Free Download + email)
-  // If minPrice > 0 and download_pref !== 1 (Buy Digital Album button), stale require_email_0 flags do NOT make it free/email!
-  const isZeroEligible = (minPrice === 0) || hasFreeButton;
+  // 2. OR Bandcamp explicitly exposes a Free Download button / download_pref === 1 (when eligible)
+  // If minPrice > 0 and not Free/NYP (Buy Digital Album button), stale require_email_0 flags do NOT make it free/email!
+  const isZeroEligible = hasDigitalDownload && ((minPrice === 0) || hasFreeButton);
   const emailFlagSet = current?.require_email === 1 || current?.require_email_0 === 1;
 
   const isEmailWalled = Boolean(
@@ -801,7 +894,7 @@ export function parseReleasePageData(
   const isNypEligible = isZeroEligible && (hasNypText || emailFlagSet);
 
   // freeDownloadPage is ONLY a direct download link if it exists and email is NOT required
-  const freeDlPage = (!isEmailWalled && hasFreeButton && !emailFlagSet) ? rawFreeDlPage : null;
+  const freeDlPage = (hasDigitalDownload && !isEmailWalled && hasFreeButton && !emailFlagSet) ? rawFreeDlPage : null;
   const requireEmail = isEmailWalled;
 
   // Check for pre-order status
@@ -841,7 +934,9 @@ export function parseReleasePageData(
   );
 
   let isPreorder = false;
-  if (hasValidReleaseDate && !isFutureDate) {
+  if (!hasDigitalDownload) {
+    isPreorder = false;
+  } else if (hasValidReleaseDate && !isFutureDate) {
     // Release date is in the past: it has already been released, so digital is NOT a pre-order
     isPreorder = false;
   } else if (hasExplicitTralbumPreorder) {
@@ -855,11 +950,18 @@ export function parseReleasePageData(
   let isFree = false;
   let isNyp = false;
   let isPaid = false;
-  let badgeType: 'own' | 'free' | 'email' | 'paid' | 'preorder' = 'free';
+  let isNoDigital = false;
+  let badgeType: 'own' | 'free' | 'email' | 'paid' | 'preorder' | 'no_digital' = 'free';
 
   if (isPurchased) {
     isFree = true;
     badgeType = 'own';
+  } else if (!hasDigitalDownload) {
+    isNoDigital = true;
+    isPaid = false;
+    isFree = false;
+    isNyp = false;
+    badgeType = 'no_digital';
   } else if (isPreorder) {
     // Pre-order release: audio master is not yet available prior to official release date
     badgeType = 'preorder';
@@ -893,8 +995,9 @@ export function parseReleasePageData(
     isPaid = true;
     badgeType = 'paid';
   } else {
-    isFree = true;
-    badgeType = 'free';
+    isNoDigital = true;
+    isFree = false;
+    badgeType = 'no_digital';
   }
 
   const cur = current?.currency || 'EUR';
@@ -903,6 +1006,8 @@ export function parseReleasePageData(
   let priceFormatted = 'Paid';
   if (badgeType === 'own') {
     priceFormatted = 'Own';
+  } else if (badgeType === 'no_digital') {
+    priceFormatted = 'No Digital';
   } else if (badgeType === 'preorder') {
     const pricePart = minPrice > 0 ? `(${curSymbol}${minPrice})` : '';
     priceFormatted = ['Pre-order', pricePart, preorderShortDate].filter(Boolean).join(' ');
@@ -1018,7 +1123,7 @@ export function parseReleasePageData(
 
   const trackListFormatted = audioStreams.length > 0
     ? audioStreams.map(s => `${s.trackNum}. ${s.title}${formatDuration(s.duration)}`)
-    : ['1. ' + releaseTitle];
+    : [];
 
   // Track lyrics
   const eqDivider = '='.repeat(80);
@@ -1110,6 +1215,7 @@ export function parseReleasePageData(
     isPurchased,
     isPaid,
     isPreorder,
+    isNoDigital,
     badgeType,
     minPrice,
     priceFormatted,
@@ -1132,7 +1238,8 @@ export function parseReleasePageData(
 // Statdownload resolver: polls Bandcamp until the true studio FLAC/ZIP download URL is ready
 export async function resolveBandcampDownload(
   downloadPageUrl: string,
-  requestedFormat: string = 'flac'
+  requestedFormat: string = 'flac',
+  expectedItemId?: number | string
 ): Promise<{
   success: boolean;
   downloadUrl?: string;
@@ -1141,10 +1248,14 @@ export async function resolveBandcampDownload(
   sizeMb?: string;
   isArchive?: boolean;
   itemType?: 'album' | 'track';
+  itemId?: number;
   title?: string;
   artist?: string;
   error?: string;
 }> {
+  const expectedCleanId = expectedItemId !== undefined && expectedItemId !== null
+    ? String(expectedItemId).replace(/^(album|track)-/, '').replace(/\D/g, '')
+    : '';
   try {
     if (!downloadPageUrl || typeof downloadPageUrl !== 'string' || !downloadPageUrl.trim()) {
       return {
@@ -1160,6 +1271,20 @@ export async function resolveBandcampDownload(
       };
     }
 
+    // Verify expectedItemId against explicit ?id= query param if present on download page URL
+    if (expectedCleanId) {
+      try {
+        const parsedCheck = new URL(cleanUrl);
+        const urlItemId = (parsedCheck.searchParams.get('id') || '').replace(/\D/g, '');
+        if (urlItemId && urlItemId !== expectedCleanId) {
+          return {
+            success: false,
+            error: `Download page ID mismatch (expected ${expectedCleanId}, got ${urlItemId}). Aborting to prevent filename/archive mix-up.`,
+          };
+        }
+      } catch {}
+    }
+
     // Direct check: If cleanUrl is already a direct bcbits/popplers CDN download URL
     if (cleanUrl.includes('bcbits.com/download/') || cleanUrl.includes('popplers')) {
       debugLog('resolver', 'cleanUrl is already a direct bcbits download URL:', cleanUrl);
@@ -1169,6 +1294,7 @@ export async function resolveBandcampDownload(
         format: requestedFormat,
         isArchive: cleanUrl.includes('/album/'),
         itemType: cleanUrl.includes('/album/') ? 'album' : 'track',
+        itemId: expectedCleanId ? parseInt(expectedCleanId, 10) : undefined,
       };
     }
 
@@ -1263,6 +1389,12 @@ export async function resolveBandcampDownload(
     const digitalItem = blob?.digital_items?.[0] || blob;
     const downloads = digitalItem?.downloads;
 
+    // Verify expectedItemId against resolved Bandcamp digital item ID
+    const resolvedItemIdNum = Number(digitalItem?.item_id || digitalItem?.id || 0) || undefined;
+    if (expectedCleanId && resolvedItemIdNum && String(resolvedItemIdNum) !== expectedCleanId) {
+      throw new Error(`Resolved download page item_id (${resolvedItemIdNum}) does not match requested release ID (${expectedCleanId})`);
+    }
+
     // If no blob but we have a direct bcbits link in the HTML, return it!
     if (!downloads && directFormatUrl) {
       debugLog('resolver', 'Resolved via direct HTML bcbits link:', directFormatUrl);
@@ -1274,6 +1406,7 @@ export async function resolveBandcampDownload(
         description: requestedFormat.toUpperCase(),
         isArchive: directFormatUrl.includes('/album/'),
         itemType: directFormatUrl.includes('/album/') ? 'album' : 'track',
+        itemId: resolvedItemIdNum || (expectedCleanId ? parseInt(expectedCleanId, 10) : undefined),
         title: titleFromHtml || 'Album',
         artist: 'Artist',
       };
@@ -1451,6 +1584,7 @@ export async function resolveBandcampDownload(
       sizeMb: target.size_mb,
       isArchive,
       itemType,
+      itemId: resolvedItemIdNum || (expectedCleanId ? parseInt(expectedCleanId, 10) : undefined),
       title: releaseTitle,
       artist: releaseArtist,
     };
@@ -1549,18 +1683,36 @@ export function formatFilenameBySchema(
     str = str.replace(new RegExp(token, 'gi'), val);
   }
 
-  // Remove any remaining stray brackets, multi-spaces, or trailing dashes
+  // Remove any remaining stray brackets, control chars, or trailing dashes
   let result = str
     .replace(/[\[\]]/g, '')
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\uFEFF]/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/\s*-\s*-\s*/g, ' - ')
     .replace(/\s*-\s*\./g, '.')
     .replace(/\.{2,}/g, '.')
     .trim();
 
-  // Ensure valid extension
+  if (!options.allowSubfolders) {
+    result = result.replace(/[\\/]/g, ' - ').replace(/[<>:"|?*]/g, '_').replace(/\s+/g, ' ').trim();
+  }
+
+  // Ensure valid extension and strict OS-safe stem/length
   if (!result.toLowerCase().endsWith('.' + defaultExt)) {
     result = `${result}.${defaultExt}`;
+  }
+  const dotIdx = result.lastIndexOf('.');
+  if (dotIdx > 0) {
+    let stem = result.slice(0, dotIdx).replace(/^[.\s]+|[.\s]+$/g, '').trim() || 'download';
+    if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)) {
+      stem = '_' + stem;
+    }
+    const extPart = '.' + result.slice(dotIdx + 1).replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const maxStem = Math.max(24, 160 - extPart.length);
+    if (stem.length > maxStem) {
+      stem = stem.slice(0, maxStem).replace(/[.\s]+$/g, '').trim() || 'download';
+    }
+    result = `${stem}${extPart}`;
   }
 
   return result;
@@ -1624,10 +1776,12 @@ export function discoverCatalogItemsFromHtml(html: string, targetUrl: string): D
   ) => {
     if (!rawHref) return;
     let pathname = '';
+    let hostname = '';
     let fullUrl = '';
     try {
       const u = new URL(rawHref, origin);
       pathname = u.pathname;
+      hostname = u.hostname.toLowerCase();
       fullUrl = u.href;
     } catch {
       return;
@@ -1637,13 +1791,14 @@ export function discoverCatalogItemsFromHtml(html: string, targetUrl: string): D
     const isTrack = pathname.startsWith('/track/');
     if (!isAlbum && !isTrack) return;
 
-    // Deduplicate by clean pathname (lowercased without trailing slash)
-    const normKey = pathname.replace(/\/+$/, '').toLowerCase();
+    // Deduplicate by host + clean pathname (prevents cross-band slug collisions on label pages)
+    const cleanPath = pathname.replace(/\/+$/, '').toLowerCase();
+    const normKey = `${hostname}${cleanPath}`;
     if (itemsMap.has(normKey)) return;
 
     const id = rawId && rawId.trim()
       ? rawId.trim()
-      : `${isAlbum ? 'album' : 'track'}-${normKey.replace(/^\/(?:album|track)\//, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      : `${isAlbum ? 'album' : 'track'}-${cleanPath.replace(/^\/(?:album|track)\//, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
     const numId = parseInt(id.replace(/\D/g, '') || '0', 10);
     const cleanTitle = cleanHtmlText(rawTitle) || 'Release';
@@ -1703,15 +1858,17 @@ export function discoverCatalogItemsFromHtml(html: string, targetUrl: string): D
     }
   }
 
-  // 3. Grid items extraction from ol#music-grid or across HTML
-  const gridMatch = cleanScanHtml.match(/<ol[^>]*id=["']music-grid["'][^>]*>([\s\S]*?)<\/ol>/i);
-  const searchHtml = gridMatch ? gridMatch[1] : cleanScanHtml;
-
-  // Extract all <li> blocks from the grid container and any li.music-grid-item
-  const liMatches = [
-    ...Array.from(searchHtml.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)),
-    ...(gridMatch ? [] : Array.from(html.matchAll(/<li[^>]*class=["'][^"']*music-grid-item[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi))),
-  ];
+  // 3. Grid items extraction from ol#music-grid (all grids) and li.music-grid-item
+  const gridMatches = Array.from(cleanScanHtml.matchAll(/<ol[^>]*id=["']music-grid["'][^>]*>([\s\S]*?)<\/ol>/gi));
+  const liMatches: RegExpMatchArray[] = [];
+  if (gridMatches.length > 0) {
+    for (const gm of gridMatches) {
+      liMatches.push(...Array.from(gm[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)));
+    }
+  } else {
+    liMatches.push(...Array.from(cleanScanHtml.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)));
+  }
+  liMatches.push(...Array.from(cleanScanHtml.matchAll(/<li[^>]*class=["'][^"']*music-grid-item[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi)));
 
   for (const m of liMatches) {
     const fullLiTag = m[0];
@@ -1765,25 +1922,28 @@ export function discoverCatalogItemsFromHtml(html: string, targetUrl: string): D
     addItem(rawHref, rawId, titleStr, artUrlStr, itemArtistStr);
   }
 
-  // 4. Remaining items from data-client-items attribute on ol#music-grid
-  const clientMatch = html.match(/data-client-items=["']([\s\S]*?)["'](?=[\s>]|data-)/i) ||
-                      html.match(/data-client-items="([^"]+)"/i);
-  if (clientMatch) {
+  // 4. Remaining items from data-client-items attribute(s) (using matching quote backreference so apostrophes inside double-quoted JSON don't truncate!)
+  const clientMatches = Array.from(html.matchAll(/data-client-items=(["'])([\s\S]*?)\1(?=[\s>]|$)/gi));
+  for (const clientMatch of clientMatches) {
     try {
-      const raw = clientMatch[1]
+      const raw = clientMatch[2]
         .replace(/&quot;/g, '"')
+        .replace(/&#34;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&#39;/g, "'")
+        .replace(/&#x27;/gi, "'")
+        .replace(/&apos;/g, "'")
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>');
       const clientItems: any[] = JSON.parse(raw);
       if (Array.isArray(clientItems)) {
         for (const item of clientItems) {
-          if (!item.page_url) continue;
+          const itemUrl = item.page_url || item.url || item.tralbum_url;
+          if (!itemUrl) continue;
           const artUrl = item.art_id ? `https://f4.bcbits.com/img/a${item.art_id}_10.jpg` : '';
           const rawId = `${item.type || 'album'}-${item.id}`;
           const itemArtist = item.band_name || item.artist_name || item.artist || artistName;
-          addItem(item.page_url, rawId, item.title, artUrl, itemArtist);
+          addItem(itemUrl, rawId, item.title, artUrl, itemArtist);
         }
       }
     } catch (e) {
@@ -1791,9 +1951,10 @@ export function discoverCatalogItemsFromHtml(html: string, targetUrl: string): D
     }
   }
 
-  // 5. Ultimate Fallback: If 0 items were found, sweep all release links on the page
+  // 5. Fallback: sweep any release links strictly inside ol#music-grid / .music-grid / ul.music-grid if still incomplete,
+  // or full-page fallback if 0 items were found
   if (itemsMap.size === 0) {
-    const allLinks = Array.from(html.matchAll(/<a[^>]*href=["']([^"']*(?:\/album\/|\/track\/)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi));
+    const allLinks = Array.from(cleanScanHtml.matchAll(/<a[^>]*href=["']([^"']*(?:\/album\/|\/track\/)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi));
     for (const lMatch of allLinks) {
       const rawHref = lMatch[1];
       const linkBody = lMatch[2];

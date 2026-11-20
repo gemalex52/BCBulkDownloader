@@ -1,80 +1,133 @@
 // Bandcamp Bulk Downloader - Unified Background Service Worker (Manifest V3)
 importScripts('core.js');
 
-// Map of URLs and download IDs to custom sanitized filenames for chrome.downloads.onDeterminingFilename
-const pendingUrlFilenameMap = new Map();
-const downloadFilenameMap = new Map();
-const pendingDownloadsQueue = [];
+// NOTE: Intentionally does NOT register chrome.downloads.onDeterminingFilename.
+// Registering onDeterminingFilename in an MV3 Service Worker causes Chromium IPC races
+// ("Download must be in progress" / "Invalid downloadId") and collides with 3P download managers (e.g. Chrono).
+// Instead, we inject real HTTP Content-Disposition headers on both:
+//   1. Bandcamp HTTP audio downloads via declarativeNetRequest session rules (SET_DNR_DOWNLOAD_FILENAME)
+//   2. Client-generated Blobs (companion info.zip) via Service Worker /__bc_dl__/ virtual HTTP responses
+// so Chrome's default Download Manager and third-party managers receive the exact filename natively.
 
-function sanitizeChromeDownloadFilename(pathStr) {
-  if (!pathStr || typeof pathStr !== 'string') return 'download.zip';
-  const normalized = pathStr.split('\\').join('/');
-  const segments = normalized.split('/').filter(Boolean);
-  const cleanSegments = segments.map((seg) => {
-    let clean = seg.replace(/[:*?"<>|]/g, '_').trim();
-    while (clean.startsWith('.')) clean = clean.slice(1).trim();
-    return clean || 'download';
-  });
-  return cleanSegments.length > 0 ? cleanSegments.join('/') : 'download.zip';
+const DNR_DOWNLOAD_RULE_ID = 94001;
+const VIRTUAL_DL_DB_NAME = 'bc-virtual-dl-db';
+const VIRTUAL_DL_STORE_NAME = 'entries';
+
+function buildContentDispositionHeader(filename) {
+  const safeName = String(filename || 'download.zip').replace(/[\r\n]+/g, ' ').trim() || 'download.zip';
+  const asciiFallback = safeName
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/["\\;]/g, '_')
+    .trim() || 'download.zip';
+  const utf8Encoded = encodeURIComponent(safeName).replace(/['()*]/g, (c) =>
+    '%' + c.charCodeAt(0).toString(16).toUpperCase()
+  );
+  return 'attachment; filename="' + asciiFallback + '"; filename*=UTF-8\'\'' + utf8Encoded;
 }
 
-function resolvePendingFilename(item) {
-  if (item && downloadFilenameMap.has(item.id)) {
-    return downloadFilenameMap.get(item.id);
-  }
-  if (item && item.url && pendingUrlFilenameMap.has(item.url)) {
-    return pendingUrlFilenameMap.get(item.url);
-  }
-  if (item && item.finalUrl && pendingUrlFilenameMap.has(item.finalUrl)) {
-    return pendingUrlFilenameMap.get(item.finalUrl);
-  }
-
-  // Handle Bandcamp CDN 302 redirects (e.g. popplers -> p4.bcbits) by matching payment_id or album ID
-  if (item && (item.url || item.finalUrl)) {
-    const fullUrl = (item.url || '') + ' ' + (item.finalUrl || '');
-    for (const [pUrl, fname] of pendingUrlFilenameMap.entries()) {
-      const idMatch = pUrl.match(/[?&]id=(d+)/);
-      const payMatch = pUrl.match(/[?&]payment_id=(d+)/);
-      if (idMatch && (fullUrl.includes('id=' + idMatch[1]) || fullUrl.includes('/' + idMatch[1]))) {
-        return fname;
-      }
-      if (payMatch && fullUrl.includes('payment_id=' + payMatch[1])) {
-        return fname;
-      }
-    }
-  }
-
-  // Fallback: match most recent download initiated within the last 60 seconds
-  const now = Date.now();
-  for (let i = pendingDownloadsQueue.length - 1; i >= 0; i--) {
-    const p = pendingDownloadsQueue[i];
-    if (!p.used && (now - p.time < 60000)) {
-      p.used = true;
-      return p.filename;
-    }
-  }
-
-  return null;
-}
-
-if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
-  chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+function readVirtualDownloadEntry(pathKey) {
+  return new Promise((resolve, reject) => {
     try {
-      const customName = resolvePendingFilename(item);
-      if (customName) {
-        const sanitized = sanitizeChromeDownloadFilename(customName);
-        suggest({ filename: sanitized, conflictAction: 'uniquify' });
-        if (item && item.id) downloadFilenameMap.delete(item.id);
-        if (item && item.url) pendingUrlFilenameMap.delete(item.url);
-      } else {
-        suggest();
-      }
-    } catch (e) {
-      // Gracefully ignore if download interrupted or completed rapidly
+      const req = indexedDB.open(VIRTUAL_DL_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(VIRTUAL_DL_STORE_NAME)) {
+          db.createObjectStore(VIRTUAL_DL_STORE_NAME, { keyPath: 'path' });
+        }
+      };
+      req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
+      req.onsuccess = () => {
+        const db = req.result;
+        try {
+          if (!db.objectStoreNames.contains(VIRTUAL_DL_STORE_NAME)) {
+            db.close();
+            resolve(null);
+            return;
+          }
+          const tx = db.transaction(VIRTUAL_DL_STORE_NAME, 'readonly');
+          const store = tx.objectStore(VIRTUAL_DL_STORE_NAME);
+          const getReq = store.get(pathKey);
+          getReq.onerror = () => {
+            try { db.close(); } catch (e) {}
+            reject(getReq.error || new Error('IndexedDB get failed'));
+          };
+          getReq.onsuccess = () => {
+            const val = getReq.result || null;
+            try { db.close(); } catch (e) {}
+            resolve(val);
+          };
+        } catch (err) {
+          try { db.close(); } catch (e) {}
+          reject(err);
+        }
+      };
+    } catch (err) {
+      reject(err);
     }
-    return false;
   });
 }
+
+self.addEventListener('install', () => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    try {
+      await self.clients.claim();
+    } catch (e) {}
+    try {
+      indexedDB.deleteDatabase(VIRTUAL_DL_DB_NAME);
+    } catch (e) {}
+  })());
+});
+
+// Serve client-generated Blobs (e.g. companion info.zip) from IndexedDB via genuine HTTP 200
+// responses with Content-Disposition: attachment headers so Chrome's default Download Manager
+// and third-party managers (e.g. Chrono) receive the exact suggested filename natively.
+self.addEventListener('fetch', (event) => {
+  try {
+    const reqUrl = new URL(event.request.url);
+    if (!reqUrl.pathname.startsWith('/__bc_dl__/')) return;
+
+    event.respondWith((async () => {
+      try {
+        const entry = await readVirtualDownloadEntry(reqUrl.pathname);
+        if (!entry || !entry.data) {
+          return new Response('Virtual download entry expired or not found.', {
+            status: 404,
+            headers: { 'Content-Type': 'text/plain' },
+          });
+        }
+        const fallbackName = decodeURIComponent(reqUrl.pathname.split('/').pop() || 'download.zip');
+        const headers = new Headers({
+          'Content-Type': entry.contentType || 'application/zip',
+          'Content-Disposition': entry.contentDisposition || buildContentDispositionHeader(fallbackName),
+          'Content-Length': String(entry.size != null ? entry.size : entry.data.byteLength || 0),
+          'Cache-Control': 'no-store',
+        });
+        if (event.request.method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            statusText: 'OK',
+            headers,
+          });
+        }
+        return new Response(entry.data, {
+          status: 200,
+          statusText: 'OK',
+          headers,
+        });
+      } catch (err) {
+        return new Response('Virtual download error: ' + (err && err.message ? err.message : String(err)), {
+          status: 500,
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      }
+    })());
+  } catch (e) {}
+});
+
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get([
@@ -144,7 +197,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 2. Inspect single release subpage
+  async function fetchWithRetry(targetUrl, options, maxRetries = 3) {
+    let lastErr;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await fetch(targetUrl, options);
+        if ((res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) && attempt < maxRetries) {
+          const retryAfter = parseInt(res.headers.get('retry-after') || '0', 10);
+          const delayMs = retryAfter > 0 ? Math.min(retryAfter * 1000, 10000) : (1500 * (attempt + 1));
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+        return res;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+          continue;
+        }
+      }
+    }
+    throw lastErr || new Error('Network request failed');
+  }
+
+  // 2. Inspect single release subpage (with automatic HTTP 429/5xx backoff retry)
   if (request.action === 'INSPECT_RELEASE') {
     (async () => {
       try {
@@ -155,12 +231,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (!item.url) {
           throw new Error('Missing release URL in item');
         }
-        const res = await fetch(item.url, {
+        const res = await fetchWithRetry(item.url, {
           credentials: 'include',
           headers: {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*'
           }
-        });
+        }, 3);
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const subHtml = await res.text();
         const tralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(subHtml) : null;
@@ -176,6 +252,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               isNyp: false,
               isPurchased: false,
               isPaid: false,
+              isNoDigital: false,
               badgeType: 'free',
               minPrice: 0,
               priceFormatted: 'Free',
@@ -204,6 +281,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             extraImages: parsed.allImages,
             extraPhotos: parsed.extraPhotos,
             isPreorder: parsed.isPreorder,
+            isNoDigital: parsed.isNoDigital,
             releaseDate: parsed.humanDate,
             isoDate: parsed.dotDate,
             isFree: parsed.isFree,
@@ -226,7 +304,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             tags: parsed.tagsMatches,
             audioQuality: parsed.audioQuality,
             isHiRes: parsed.isHiRes,
-            selected: parsed.badgeType !== 'paid' && parsed.badgeType !== 'preorder',
+            selected: parsed.badgeType !== 'paid' && parsed.badgeType !== 'preorder' && parsed.badgeType !== 'no_digital',
           }
         });
       } catch (err) {
@@ -452,8 +530,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           } catch (pageErr) {}
         }
 
+        const expectedItemId = request.expectedItemId || request.itemId || release?.itemId || '';
+
         if (effectivePageUrl) {
-          let resolved = await resolveBandcampDownload(effectivePageUrl, format || 'flac');
+          let resolved = await resolveBandcampDownload(effectivePageUrl, format || 'flac', expectedItemId);
           // If cached freeDownloadPageUrl failed/expired and this is a direct free release, re-fetch albumUrl for a fresh token
           if ((!resolved || !resolved.success) && !isEmailWalled && !isOwned && albumUrl) {
             try {
@@ -467,7 +547,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 const freshHtml = await freshRes.text();
                 const freshTralbum = typeof extractBandcampTralbum === 'function' ? extractBandcampTralbum(freshHtml) : null;
                 if (freshTralbum && freshTralbum.freeDownloadPage && freshTralbum.freeDownloadPage !== effectivePageUrl) {
-                  resolved = await resolveBandcampDownload(freshTralbum.freeDownloadPage, format || 'flac');
+                  resolved = await resolveBandcampDownload(freshTralbum.freeDownloadPage, format || 'flac', expectedItemId);
                 }
               }
             } catch (freshErr) {}
@@ -483,17 +563,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
         } else {
           const isPreorder = Boolean(release?.badgeType === 'preorder' || release?.isPreorder);
-          const isPaid = !isOwned && (isPreorder || Boolean(release?.badgeType === 'paid' || release?.isPaid));
+          const isNoDigital = Boolean(release?.badgeType === 'no_digital' || release?.isNoDigital);
+          const isPaid = !isOwned && (isPreorder || isNoDigital || Boolean(release?.badgeType === 'paid' || release?.isPaid));
           sendResponse({
             success: false,
             isPaid,
             isPreorder,
+            isNoDigital,
             skipAudio: isPaid,
-            message: isPreorder
-              ? 'Pre-order release: audio master is not yet available prior to official release date. Packaging companion info ZIP.'
-              : (isOwned
-                ? 'Owned release: download link not found in Gmail or your Bandcamp collection (verify you are signed in to bandcamp.com).'
-                : (isPaid ? 'Paid release: audio skipped per policy. Packaging companion info ZIP.' : 'Direct download link not yet resolved from mailbox.')),
+            message: isNoDigital
+              ? 'No digital download available for this release. Packaging companion info ZIP.'
+              : (isPreorder
+                ? 'Pre-order release: audio master is not yet available prior to official release date. Packaging companion info ZIP.'
+                : (isOwned
+                  ? 'Owned release: download link not found in Gmail or your Bandcamp collection (verify you are signed in to bandcamp.com).'
+                  : (isPaid ? 'Paid release: audio skipped per policy. Packaging companion info ZIP.' : 'Direct download link not yet resolved from mailbox.'))),
             title: release?.title,
             artist: release?.artist,
             artUrl: release?.artUrl,
@@ -684,7 +768,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 5b. Test Google Apps Script Webhook connection (POST { secret, test: true })
+  // 5b. Test Google Apps Script Webhook connection (POST { secret, test: 'true' })
   if (request.action === 'TEST_GAS_WEBHOOK') {
     (async () => {
       try {
@@ -702,7 +786,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             'Content-Type': 'text/plain;charset=utf-8',
             'Accept': 'application/json, text/plain, */*'
           },
-          body: JSON.stringify({ secret: String(secret), test: true }),
+          body: JSON.stringify({ secret: String(secret), test: 'true' }),
           signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined
         });
         const text = await res.text();
@@ -749,40 +833,66 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 5c. Register custom filename before download
-  if (request.action === 'REGISTER_DOWNLOAD_FILENAME') {
-    if (request.url && request.filename) {
-      const clean = sanitizeChromeDownloadFilename(request.filename);
-      pendingUrlFilenameMap.set(request.url, clean);
-    }
-    sendResponse({ success: true });
+  // 6. Optional declarativeNetRequest Content-Disposition rewrite for giant (>1.4GB) or unfetchable fallback downloads
+  if (request.action === 'SET_DNR_DOWNLOAD_FILENAME') {
+    (async () => {
+      try {
+        if (!chrome.declarativeNetRequest || typeof chrome.declarativeNetRequest.updateSessionRules !== 'function') {
+          sendResponse({ success: false, error: 'declarativeNetRequest API unavailable' });
+          return;
+        }
+        const rawUrl = String(request.url || '');
+        const cleanFilename = String(request.filename || 'download.zip');
+        let urlFilter = '*://*.bcbits.com/*';
+        try {
+          const parsed = new URL(rawUrl);
+          urlFilter = '|' + parsed.origin + parsed.pathname;
+        } catch (e) {}
+
+        await chrome.declarativeNetRequest.updateSessionRules({
+          removeRuleIds: [DNR_DOWNLOAD_RULE_ID],
+          addRules: [
+            {
+              id: DNR_DOWNLOAD_RULE_ID,
+              priority: 10,
+              action: {
+                type: 'modifyHeaders',
+                responseHeaders: [
+                  {
+                    header: 'content-disposition',
+                    operation: 'set',
+                    value: buildContentDispositionHeader(cleanFilename),
+                  },
+                ],
+              },
+              condition: {
+                urlFilter,
+                resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest', 'other'],
+              },
+            },
+          ],
+        });
+        sendResponse({ success: true });
+      } catch (err) {
+        sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
+      }
+    })();
     return true;
   }
 
-  // 6. Download file via Chrome Downloads API
-  if (request.action === 'DOWNLOAD_FILE') {
-    const rawFilename = request.filename || 'download.zip';
-    const cleanFilename = sanitizeChromeDownloadFilename(rawFilename);
-    pendingUrlFilenameMap.set(request.url, cleanFilename);
-    pendingDownloadsQueue.push({ url: request.url, filename: cleanFilename, time: Date.now(), used: false });
-    if (pendingDownloadsQueue.length > 25) pendingDownloadsQueue.shift();
-
-    chrome.downloads.download({
-      url: request.url,
-      filename: cleanFilename,
-      conflictAction: 'uniquify'
-    }, (downloadId) => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        pendingUrlFilenameMap.delete(request.url);
-        sendResponse({ success: false, error: err.message });
-      } else {
-        if (downloadId) {
-          downloadFilenameMap.set(downloadId, cleanFilename);
+  if (request.action === 'CLEAR_DNR_DOWNLOAD_FILENAME') {
+    (async () => {
+      try {
+        if (chrome.declarativeNetRequest && typeof chrome.declarativeNetRequest.updateSessionRules === 'function') {
+          await chrome.declarativeNetRequest.updateSessionRules({
+            removeRuleIds: [DNR_DOWNLOAD_RULE_ID],
+          });
         }
-        sendResponse({ success: true, downloadId });
+        sendResponse({ success: true });
+      } catch (err) {
+        sendResponse({ success: false, error: err && err.message ? err.message : String(err) });
       }
-    });
+    })();
     return true;
   }
 

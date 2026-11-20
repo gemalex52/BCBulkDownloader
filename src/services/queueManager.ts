@@ -181,12 +181,15 @@ export function initSiteSession(
       isPurchased: rel.isPurchased,
       isPaid: Boolean(
         rel.badgeType !== 'email' &&
+        rel.badgeType !== 'no_digital' &&
+        !rel.isNoDigital &&
         !rel.requiresEmail &&
         !rel.isNameYourPrice &&
         !rel.isPurchased &&
         (rel.badgeType === 'paid' || (!rel.freeDownloadPageUrl && !rel.isFree && (rel.minPrice || 0) > 0))
       ),
-      badgeType: rel.badgeType || (rel.isPurchased ? 'own' : ((rel.requiresEmail || rel.isNameYourPrice) ? 'email' : ((rel.minPrice || 0) > 0 && !rel.isFree && !rel.freeDownloadPageUrl ? 'paid' : 'free'))),
+      isNoDigital: Boolean(rel.isNoDigital || rel.badgeType === 'no_digital'),
+      badgeType: rel.badgeType || (rel.isPurchased ? 'own' : ((rel.isNoDigital) ? 'no_digital' : ((rel.requiresEmail || rel.isNameYourPrice) ? 'email' : ((rel.minPrice || 0) > 0 && !rel.isFree && !rel.freeDownloadPageUrl ? 'paid' : 'free')))),
       minPrice: rel.minPrice,
       requiresEmail: rel.requiresEmail,
       stage: prev ? prev.stage : 'pending',

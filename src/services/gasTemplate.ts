@@ -1,6 +1,6 @@
 export const GAS_SCRIPT_TEMPLATE = `/**
  * Bandcamp Bulk Downloader - Gmail Watchdog Webhook (Google Apps Script)
- * Supports batched JSON POST lookups with root secret/since/test and per-item title/id/since.
+ * Optimized quota-saving POST batch + GET single lookup webhook.
  *
  * INSTRUCTIONS:
  * 1. Open https://script.google.com and click "New Project" (or open existing project).
@@ -12,273 +12,251 @@ export const GAS_SCRIPT_TEMPLATE = `/**
  * 7. Paste the Web App URL and Secret Password into the Bulk Downloader settings.
  */
 
-var SECRET_PASSWORD = 'CHANGE_THIS_SECRET_PASSWORD';
+const LOG_LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+const LOG_LEVEL = 'INFO';
 
-function buildGmailQuery(sinceSeconds) {
-  var query = 'from:bandcamp.com OR subject:Bandcamp';
-  if (sinceSeconds > 0) {
-    // 1-day cushion on Gmail's coarse YYYY/MM/DD date filter to prevent timezone boundary misses;
-    // exact epoch filtering is applied in matchItemInMessages().
-    var searchDate = new Date((sinceSeconds - 86400) * 1000);
-    var year = searchDate.getFullYear();
-    var month = ('0' + (searchDate.getMonth() + 1)).slice(-2);
-    var day = ('0' + searchDate.getDate()).slice(-2);
-    query += ' after:' + year + '/' + month + '/' + day;
-  }
-  return query;
+const MAIL_SEARCH_LOOKBACK_SEC = 5; // default lookback window (seconds) when no since is specified
+const MAIL_SEARCH_MAX_THREADS = 50; // max matching Gmail threads to inspect per lookup
+
+const SECRET_PASSWORD = 'CHANGE_THIS_SECRET_PASSWORD';
+
+function normalizeCleanId(rawId) {
+  if (rawId === undefined || rawId === null) return '';
+  return String(rawId).replace(/^(album|track)-/, '').trim();
 }
 
-function extractBandcampDownloadUrls(body) {
-  var urlsFound = [];
-  var seen = {};
-
-  function pushUrl(raw) {
-    if (!raw) return;
-    var clean = String(raw).replace(/&amp;/g, '&').trim();
-    if (clean && !seen[clean]) {
-      seen[clean] = true;
-      urlsFound.push(clean);
-    }
-  }
-
-  // Pattern A: Match in HTML href attributes
-  var hrefRegex = /href=["'](https?:\\/\\/[^"']*(?:bandcamp\\.com)\\/download\\?[^"']+)["']/gi;
-  var hrefMatch;
-  while ((hrefMatch = hrefRegex.exec(body)) !== null) {
-    pushUrl(hrefMatch[1]);
-  }
-
-  // Pattern B: Match raw text URLs
-  var textRegex = /https?:\\/\\/[a-zA-Z0-9.-]*bandcamp\\.com\\/download\\?[a-zA-Z0-9_=&;.~%-]+/gi;
-  var textMatches = body.match(textRegex);
-  if (textMatches) {
-    for (var t = 0; t < textMatches.length; t++) {
-      pushUrl(textMatches[t]);
-    }
-  }
-
-  return urlsFound;
+function escapeRegExpLiteral(str) {
+  return String(str).replace(/[.*+?^$&{}()|[\\]\\\\]/g, '\\\\$&');
 }
 
-function extractCandidateMessages(query, minSinceSeconds, maxThreads) {
-  var threads = GmailApp.search(query, 0, maxThreads || 100);
-  var scanned = [];
+function doItemsSearch(params, items) {
+  appLog('INFO', 'Params', JSON.stringify(params));
 
-  for (var i = 0; i < threads.length; i++) {
-    var messages = threads[i].getMessages();
-    for (var j = messages.length - 1; j >= 0; j--) {
-      var msg = messages[j];
-      var msgDate = msg.getDate();
-      var msgEpoch = Math.floor(msgDate.getTime() / 1000);
-
-      if (minSinceSeconds > 0 && msgEpoch < (minSinceSeconds - 30)) {
-        continue;
-      }
-
-      var body = msg.getBody() + ' ' + msg.getPlainBody();
-      var subject = msg.getSubject() || '';
-      var urlsFound = extractBandcampDownloadUrls(body);
-
-      if (urlsFound.length > 0) {
-        scanned.push({
-          msgEpoch: msgEpoch,
-          subject: subject,
-          cleanSubject: subject.toLowerCase().replace(/[^a-z0-9]/g, ''),
-          messageId: msg.getId(),
-          body: body,
-          cleanBody: body.toLowerCase().replace(/[^a-z0-9]/g, ''),
-          urls: urlsFound
-        });
-      }
-    }
-  }
-
-  return scanned;
-}
-
-function matchItemInMessages(item, rootSince, scannedMessages) {
-  var rawId = item && item.id !== undefined && item.id !== null ? item.id : '';
-  var title = item && item.title !== undefined && item.title !== null ? String(item.title).trim() : '';
-  var hasItemSince = item && item.since !== undefined && item.since !== null && item.since !== '';
-  var effectiveSince = hasItemSince ? (parseInt(item.since, 10) || 0) : (parseInt(rootSince, 10) || 0);
-  var cleanReleaseId = String(rawId).replace(/^(album|track)-/, '').trim();
-
-  var cleanBaseTitle = '';
-  if (title) {
-    var baseTitle = title.replace(/\\s*\\([^)]*\\)/g, '').replace(/\\s*\\[[^\\]]*\\]/g, '').trim();
-    cleanBaseTitle = baseTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-  }
-
-  var baseResp = {
-    title: title,
-    id: rawId
-  };
-  if (hasItemSince) {
-    baseResp.since = item.since;
-  }
-
-  for (var i = 0; i < scannedMessages.length; i++) {
-    var rec = scannedMessages[i];
-    if (effectiveSince > 0 && rec.msgEpoch < (effectiveSince - 30)) {
-      continue;
-    }
-
-    var titleMatches = Boolean(
-      cleanBaseTitle.length > 2 &&
-      (rec.cleanSubject.indexOf(cleanBaseTitle) !== -1 || rec.cleanBody.indexOf(cleanBaseTitle) !== -1)
-    );
-
-    // Prefer a URL whose query explicitly carries id=<cleanReleaseId>
-    var matchedUrl = '';
-    for (var k = 0; k < rec.urls.length; k++) {
-      var u = rec.urls[k];
-      if (cleanReleaseId && u.indexOf('id=' + cleanReleaseId) !== -1) {
-        matchedUrl = u;
-        break;
-      }
-    }
-
-    if (!matchedUrl) {
-      var hasBodyId = Boolean(cleanReleaseId && rec.body.indexOf(cleanReleaseId) !== -1);
-      var isMatch = cleanReleaseId ? (hasBodyId || titleMatches) : (title ? titleMatches : true);
-      if (isMatch && rec.urls.length > 0) {
-        matchedUrl = rec.urls[0];
-      }
-    }
-
-    if (matchedUrl) {
-      baseResp.found = true;
-      baseResp.downloadPageUrl = matchedUrl;
-      baseResp.messageId = rec.messageId;
-      baseResp.receivedAt = rec.msgEpoch;
-      return baseResp;
-    }
-  }
-
-  baseResp.found = false;
-  return baseResp;
-}
-
-function buildErrorArray(items, errMsg) {
-  if (Array.isArray(items) && items.length > 0) {
-    return items.map(function(it) {
-      var obj = {
-        title: it && it.title !== undefined && it.title !== null ? String(it.title) : '',
-        id: it && it.id !== undefined && it.id !== null ? it.id : '',
-        found: false,
-        error: errMsg
-      };
-      if (it && it.since !== undefined && it.since !== null && it.since !== '') {
-        obj.since = it.since;
-      }
-      return obj;
+  // Authorize
+  if (!params.secret || params.secret !== SECRET_PASSWORD) {
+    appLog('WARN', 'Wrong or missing secret');
+    return enrichArray(items, {
+      found: false,
+      error: 'Unauthorized: Invalid or missing password parameter',
     });
   }
-  return [{ found: false, error: errMsg }];
+
+  // Ping / test mode (supports both 'true' string and boolean true)
+  if (params.test === 'true' || params.test === true) {
+    appLog('INFO', 'Test OK');
+    return enrichArray(items, {
+      found: false,
+      test: true,
+      batchSupported: true,
+      serverTime: Math.floor(Date.now() / 1000),
+      message: 'GAS Webhook (POST-enabled) is active and authorized successfully!',
+    });
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+
+  // Build Gmail search command
+  let query = 'from:bandcamp.com "bandcamp.com/download"';
+  const sinceSec = Number(params.since) || Math.floor(Date.now() / 1000 - MAIL_SEARCH_LOOKBACK_SEC);
+  query += ' after:' + sinceSec;
+
+  // Prepare output array with pre-compiled per-item RegExp (strict numeric id= boundary prevents prefix collisions)
+  const results = items.map((i) => {
+    const cleanId = normalizeCleanId(i && i.id);
+    const escapedId = cleanId ? escapeRegExpLiteral(cleanId) : '';
+    const idClause = escapedId ? '(?:[^\\\\s"<>]*[?&])?id=' + escapedId + '(?=[&#\\\\s"<>]|$)[^\\\\s"<>]*' : '[^\\\\s"<>]+';
+    const rePattern = 'https?:\\\\/\\\\/[a-z0-9.-]*bandcamp\\\\.com\\\\/download\\\\?' + idClause;
+
+    appLog('DEBUG', 'Item "' + (i?.title || '') + '" RE', rePattern);
+
+    const obj = {
+      title: i && i.title !== undefined && i.title !== null ? String(i.title) : '',
+      id: i && i.id !== undefined && i.id !== null ? i.id : '',
+      found: false,
+      _cleanId: cleanId,
+      _regexp: new RegExp(rePattern, 'i'),
+      _since: Number(i && i.since) || sinceSec,
+    };
+    if (i && i.since !== undefined && i.since !== null && i.since !== '') {
+      obj.since = i.since;
+    }
+    return obj;
+  });
+
+  appLog('INFO', 'Search Query', query);
+
+  const threads = GmailApp.search(query, 0, MAIL_SEARCH_MAX_THREADS);
+  if (threads.length > 0) {
+    const recentMessages = GmailApp.getMessagesForThreads(threads)
+      .flat()
+      // QUOTA SAVER: Filter out older messages in the thread BEFORE calling getPlainBody()
+      .map((msg) => ({
+        rawMsg: msg,
+        date: Math.floor(msg.getDate().getTime() / 1000),
+      }))
+      .filter((msg) => msg.date >= sinceSec)
+      .sort((a, b) => b.date - a.date);
+
+    let msgIdx = recentMessages.length;
+    appLog('INFO', 'Threads found: ' + threads.length + ', recent messages: ' + msgIdx);
+
+    for (const msg of recentMessages) {
+      const pendingItems = results.filter((i) => !i.found);
+      if (pendingItems.length < 1) break;
+
+      const pendingByTime = pendingItems.filter((i) => i._since <= msg.date);
+      if (pendingByTime.length > 0) {
+        const body = msg.rawMsg.getPlainBody();
+        appLog('DEBUG', 'Matching ' + pendingByTime.length + ' items against message #' + msgIdx + ' (date: ' + msg.date + ')');
+
+        for (const item of pendingByTime) {
+          const match = body.match(item._regexp);
+          if (match) {
+            const dlUrl = match[0].replace(/&amp;/g, '&').trim();
+            appLog('INFO', 'Link found for ' + item.title, dlUrl);
+
+            try {
+              msg.rawMsg.markRead();
+            } catch (e) {}
+
+            item.found = true;
+            item.downloadPageUrl = dlUrl;
+            item.messageId = msg.rawMsg.getId();
+            item.receivedAt = msg.date;
+            break;
+          }
+        }
+      } else {
+        appLog('DEBUG', 'Skipping Message ' + msgIdx + ': too old for remaining items');
+      }
+
+      msgIdx--;
+    }
+  }
+
+  return results.map((r) => {
+    const clean = {
+      id: r.id,
+      title: r.title,
+      found: r.found,
+    };
+    if (r.since !== undefined) clean.since = r.since;
+    if (r.downloadPageUrl) clean.downloadPageUrl = r.downloadPageUrl;
+    if (r.messageId) clean.messageId = r.messageId;
+    if (r.receivedAt) clean.receivedAt = r.receivedAt;
+    return clean;
+  });
 }
 
-function doGet(e) {
+function enrichArray(items, resultTemplate = {}) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [{ id: '', title: '', ...resultTemplate }];
+  }
+  return items.map((i) => ({
+    id: i?.id || '',
+    title: i?.title || '',
+    ...resultTemplate,
+  }));
+}
+
+function doGet(data) {
   try {
-    var params = e && e.parameter ? e.parameter : {};
-    var clientSecret = params.secret || '';
-
-    if (!clientSecret || clientSecret !== SECRET_PASSWORD) {
-      return createJsonResponse({
-        found: false,
-        error: 'Unauthorized: Invalid or missing secret password'
-      });
-    }
-
-    if (params.test === 'true') {
-      return createJsonResponse({
-        found: false,
-        test: true,
-        batchSupported: true,
-        serverTime: Math.floor(Date.now() / 1000),
-        message: 'Google Apps Script Webhook is active (POST batch mode enabled) and authorized successfully!'
-      });
-    }
-
-    var sinceSeconds = parseInt(params.since, 10) || 0;
-    var query = buildGmailQuery(sinceSeconds);
-    var scannedMessages = extractCandidateMessages(query, sinceSeconds, 50);
-    return createJsonResponse(matchItemInMessages({ id: params.id || '', title: params.title || '', since: params.since }, sinceSeconds, scannedMessages));
+    appLog('INFO', 'GET Webhook Invoked');
+    const params = data?.parameter || {};
+    const item = {
+      id: params.id || '',
+      title: decodeURIComponent((params.title || '').replace(/\\+/g, ' ')),
+      since: params.since,
+    };
+    const results = doItemsSearch(params, [item]);
+    return createJsonResponse(results[0] || { found: false });
   } catch (err) {
+    const errorStr = err.toString();
+    appLog('ERROR', 'GET processing error', errorStr);
     return createJsonResponse({
       found: false,
-      error: err.toString()
+      error: errorStr,
     });
   }
 }
 
-function doPost(e) {
-  var items = [];
+function doPost(data) {
   try {
-    var params = e && e.parameter ? e.parameter : {};
-    var rawBody = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
-    var parsed = JSON.parse(rawBody);
+    appLog('INFO', 'POST Webhook Invoked');
+    const rawBody = data?.postData?.contents || '[]';
+    appLog('DEBUG', 'Body', rawBody);
 
-    var isArrayPayload = Array.isArray(parsed);
-    items = isArrayPayload
-      ? parsed
-      : (parsed && Array.isArray(parsed.items) ? parsed.items : []);
+    const parsedBody = JSON.parse(rawBody);
+    const items = Array.isArray(parsedBody)
+      ? parsedBody
+      : (Array.isArray(parsedBody?.items) ? parsedBody.items : [parsedBody]);
 
-    var clientSecret = (!isArrayPayload && parsed && parsed.secret) ? String(parsed.secret) : (params.secret || '');
-    var rootSince = (!isArrayPayload && parsed && parsed.since !== undefined && parsed.since !== null)
-      ? (parseInt(parsed.since, 10) || 0)
-      : 0;
-    var isTest = params.test === 'true' || (!isArrayPayload && parsed && parsed.test === true);
+    const params = data?.parameter || {};
+    params.secret =
+      params.secret ||
+      (!Array.isArray(parsedBody) ? parsedBody?.secret : '') ||
+      (items.length > 0 ? items[0]?.secret : '');
 
-    if (!clientSecret || clientSecret !== SECRET_PASSWORD) {
-      return createJsonResponse(buildErrorArray(items, 'Unauthorized: Invalid or missing secret password'));
-    }
+    // Find earliest since value across root params, body.since, and per-item since
+    const minItemSince = items.reduce(
+      (minSince, curItem) => {
+        const s = Number(curItem?.since) || 0;
+        if (s <= 0) return minSince;
+        return minSince <= 0 ? s : Math.min(minSince, s);
+      },
+      0
+    );
+    const rootSince = Number((!Array.isArray(parsedBody) ? parsedBody?.since : 0) || params.since) || 0;
+    params.since = (minItemSince > 0 && rootSince > 0)
+      ? Math.min(minItemSince, rootSince)
+      : (minItemSince || rootSince || 0);
 
-    if (isTest) {
-      return createJsonResponse({
-        found: false,
-        test: true,
-        batchSupported: true,
-        serverTime: Math.floor(Date.now() / 1000),
-        message: 'Google Apps Script POST Batch Webhook is active and authorized!'
-      });
-    }
+    params.test = params.test || (!Array.isArray(parsedBody) ? parsedBody?.test : '');
 
-    if (items.length === 0) {
-      return createJsonResponse([]);
-    }
-
-    // Compute earliest since cutoff across items and rootSince for a single GmailApp.search call
-    var earliestSince = 0;
-    var hasUnbounded = false;
-    for (var idx = 0; idx < items.length; idx++) {
-      var it = items[idx] || {};
-      var itSince = (it.since !== undefined && it.since !== null && it.since !== '')
-        ? (parseInt(it.since, 10) || 0)
-        : rootSince;
-      if (itSince <= 0) {
-        hasUnbounded = true;
-      } else if (earliestSince === 0 || itSince < earliestSince) {
-        earliestSince = itSince;
-      }
-    }
-
-    var effectiveSince = hasUnbounded ? 0 : earliestSince;
-    var query = buildGmailQuery(effectiveSince);
-    var scannedMessages = extractCandidateMessages(query, effectiveSince, 100);
-
-    var results = [];
-    for (var k = 0; k < items.length; k++) {
-      results.push(matchItemInMessages(items[k] || {}, rootSince, scannedMessages));
-    }
-
+    const results = doItemsSearch(params, items);
     return createJsonResponse(results);
   } catch (err) {
-    return createJsonResponse(buildErrorArray(items, err.toString()));
+    const errorStr = err.toString();
+    appLog('ERROR', 'POST processing error', errorStr);
+    return createJsonResponse({
+      found: false,
+      error: errorStr,
+    });
   }
 }
 
 function createJsonResponse(data) {
-  return ContentService.createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
+  const respString = JSON.stringify(data);
+  appLog('DEBUG', 'Response', respString);
+  return ContentService.createTextOutput(respString).setMimeType(ContentService.MimeType.JSON);
+}
+
+// Structured Logging
+function appLog(logLevel, message, value = '') {
+  try {
+    const baseLevel = LOG_LEVELS.indexOf(LOG_LEVEL);
+    const level = LOG_LEVELS.indexOf(logLevel);
+    if (level >= baseLevel) {
+      const valStr = value !== undefined && value !== null ? String(value) : '';
+      const entry = message + (valStr.length > 0 ? ': ' + valStr : '');
+      switch (logLevel) {
+        case 'ERROR':
+          console.error(entry);
+          break;
+        case 'WARN':
+          console.warn(entry);
+          break;
+        case 'INFO':
+          console.info(entry);
+          break;
+        default:
+          console.log(entry);
+      }
+    }
+  } catch (e) {
+    console.error('Failed to write to log: ' + e.toString());
+  }
 }
 `;

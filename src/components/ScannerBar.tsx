@@ -127,13 +127,6 @@ export const ScannerBar: React.FC<ScannerBarProps> = ({
               (Crawls release albums without following individual tracklist sub-pages)
             </span>
           </label>
-
-          {isScanning && scanProgressText && (
-            <div className="flex items-center gap-2 text-cyan-400 font-mono text-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-              <span>{scanProgressText}</span>
-            </div>
-          )}
         </div>
       </form>
     </div>

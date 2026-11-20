@@ -577,20 +577,68 @@ var BandcampCore = (() => {
     const minPrice = current?.minimum_price != null ? current.minimum_price : 0;
     const isSetPrice = Boolean(current?.is_set_price);
     const rawFreeDlPage = tralbum?.freeDownloadPage || null;
-    const digitalBuyMatch = subHtml.match(/<li[^>]*class="[^"]*buyItem[^"]*\bdigital\b[^"]*"[^>]*>([\s\S]*?)<\/li>/i);
-    const digitalBuyBlock = digitalBuyMatch ? digitalBuyMatch[1] : "";
-    const hasFreeDownloadButton = Boolean(
-      /<button[^>]*class="[^"]*(?:buy-link|download-link)[^"]*"[^>]*>\s*free\s+download\s*<\/button>/i.test(digitalBuyBlock || subHtml) || digitalBuyBlock && /<button[^>]*>[\s\S]*?\bfree\s+download\b[\s\S]*?<\/button>/i.test(digitalBuyBlock)
+    const cmdScanHtml = subHtml.replace(/<li[^>]*class=["'][^"']*buyFullDiscography[^"']*["'][^>]*>(?:(?!<li\b)[\s\S])*?<\/li>/gi, "").replace(/<(?:li|div)[^>]*id=["']buyFullDiscography["'][^>]*>(?:(?!<(?:li|div)\b)[\s\S])*?<\/(?:li|div)>/gi, "");
+    const tralbumCmdsMatch = cmdScanHtml.match(
+      /<ul[^>]*class=["'][^"']*tralbumCommands[^"']*["'][^>]*>([\s\S]*?)(?=<div\b[^>]*(?:id=["']trackInfo|class=["'][^"']*tralbum-(?:about|credits))|<table\b|$)/i
     );
-    const hasFreeButton = hasFreeDownloadButton || current?.download_pref === 1;
-    const hasNypText = /name\s+your\s+price/i.test(digitalBuyBlock || subHtml) || /buyItemNyp/i.test(digitalBuyBlock || subHtml) || minPrice === 0 && current?.download_pref === 2;
-    const isZeroEligible = minPrice === 0 || hasFreeButton;
+    const cmdsScopeHtml = tralbumCmdsMatch ? tralbumCmdsMatch[1] : cmdScanHtml;
+    const digitalBuyMatch = cmdsScopeHtml.match(
+      /<li\b([^>]*class=["'][^"']*(?:\bbuyItem\b[^"']*\bdigital\b|\bdigital\b[^"']*\bbuyItem\b|buyItemDigital)[^"']*["'][^>]*)>([\s\S]*?)<\/li>/i
+    );
+    const isDigitalBuyHidden = Boolean(
+      digitalBuyMatch && /style=["'][^"']*display\s*:\s*none/i.test(digitalBuyMatch[1] || "")
+    );
+    const digitalBuyBlock = digitalBuyMatch && !isDigitalBuyHidden ? digitalBuyMatch[2] : "";
+    const extractActionLinks = (htmlFragment) => {
+      const links = [];
+      const rx = /<(button|a)\b([^>]*)>([\s\S]{0,450}?)<\/\1>/gi;
+      let m;
+      while ((m = rx.exec(htmlFragment)) !== null) {
+        const attrs = m[2] || "";
+        const classMatch = attrs.match(/class=["']([^"']*)["']/i);
+        const classes = classMatch ? classMatch[1] : "";
+        if (!/(?:buy-link|download-link)/i.test(classes)) continue;
+        const text = cleanHtmlText((m[3] || "").replace(/<[^>]+>/g, " "));
+        if (text) links.push({ classes, text });
+      }
+      return links;
+    };
+    const digitalBlockLinks = digitalBuyBlock ? extractActionLinks(digitalBuyBlock) : [];
+    const scopedCmdLinks = extractActionLinks(cmdsScopeHtml);
+    const isFreeButtonLabel = (text) => /^free\s+download$/i.test(text.trim());
+    const isDigitalActionLabel = (text) => /^(?:buy\s+digital(?:\s+(?:album|track))?|pre-?order\s+digital(?:\s+(?:album|track))?|free\s+download|download\s+(?:album|track))$/i.test(
+      text.trim()
+    );
+    const hasFreeDownloadButton = Boolean(
+      digitalBlockLinks.some((l) => isFreeButtonLabel(l.text)) || digitalBuyBlock && /<(?:button|a)\b[^>]*>[\s\S]{0,200}?\bfree\s+download\b[\s\S]{0,200}?<\/(?:button|a)>/i.test(digitalBuyBlock) || scopedCmdLinks.some((l) => isFreeButtonLabel(l.text))
+    );
+    const isSubscriberOnlyDigitalBlock = Boolean(
+      digitalBuyBlock && /\bsubscrib/i.test(digitalBuyBlock) && !digitalBlockLinks.some((l) => isDigitalActionLabel(l.text)) && !/\bname\s+your\s+price\b/i.test(digitalBuyBlock)
+    );
+    const hasExplicitNoDigitalFlag = tralbum?.has_digital_download === false || current?.has_digital_download === false;
+    const isFullPageHtml = /class=["'][^"']*tralbumCommands[^"']*["']|<li[^>]*class=["'][^"']*buyItem[^"']*["']|band-name-location|name-section|trackView/i.test(subHtml);
+    const hasDigitalBuyBlock = Boolean(
+      digitalBuyBlock && !isSubscriberOnlyDigitalBlock || !tralbumCmdsMatch && /class=["'][^"']*buyItemDigital[^"']*["']/i.test(cmdScanHtml) && !isSubscriberOnlyDigitalBlock || scopedCmdLinks.some((l) => isDigitalActionLabel(l.text))
+    );
+    const hasDownloadDescId = Boolean(
+      current?.download_desc_id != null && Number(current.download_desc_id) > 0
+    );
+    const hasDigitalDownload = Boolean(
+      isPurchased || !hasExplicitNoDigitalFlag && (hasDigitalBuyBlock || hasFreeDownloadButton || !isFullPageHtml && (hasDownloadDescId || Boolean(rawFreeDlPage) || current?.download_pref === 1 || current?.minimum_price != null && current.minimum_price > 0))
+    );
+    const hasFreeButton = Boolean(
+      hasFreeDownloadButton || hasDigitalDownload && !digitalBuyBlock && current?.download_pref === 1 || hasDigitalDownload && digitalBuyBlock && current?.download_pref === 1 && minPrice === 0
+    );
+    const hasNypText = Boolean(
+      digitalBuyBlock && (/name\s+your\s+price/i.test(digitalBuyBlock) || /buyItemNyp/i.test(digitalBuyBlock))
+    );
+    const isZeroEligible = hasDigitalDownload && (minPrice === 0 || hasFreeButton);
     const emailFlagSet = current?.require_email === 1 || current?.require_email_0 === 1;
     const isEmailWalled = Boolean(
       isZeroEligible && (hasFreeButton && (emailFlagSet || !rawFreeDlPage) || !hasFreeButton && (emailFlagSet || current?.download_pref === 2 || hasNypText))
     );
     const isNypEligible = isZeroEligible && (hasNypText || emailFlagSet);
-    const freeDlPage = !isEmailWalled && hasFreeButton && !emailFlagSet ? rawFreeDlPage : null;
+    const freeDlPage = hasDigitalDownload && !isEmailWalled && hasFreeButton && !emailFlagSet ? rawFreeDlPage : null;
     const requireEmail = isEmailWalled;
     let isFutureDate = false;
     let hasValidReleaseDate = false;
@@ -616,7 +664,9 @@ var BandcampCore = (() => {
       current?.is_preorder === true || current?.is_preorder === 1 || tralbum?.is_preorder === true || tralbum?.is_preorder === 1
     );
     let isPreorder = false;
-    if (hasValidReleaseDate && !isFutureDate) {
+    if (!hasDigitalDownload) {
+      isPreorder = false;
+    } else if (hasValidReleaseDate && !isFutureDate) {
       isPreorder = false;
     } else if (hasExplicitTralbumPreorder) {
       isPreorder = true;
@@ -628,10 +678,17 @@ var BandcampCore = (() => {
     let isFree = false;
     let isNyp = false;
     let isPaid = false;
+    let isNoDigital = false;
     let badgeType = "free";
     if (isPurchased) {
       isFree = true;
       badgeType = "own";
+    } else if (!hasDigitalDownload) {
+      isNoDigital = true;
+      isPaid = false;
+      isFree = false;
+      isNyp = false;
+      badgeType = "no_digital";
     } else if (isPreorder) {
       badgeType = "preorder";
       isPaid = true;
@@ -660,14 +717,17 @@ var BandcampCore = (() => {
       isPaid = true;
       badgeType = "paid";
     } else {
-      isFree = true;
-      badgeType = "free";
+      isNoDigital = true;
+      isFree = false;
+      badgeType = "no_digital";
     }
     const cur = current?.currency || "EUR";
     const curSymbol = cur === "EUR" ? "\u20AC" : cur === "USD" ? "$" : cur === "GBP" ? "\xA3" : cur;
     let priceFormatted = "Paid";
     if (badgeType === "own") {
       priceFormatted = "Own";
+    } else if (badgeType === "no_digital") {
+      priceFormatted = "No Digital";
     } else if (badgeType === "preorder") {
       const pricePart = minPrice > 0 ? `(${curSymbol}${minPrice})` : "";
       priceFormatted = ["Pre-order", pricePart, preorderShortDate].filter(Boolean).join(" ");
@@ -739,7 +799,7 @@ var BandcampCore = (() => {
       const s = Math.floor(sec % 60);
       return ` (${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")})`;
     };
-    const trackListFormatted = audioStreams.length > 0 ? audioStreams.map((s) => `${s.trackNum}. ${s.title}${formatDuration(s.duration)}`) : ["1. " + releaseTitle];
+    const trackListFormatted = audioStreams.length > 0 ? audioStreams.map((s) => `${s.trackNum}. ${s.title}${formatDuration(s.duration)}`) : [];
     const eqDivider = "=".repeat(80);
     const dashDivider = "-".repeat(80);
     const tracksWithLyrics = audioStreams.filter((s) => s.lyrics && s.lyrics.trim().length > 0);
@@ -856,6 +916,7 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
       isPurchased,
       isPaid,
       isPreorder,
+      isNoDigital,
       badgeType,
       minPrice,
       priceFormatted,
@@ -874,7 +935,8 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
       isHiRes
     };
   }
-  async function resolveBandcampDownload(downloadPageUrl, requestedFormat = "flac") {
+  async function resolveBandcampDownload(downloadPageUrl, requestedFormat = "flac", expectedItemId) {
+    const expectedCleanId = expectedItemId !== void 0 && expectedItemId !== null ? String(expectedItemId).replace(/^(album|track)-/, "").replace(/\D/g, "") : "";
     try {
       if (!downloadPageUrl || typeof downloadPageUrl !== "string" || !downloadPageUrl.trim()) {
         return {
@@ -889,6 +951,19 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
           error: "Invalid download page URL protocol"
         };
       }
+      if (expectedCleanId) {
+        try {
+          const parsedCheck = new URL(cleanUrl);
+          const urlItemId = (parsedCheck.searchParams.get("id") || "").replace(/\D/g, "");
+          if (urlItemId && urlItemId !== expectedCleanId) {
+            return {
+              success: false,
+              error: `Download page ID mismatch (expected ${expectedCleanId}, got ${urlItemId}). Aborting to prevent filename/archive mix-up.`
+            };
+          }
+        } catch {
+        }
+      }
       if (cleanUrl.includes("bcbits.com/download/") || cleanUrl.includes("popplers")) {
         debugLog("resolver", "cleanUrl is already a direct bcbits download URL:", cleanUrl);
         return {
@@ -896,7 +971,8 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
           downloadUrl: cleanUrl,
           format: requestedFormat,
           isArchive: cleanUrl.includes("/album/"),
-          itemType: cleanUrl.includes("/album/") ? "album" : "track"
+          itemType: cleanUrl.includes("/album/") ? "album" : "track",
+          itemId: expectedCleanId ? parseInt(expectedCleanId, 10) : void 0
         };
       }
       debugLog("resolver", "Fetching Bandcamp download page:", cleanUrl);
@@ -968,6 +1044,10 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
       }
       const digitalItem = blob?.digital_items?.[0] || blob;
       const downloads = digitalItem?.downloads;
+      const resolvedItemIdNum = Number(digitalItem?.item_id || digitalItem?.id || 0) || void 0;
+      if (expectedCleanId && resolvedItemIdNum && String(resolvedItemIdNum) !== expectedCleanId) {
+        throw new Error(`Resolved download page item_id (${resolvedItemIdNum}) does not match requested release ID (${expectedCleanId})`);
+      }
       if (!downloads && directFormatUrl) {
         debugLog("resolver", "Resolved via direct HTML bcbits link:", directFormatUrl);
         const titleFromHtml = cleanHtmlText(dlHtml.match(/<title>([^<]+)<\/title>/i)?.[1]?.replace(/\|\s*Bandcamp/i, ""));
@@ -978,6 +1058,7 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
           description: requestedFormat.toUpperCase(),
           isArchive: directFormatUrl.includes("/album/"),
           itemType: directFormatUrl.includes("/album/") ? "album" : "track",
+          itemId: resolvedItemIdNum || (expectedCleanId ? parseInt(expectedCleanId, 10) : void 0),
           title: titleFromHtml || "Album",
           artist: "Artist"
         };
@@ -1121,6 +1202,7 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
         sizeMb: target.size_mb,
         isArchive,
         itemType,
+        itemId: resolvedItemIdNum || (expectedCleanId ? parseInt(expectedCleanId, 10) : void 0),
         title: releaseTitle,
         artist: releaseArtist
       };
@@ -1187,9 +1269,25 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
     for (const [token, val] of Object.entries(values)) {
       str = str.replace(new RegExp(token, "gi"), val);
     }
-    let result = str.replace(/[\[\]]/g, "").replace(/\s+/g, " ").replace(/\s*-\s*-\s*/g, " - ").replace(/\s*-\s*\./g, ".").replace(/\.{2,}/g, ".").trim();
+    let result = str.replace(/[\[\]]/g, "").replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\uFEFF]/g, " ").replace(/\s+/g, " ").replace(/\s*-\s*-\s*/g, " - ").replace(/\s*-\s*\./g, ".").replace(/\.{2,}/g, ".").trim();
+    if (!options.allowSubfolders) {
+      result = result.replace(/[\\/]/g, " - ").replace(/[<>:"|?*]/g, "_").replace(/\s+/g, " ").trim();
+    }
     if (!result.toLowerCase().endsWith("." + defaultExt)) {
       result = `${result}.${defaultExt}`;
+    }
+    const dotIdx = result.lastIndexOf(".");
+    if (dotIdx > 0) {
+      let stem = result.slice(0, dotIdx).replace(/^[.\s]+|[.\s]+$/g, "").trim() || "download";
+      if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)) {
+        stem = "_" + stem;
+      }
+      const extPart = "." + result.slice(dotIdx + 1).replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+      const maxStem = Math.max(24, 160 - extPart.length);
+      if (stem.length > maxStem) {
+        stem = stem.slice(0, maxStem).replace(/[.\s]+$/g, "").trim() || "download";
+      }
+      result = `${stem}${extPart}`;
     }
     return result;
   }
@@ -1210,10 +1308,12 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
     const addItem = (rawHref, rawId, rawTitle, rawArtUrl, itemArtist) => {
       if (!rawHref) return;
       let pathname = "";
+      let hostname = "";
       let fullUrl = "";
       try {
         const u = new URL(rawHref, origin);
         pathname = u.pathname;
+        hostname = u.hostname.toLowerCase();
         fullUrl = u.href;
       } catch {
         return;
@@ -1221,9 +1321,10 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
       const isAlbum = pathname.startsWith("/album/");
       const isTrack = pathname.startsWith("/track/");
       if (!isAlbum && !isTrack) return;
-      const normKey = pathname.replace(/\/+$/, "").toLowerCase();
+      const cleanPath = pathname.replace(/\/+$/, "").toLowerCase();
+      const normKey = `${hostname}${cleanPath}`;
       if (itemsMap.has(normKey)) return;
-      const id = rawId && rawId.trim() ? rawId.trim() : `${isAlbum ? "album" : "track"}-${normKey.replace(/^\/(?:album|track)\//, "").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+      const id = rawId && rawId.trim() ? rawId.trim() : `${isAlbum ? "album" : "track"}-${cleanPath.replace(/^\/(?:album|track)\//, "").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
       const numId = parseInt(id.replace(/\D/g, "") || "0", 10);
       const cleanTitle = cleanHtmlText(rawTitle) || "Release";
       const cleanArt = (rawArtUrl || "").replace(/_\d+\.jpg/, "_10.jpg");
@@ -1267,12 +1368,16 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
         addItem(linkMatch[1], idMatch?.[1], titleMatch?.[1], artMatch?.[1], artistName);
       }
     }
-    const gridMatch = cleanScanHtml.match(/<ol[^>]*id=["']music-grid["'][^>]*>([\s\S]*?)<\/ol>/i);
-    const searchHtml = gridMatch ? gridMatch[1] : cleanScanHtml;
-    const liMatches = [
-      ...Array.from(searchHtml.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)),
-      ...gridMatch ? [] : Array.from(html.matchAll(/<li[^>]*class=["'][^"']*music-grid-item[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi))
-    ];
+    const gridMatches = Array.from(cleanScanHtml.matchAll(/<ol[^>]*id=["']music-grid["'][^>]*>([\s\S]*?)<\/ol>/gi));
+    const liMatches = [];
+    if (gridMatches.length > 0) {
+      for (const gm of gridMatches) {
+        liMatches.push(...Array.from(gm[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)));
+      }
+    } else {
+      liMatches.push(...Array.from(cleanScanHtml.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)));
+    }
+    liMatches.push(...Array.from(cleanScanHtml.matchAll(/<li[^>]*class=["'][^"']*music-grid-item[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi)));
     for (const m of liMatches) {
       const fullLiTag = m[0];
       const content = m[1];
@@ -1309,18 +1414,19 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
       }
       addItem(rawHref, rawId, titleStr, artUrlStr, itemArtistStr);
     }
-    const clientMatch = html.match(/data-client-items=["']([\s\S]*?)["'](?=[\s>]|data-)/i) || html.match(/data-client-items="([^"]+)"/i);
-    if (clientMatch) {
+    const clientMatches = Array.from(html.matchAll(/data-client-items=(["'])([\s\S]*?)\1(?=[\s>]|$)/gi));
+    for (const clientMatch of clientMatches) {
       try {
-        const raw = clientMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+        const raw = clientMatch[2].replace(/&quot;/g, '"').replace(/&#34;/g, '"').replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&#x27;/gi, "'").replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
         const clientItems = JSON.parse(raw);
         if (Array.isArray(clientItems)) {
           for (const item of clientItems) {
-            if (!item.page_url) continue;
+            const itemUrl = item.page_url || item.url || item.tralbum_url;
+            if (!itemUrl) continue;
             const artUrl = item.art_id ? `https://f4.bcbits.com/img/a${item.art_id}_10.jpg` : "";
             const rawId = `${item.type || "album"}-${item.id}`;
             const itemArtist = item.band_name || item.artist_name || item.artist || artistName;
-            addItem(item.page_url, rawId, item.title, artUrl, itemArtist);
+            addItem(itemUrl, rawId, item.title, artUrl, itemArtist);
           }
         }
       } catch (e) {
@@ -1328,7 +1434,7 @@ Downloaded with Bandcamp Free & NYP Bulk Downloader
       }
     }
     if (itemsMap.size === 0) {
-      const allLinks = Array.from(html.matchAll(/<a[^>]*href=["']([^"']*(?:\/album\/|\/track\/)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi));
+      const allLinks = Array.from(cleanScanHtml.matchAll(/<a[^>]*href=["']([^"']*(?:\/album\/|\/track\/)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi));
       for (const lMatch of allLinks) {
         const rawHref = lMatch[1];
         const linkBody = lMatch[2];

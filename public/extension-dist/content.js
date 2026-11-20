@@ -64,10 +64,12 @@
       if (!rawHref) return;
 
       let pathname;
+      let hostname;
       let fullHref;
       try {
         const u = new URL(rawHref, window.location.origin);
         pathname = u.pathname;
+        hostname = u.hostname.toLowerCase();
         fullHref = u.href;
       } catch {
         return;
@@ -77,7 +79,8 @@
       const isTrack = pathname.startsWith('/track/');
       if (!isAlbum && !isTrack) return;
 
-      const normKey = pathname.replace(/\/+$/, '').toLowerCase();
+      const cleanPath = pathname.replace(/\/+$/, '').toLowerCase();
+      const normKey = hostname + cleanPath;
       if (itemsMap.has(normKey)) return;
 
       const titleEl = li.querySelector('p.title') || li.querySelector('.title');
@@ -96,7 +99,7 @@
       const img = li.querySelector('img');
       const rawSrc = img ? (img.getAttribute('data-original') || img.getAttribute('src') || '') : '';
       const artUrl = rawSrc && !rawSrc.includes('blank.gif') ? rawSrc.replace(/_\d+\.jpg/, '_10.jpg') : '';
-      const rawId = li.getAttribute('data-item-id') || link.getAttribute('data-item-id') || (isAlbum ? 'album-' : 'track-') + normKey.replace('/album/', '').replace('/track/', '');
+      const rawId = li.getAttribute('data-item-id') || link.getAttribute('data-item-id') || (isAlbum ? 'album-' : 'track-') + cleanPath.replace('/album/', '').replace('/track/', '');
 
       itemsMap.set(normKey, {
         id: rawId,
@@ -119,16 +122,22 @@
         try {
           const clientItems = JSON.parse(clientData);
           clientItems.forEach((item) => {
-            const pageUrl = item.page_url;
+            const pageUrl = item.page_url || item.url || item.tralbum_url;
             if (!pageUrl) return;
-            const pathname = pageUrl.split('?')[0];
-            const normKey = pathname.replace(/\/+$/, '').toLowerCase();
+            let parsedClientUrl;
+            try {
+              parsedClientUrl = new URL(pageUrl, window.location.origin);
+            } catch {
+              return;
+            }
+            const pathname = parsedClientUrl.pathname;
+            const normKey = parsedClientUrl.hostname.toLowerCase() + pathname.replace(/\/+$/, '').toLowerCase();
             if (!itemsMap.has(normKey)) {
-              const isAlbum = item.type === 'album' || normKey.startsWith('/album/');
+              const isAlbum = item.type === 'album' || pathname.toLowerCase().startsWith('/album/');
               itemsMap.set(normKey, {
                 id: (item.type || 'item') + '-' + item.id,
                 itemId: item.id || 0,
-                href: window.location.origin + pathname,
+                href: parsedClientUrl.href,
                 pageUrl: pathname,
                 title: item.title,
                 artUrl: item.art_id ? ('https://f4.bcbits.com/img/a' + item.art_id + '_10.jpg') : '',

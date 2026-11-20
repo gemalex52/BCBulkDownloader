@@ -73,6 +73,7 @@ export default function App() {
   const [url, setUrl] = useState<string>(initialUrlRef.current);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgressText, setScanProgressText] = useState('');
+  const [scanProgressCounts, setScanProgressCounts] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [releases, setReleases] = useState<ScannedRelease[]>([]);
   const [skipTrackSubpages, setSkipTrackSubpages] = useState(true);
   const [selectedFormat, setSelectedFormat] = useState('flac');
@@ -87,6 +88,44 @@ export default function App() {
   const isDownloadingRef = useRef(false);
   const [pacingNotice, setPacingNotice] = useState<string>('');
   const isCancelledRef = useRef(false);
+  const [saveDirInfo, setSaveDirInfo] = useState<{
+    supported: boolean;
+    hasHandle: boolean;
+    name: string;
+    granted: boolean;
+  }>({ supported: false, hasHandle: false, name: '', granted: false });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const info = await apiClient.getSaveDirectoryInfo();
+        setSaveDirInfo(info);
+      } catch {}
+    })();
+  }, []);
+
+  const refreshSaveDirInfo = async () => {
+    try {
+      const info = await apiClient.getSaveDirectoryInfo();
+      setSaveDirInfo(info);
+    } catch {}
+  };
+
+  const handlePickSaveDir = async () => {
+    try {
+      const picked = await apiClient.pickSaveDirectory();
+      if (picked) {
+        await refreshSaveDirInfo();
+      }
+    } catch (e) {
+      console.warn('Folder selection failed:', e);
+    }
+  };
+
+  const handleClearSaveDir = async () => {
+    await apiClient.clearSaveDirectory();
+    await refreshSaveDirInfo();
+  };
 
   useEffect(() => {
     isDownloadingRef.current = isDownloading;
@@ -159,9 +198,166 @@ export default function App() {
   }, []);
 
   const activeEventSourceRef = useRef<EventSource | null>(null);
+  const loadedCatalogHostnameRef = useRef<string>('');
 
   // Synchronize or load session whenever URL or releases change
   const currentHostname = getDomainHostname(url);
+
+  const normalizeReleaseUrlKey = (rawUrl?: string): string => {
+    if (!rawUrl || typeof rawUrl !== 'string') return '';
+    try {
+      const u = new URL(rawUrl, 'https://bandcamp.com');
+      return `${u.hostname.toLowerCase()}${u.pathname.replace(/\/+$/, '').toLowerCase()}`;
+    } catch {
+      return rawUrl.trim().toLowerCase().replace(/\/+$/, '');
+    }
+  };
+
+  const getReleaseLookupKeys = (r: { id?: string; itemId?: number; url?: string }): string[] => {
+    const keys: string[] = [];
+    if (r.id) keys.push(`id:${r.id}`);
+    if (r.itemId && Number(r.itemId) > 0) keys.push(`itemId:${r.itemId}`);
+    const uKey = normalizeReleaseUrlKey(r.url);
+    if (uKey) keys.push(`url:${uKey}`);
+    return keys;
+  };
+
+  interface RetainedReleasePrefs {
+    selected?: boolean;
+    downloadScope?: 'both' | 'audio' | 'info';
+    audioDownloaded?: boolean;
+    infoZipDownloaded?: boolean;
+    freeDownloadPageUrl?: string;
+  }
+
+  const persistSelectionState = (hostname: string, items: ScannedRelease[]) => {
+    if (!hostname || !items || items.length === 0) return;
+    const map: Record<string, { selected: boolean; downloadScope?: 'both' | 'audio' | 'info' }> = {};
+    for (const r of items) {
+      const val = {
+        selected: Boolean(r.selected),
+        ...(r.downloadScope ? { downloadScope: r.downloadScope } : {}),
+      };
+      for (const k of getReleaseLookupKeys(r)) {
+        map[k] = val;
+      }
+    }
+    storage.set(`bc_selection_state_v1_${hostname.toLowerCase()}`, map);
+  };
+
+  // Automatically persist selection / scope changes for the currently loaded catalog
+  useEffect(() => {
+    if (!isScanning && releases.length > 0 && loadedCatalogHostnameRef.current) {
+      persistSelectionState(loadedCatalogHostnameRef.current, releases);
+    }
+  }, [releases, isScanning]);
+
+  const buildPriorReleaseLookup = async (targetUrl: string) => {
+    const hName = getDomainHostname(targetUrl).toLowerCase();
+    const prefMap = new Map<string, RetainedReleasePrefs>();
+    if (!hName) return { hName, prefMap, sess: null as SiteQueueSession | null };
+
+    const sess = loadSiteSession(hName) || (await loadSiteSessionAsync(hName));
+
+    const registerPrefs = (keys: string[], prefs: RetainedReleasePrefs, overwrite: boolean) => {
+      for (const k of keys) {
+        if (!k) continue;
+        const existing = prefMap.get(k);
+        if (!existing) {
+          prefMap.set(k, { ...prefs });
+        } else {
+          prefMap.set(k, {
+            selected: overwrite && typeof prefs.selected === 'boolean' ? prefs.selected : (typeof existing.selected === 'boolean' ? existing.selected : prefs.selected),
+            downloadScope: (overwrite ? prefs.downloadScope : undefined) || existing.downloadScope || prefs.downloadScope,
+            audioDownloaded: Boolean(existing.audioDownloaded || prefs.audioDownloaded),
+            infoZipDownloaded: Boolean(existing.infoZipDownloaded || prefs.infoZipDownloaded),
+            freeDownloadPageUrl: (overwrite ? prefs.freeDownloadPageUrl : undefined) || existing.freeDownloadPageUrl || prefs.freeDownloadPageUrl,
+          });
+        }
+      }
+    };
+
+    // 1. Lowest priority: cached catalog releases
+    try {
+      const cleaned = cleanBandcampUrl(targetUrl).trim().toLowerCase();
+      const hostKey = `bc_cache_v8_host_${hName}`;
+      const cacheKey = `bc_cache_v8_${encodeURIComponent(cleaned)}`;
+      const musicKey = `bc_cache_v8_${encodeURIComponent('https://' + hName + '/music')}`;
+      let cached: any = await storage.get<any>(hostKey);
+      if (!cached) cached = await storage.get<any>(cacheKey);
+      if (!cached) cached = await storage.get<any>(musicKey);
+      if (cached?.releases && Array.isArray(cached.releases)) {
+        for (const r of cached.releases as ScannedRelease[]) {
+          registerPrefs(getReleaseLookupKeys(r), {
+            selected: typeof r.selected === 'boolean' ? r.selected : undefined,
+            downloadScope: r.downloadScope,
+            audioDownloaded: r.audioDownloaded,
+            infoZipDownloaded: r.infoZipDownloaded,
+            freeDownloadPageUrl: r.freeDownloadPageUrl,
+          }, false);
+        }
+      }
+    } catch {}
+
+    // 2. Middle priority: persisted selection/scope map
+    try {
+      const savedSel = await storage.get<Record<string, { selected?: boolean; downloadScope?: 'both' | 'audio' | 'info' }>>(
+        `bc_selection_state_v1_${hName}`
+      );
+      if (savedSel && typeof savedSel === 'object') {
+        for (const [k, v] of Object.entries(savedSel)) {
+          if (v && typeof v === 'object') {
+            registerPrefs([k], {
+              selected: typeof v.selected === 'boolean' ? v.selected : undefined,
+              downloadScope: v.downloadScope,
+            }, true);
+          }
+        }
+      }
+    } catch {}
+
+    // 3. Highest priority: current live UI releases if they belong to the same hostname
+    if (loadedCatalogHostnameRef.current === hName && releases.length > 0) {
+      for (const r of releases) {
+        registerPrefs(getReleaseLookupKeys(r), {
+          selected: typeof r.selected === 'boolean' ? r.selected : undefined,
+          downloadScope: r.downloadScope,
+          audioDownloaded: r.audioDownloaded,
+          infoZipDownloaded: r.infoZipDownloaded,
+          freeDownloadPageUrl: r.freeDownloadPageUrl,
+        }, true);
+      }
+    }
+
+    return { hName, prefMap, sess };
+  };
+
+  const applyRetainedReleaseState = (
+    rel: ScannedRelease,
+    defaultSelected: boolean,
+    prefMap: Map<string, RetainedReleasePrefs>,
+    sess: SiteQueueSession | null
+  ): ScannedRelease => {
+    let matched: RetainedReleasePrefs | undefined;
+    for (const k of getReleaseLookupKeys(rel)) {
+      const hit = prefMap.get(k);
+      if (hit) {
+        matched = hit;
+        break;
+      }
+    }
+    const q = sess?.items?.[rel.id] || currentSessionRef.current?.items?.[rel.id];
+    const retainedSelected =
+      matched && typeof matched.selected === 'boolean' ? matched.selected : defaultSelected;
+    return {
+      ...rel,
+      selected: retainedSelected,
+      downloadScope: matched?.downloadScope || q?.downloadScope || rel.downloadScope,
+      audioDownloaded: Boolean(rel.audioDownloaded || matched?.audioDownloaded || q?.audioDownloaded),
+      infoZipDownloaded: Boolean(rel.infoZipDownloaded || matched?.infoZipDownloaded || q?.infoZipDownloaded),
+      freeDownloadPageUrl: rel.freeDownloadPageUrl || q?.freeDownloadPageUrl || matched?.freeDownloadPageUrl,
+    };
+  };
 
   const syncSessionFromStorage = (hostname: string): SiteQueueSession | null => {
     const sess = loadSiteSession(hostname);
@@ -201,14 +397,29 @@ export default function App() {
       if (!cached) cached = await storage.get<any>(musicKey);
 
       if (cached && cached.releases && Array.isArray(cached.releases) && cached.releases.length > 0) {
+        const savedSel = await storage.get<Record<string, { selected?: boolean; downloadScope?: 'both' | 'audio' | 'info' }>>(
+          `bc_selection_state_v1_${hName.toLowerCase()}`
+        );
         const enriched = cached.releases.map((r: ScannedRelease) => {
           const q = sess?.items?.[r.id] || currentSessionRef.current?.items?.[r.id];
+          let savedPref: { selected?: boolean; downloadScope?: 'both' | 'audio' | 'info' } | undefined;
+          if (savedSel && typeof savedSel === 'object') {
+            for (const k of getReleaseLookupKeys(r)) {
+              if (savedSel[k]) {
+                savedPref = savedSel[k];
+                break;
+              }
+            }
+          }
           return {
             ...r,
+            selected: savedPref && typeof savedPref.selected === 'boolean' ? savedPref.selected : r.selected,
+            downloadScope: savedPref?.downloadScope || q?.downloadScope || r.downloadScope,
             audioDownloaded: Boolean(r.audioDownloaded || q?.audioDownloaded),
             infoZipDownloaded: Boolean(r.infoZipDownloaded || q?.infoZipDownloaded),
           };
         });
+        loadedCatalogHostnameRef.current = hName.toLowerCase();
         setReleases(enriched);
         setScanMeta({
           source: 'local_cache',
@@ -245,6 +456,9 @@ export default function App() {
       const cacheKey = `bc_cache_v8_${encodeURIComponent(cleaned)}`;
       const musicKey = `bc_cache_v8_${encodeURIComponent('https://' + hName.toLowerCase() + '/music')}`;
 
+      loadedCatalogHostnameRef.current = hName.toLowerCase();
+      persistSelectionState(hName, items);
+
       const cacheObj = {
         scannedAt: new Date().toISOString(),
         artist,
@@ -277,8 +491,12 @@ export default function App() {
       activeEventSourceRef.current = null;
     }
 
+    // Snapshot user selections, custom scopes, and download state BEFORE re-scanning
+    const { hName: scanHostname, prefMap, sess: priorSession } = await buildPriorReleaseLookup(targetUrl);
+
     setIsScanning(true);
     setScanProgressText('Connecting to Bandcamp discography...');
+    setScanProgressCounts({ current: 0, total: 0 });
 
     // Extension Mode: Scan directly through background worker (bypasses CORS and Fastly bot challenge)
     if (isExtension) {
@@ -294,24 +512,62 @@ export default function App() {
         const artistName = catRes.artistName || 'Artist';
         const artistBioPicUrl = catRes.artistBioPicUrl;
 
+        setScanProgressCounts({ current: 0, total: items.length });
         setScanProgressText(`Discovered ${items.length} releases in catalog. Inspecting metadata...`);
 
+        loadedCatalogHostnameRef.current = scanHostname;
         const inspected: ScannedRelease[] = [];
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
+          setScanProgressCounts({ current: i + 1, total: items.length });
           setScanProgressText(`Inspecting release ${i + 1}/${items.length}: ${item.title}...`);
+          let pushed = false;
           try {
             const inspRes = await apiClient.inspectRelease(origin, artistName, item, artistBioPicUrl);
             if (inspRes && inspRes.success && inspRes.release) {
-              const rel = {
-                ...inspRes.release,
-                selected: inspRes.release.badgeType !== 'paid',
-              };
+              const defaultSel = inspRes.release.badgeType !== 'paid' && inspRes.release.badgeType !== 'preorder' && inspRes.release.badgeType !== 'no_digital';
+              const rel = applyRetainedReleaseState(inspRes.release, defaultSel, prefMap, priorSession);
               inspected.push(rel);
-              setReleases([...inspected]);
+              pushed = true;
             }
           } catch (itemErr) {
             console.warn(`Failed inspecting subpage ${item.title}:`, itemErr);
+          }
+
+          // Never silently drop a discovered catalog release even if subpage inspection hit HTTP 429 / network error
+          if (!pushed) {
+            const rawFallback: ScannedRelease = {
+              id: item.id,
+              itemId: item.itemId || 0,
+              itemType: item.type || 'album',
+              title: item.title || 'Release',
+              artist: item.artist || artistName,
+              artistUrl: origin,
+              url: item.url || item.href,
+              artUrl: item.artUrl || '',
+              artistBioPicUrl,
+              isFree: true,
+              isNameYourPrice: false,
+              isPurchased: false,
+              isPaid: false,
+              badgeType: 'free',
+              minPrice: 0,
+              currency: 'EUR',
+              priceFormatted: 'Inspection Incomplete (Retry Refresh)',
+              requiresEmail: false,
+              trackCount: 1,
+              trackList: [`1. ${item.title || 'Track'}`],
+              infoText: `Artist       : ${item.artist || artistName}\nTitle        : ${item.title || 'Release'}\nURL          : ${item.url || item.href}\n`,
+              selected: false,
+            };
+            inspected.push(applyRetainedReleaseState(rawFallback, false, prefMap, priorSession));
+          }
+
+          if (inspected.length % 10 === 0 || i === items.length - 1 || items.length <= 40) {
+            setReleases([...inspected]);
+          }
+          if (items.length > 40 && i < items.length - 1) {
+            await sleep(85);
           }
         }
 
@@ -322,7 +578,7 @@ export default function App() {
         });
         saveToLocalCache(targetUrl, artistName, inspected);
         setScanProgressText(
-          `Finished: ${inspected.length} releases discovered (${inspected.filter((r) => r.badgeType !== 'paid').length} free/email)`
+          `Finished: ${inspected.length} releases discovered (${inspected.filter((r) => r.badgeType !== 'paid' && r.badgeType !== 'preorder' && r.badgeType !== 'no_digital').length} free/email)`
         );
       } catch (extErr: any) {
         console.error('Extension scan error:', extErr);
@@ -342,6 +598,7 @@ export default function App() {
       const es = new EventSource(streamUrl);
       activeEventSourceRef.current = es;
 
+      loadedCatalogHostnameRef.current = scanHostname;
       let progressiveItems: ScannedRelease[] = [];
       let scanCompleted = false;
 
@@ -350,15 +607,31 @@ export default function App() {
           const packet = JSON.parse(event.data);
 
           if (packet.type === 'status' || packet.type === 'info') {
-            setScanProgressText(packet.message || 'Scanning catalog...');
+            const msg = packet.message || 'Scanning catalog...';
+            setScanProgressText(msg);
+            const discMatch = msg.match(/Discovered\s+(\d+)\s+releases/i);
+            const ratioMatch = msg.match(/(\d+)\s*\/\s*(\d+)/);
+            if (ratioMatch) {
+              setScanProgressCounts({
+                current: parseInt(ratioMatch[1], 10) || 0,
+                total: parseInt(ratioMatch[2], 10) || 0,
+              });
+            } else if (discMatch) {
+              setScanProgressCounts((prev) => ({
+                current: prev.current,
+                total: parseInt(discMatch[1], 10) || prev.total,
+              }));
+            }
           } else if (packet.type === 'release_discovered' || packet.type === 'release') {
             if (packet.release) {
-              const rel: ScannedRelease = {
-                ...packet.release,
-                selected: packet.release.badgeType !== 'paid',
-              };
+              const defaultSel = packet.release.badgeType !== 'paid' && packet.release.badgeType !== 'preorder' && packet.release.badgeType !== 'no_digital';
+              const rel = applyRetainedReleaseState(packet.release, defaultSel, prefMap, priorSession);
               progressiveItems = [...progressiveItems, rel];
               setReleases([...progressiveItems]);
+              setScanProgressCounts((prev) => ({
+                current: progressiveItems.length,
+                total: Math.max(prev.total, packet.total || 0),
+              }));
               setScanProgressText(
                 `Found ${progressiveItems.length} releases... (${packet.release.title})`
               );
@@ -374,10 +647,10 @@ export default function App() {
               : progressiveItems;
 
             if (itemsToUse.length > 0) {
-              const processed = itemsToUse.map((r: ScannedRelease) => ({
-                ...r,
-                selected: r.badgeType !== 'paid',
-              }));
+              const processed = itemsToUse.map((r: ScannedRelease) => {
+                const defaultSel = r.badgeType !== 'paid' && r.badgeType !== 'preorder' && r.badgeType !== 'no_digital';
+                return applyRetainedReleaseState(r, defaultSel, prefMap, priorSession);
+              });
               setReleases(processed);
               setScanMeta({
                 source: packet.source || 'live_crawl',
@@ -385,7 +658,7 @@ export default function App() {
               });
               saveToLocalCache(targetUrl, packet.artist || 'Artist', processed);
               setScanProgressText(
-                `Finished: ${processed.length} releases discovered (${processed.filter((r: ScannedRelease) => r.badgeType !== 'paid').length} free/email)`
+                `Finished: ${processed.length} releases discovered (${processed.filter((r: ScannedRelease) => r.badgeType !== 'paid' && r.badgeType !== 'preorder' && r.badgeType !== 'no_digital').length} free/email)`
               );
             }
           } else if (packet.type === 'error') {
@@ -415,7 +688,7 @@ export default function App() {
           });
           saveToLocalCache(targetUrl, progressiveItems[0]?.artist || 'Artist', progressiveItems);
           setScanProgressText(
-            `Finished: ${progressiveItems.length} releases discovered (${progressiveItems.filter((r: ScannedRelease) => r.badgeType !== 'paid').length} free/email)`
+            `Finished: ${progressiveItems.length} releases discovered (${progressiveItems.filter((r: ScannedRelease) => r.badgeType !== 'paid' && r.badgeType !== 'preorder' && r.badgeType !== 'no_digital').length} free/email)`
           );
           return;
         }
@@ -433,10 +706,10 @@ export default function App() {
           if (fallbackRes.ok && contentType.includes('application/json')) {
             const data = await fallbackRes.json();
             if (data.releases && Array.isArray(data.releases)) {
-              const processed = data.releases.map((r: ScannedRelease) => ({
-                ...r,
-                selected: r.badgeType !== 'paid',
-              }));
+              const processed = data.releases.map((r: ScannedRelease) => {
+                const defaultSel = r.badgeType !== 'paid' && r.badgeType !== 'preorder' && r.badgeType !== 'no_digital';
+                return applyRetainedReleaseState(r, defaultSel, prefMap, priorSession);
+              });
               setReleases(processed);
               setScanMeta({
                 source: data.source || 'live_crawl',
@@ -444,7 +717,7 @@ export default function App() {
               });
               saveToLocalCache(targetUrl, data.artist || 'Artist', processed);
               setScanProgressText(
-                `Discovered ${processed.length} releases (${processed.filter((r: ScannedRelease) => r.badgeType !== 'paid').length} free/email)`
+                `Discovered ${processed.length} releases (${processed.filter((r: ScannedRelease) => r.badgeType !== 'paid' && r.badgeType !== 'preorder' && r.badgeType !== 'no_digital').length} free/email)`
               );
             }
           } else {
@@ -494,7 +767,7 @@ export default function App() {
     setReleases((prev) =>
       prev.map((r) => ({
         ...r,
-        selected: r.badgeType !== 'paid' && r.badgeType !== 'preorder' && !r.isPreorder && (r.isFree || r.isNameYourPrice || r.requiresEmail || r.isPurchased || r.badgeType === 'free' || r.badgeType === 'email' || r.badgeType === 'own'),
+        selected: r.badgeType !== 'paid' && r.badgeType !== 'preorder' && r.badgeType !== 'no_digital' && !r.isPreorder && !r.isNoDigital && (r.isFree || r.isNameYourPrice || r.requiresEmail || r.isPurchased || r.badgeType === 'free' || r.badgeType === 'email' || r.badgeType === 'own'),
       }))
     );
   };
@@ -518,8 +791,8 @@ export default function App() {
     const scope = relScope || item.downloadScope || settings.defaultDownloadScope || 'both';
     if (scope === 'audio') return Boolean(item.audioDownloaded);
     if (scope === 'info') return Boolean(item.infoZipDownloaded);
-    // If release is pre-order or paid, studio audio is not downloadable; info zip completion marks item complete
-    if (item.isPaid || item.isPreorder) {
+    // If release is pre-order, paid, or no_digital, studio audio is not downloadable; info zip completion marks item complete
+    if (item.isPaid || item.isPreorder || item.isNoDigital || item.badgeType === 'no_digital') {
       return Boolean(item.infoZipDownloaded);
     }
     return Boolean(item.audioDownloaded && item.infoZipDownloaded);
@@ -557,12 +830,13 @@ export default function App() {
       }
 
       const isPreorder = Boolean(r.isPreorder || r.badgeType === 'preorder');
-      const isEmailEligible = !isPreorder && Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
-      const isPaid = isPreorder || (!isEmailEligible && !r.isPurchased && r.badgeType !== 'own' && Boolean(
+      const isNoDigital = Boolean(r.isNoDigital || r.badgeType === 'no_digital');
+      const isEmailEligible = !isPreorder && !isNoDigital && Boolean(r.requiresEmail || r.isNameYourPrice || r.badgeType === 'email');
+      const isPaid = isPreorder || (!isNoDigital && !isEmailEligible && !r.isPurchased && r.badgeType !== 'own' && Boolean(
         r.badgeType === 'paid' ||
         (!r.freeDownloadPageUrl && !r.isFree && (r.minPrice || 0) > 0)
       ));
-      const isDirectFree = !isPaid && !isPreorder && Boolean(r.freeDownloadPageUrl || r.isPurchased || r.badgeType === 'own' || (!isEmailEligible && (r.isFree || r.badgeType === 'free')));
+      const isDirectFree = !isPaid && !isPreorder && !isNoDigital && Boolean(r.freeDownloadPageUrl || r.isPurchased || r.badgeType === 'own' || (!isEmailEligible && (r.isFree || r.badgeType === 'free')));
 
       return {
         id: r.id,
@@ -575,7 +849,7 @@ export default function App() {
         artistBioPicUrl: r.artistBioPicUrl,
         extraImages: r.extraImages,
         extraPhotos: r.extraPhotos,
-        downloadScope: r.downloadScope || (isPreorder ? 'info' : 'both'),
+        downloadScope: r.downloadScope || ((isPreorder || isNoDigital) ? 'info' : 'both'),
         releaseDate: r.releaseDate,
         isoDate: r.isoDate,
         isFree: r.isFree,
@@ -583,12 +857,13 @@ export default function App() {
         isPurchased: r.isPurchased,
         isPaid,
         isPreorder,
-        badgeType: r.badgeType || (isPreorder ? 'preorder' : (isPaid ? 'paid' : (isDirectFree ? 'free' : 'email'))),
+        isNoDigital,
+        badgeType: r.badgeType || (isNoDigital ? 'no_digital' : (isPreorder ? 'preorder' : (isPaid ? 'paid' : (isDirectFree ? 'free' : 'email')))),
         minPrice: r.minPrice,
         requiresEmail: r.requiresEmail,
         stage: 'pending',
         stageProgress: 0,
-        statusText: r.priceFormatted || (isPreorder ? 'Pre-order' : 'Pending'),
+        statusText: r.priceFormatted || (isNoDigital ? 'No Digital' : (isPreorder ? 'Pre-order' : 'Pending')),
         audioDownloaded: false,
         infoZipDownloaded: false,
         freeDownloadPageUrl: r.freeDownloadPageUrl,
@@ -717,7 +992,13 @@ export default function App() {
         qItem.badgeType === 'own' ||
         rel.badgeType === 'own'
       );
-      const isEmailEligible = !isOwned && Boolean(
+      const isNoDigital = Boolean(
+        qItem.isNoDigital ||
+        rel.isNoDigital ||
+        qItem.badgeType === 'no_digital' ||
+        rel.badgeType === 'no_digital'
+      );
+      const isEmailEligible = !isOwned && !isNoDigital && Boolean(
         qItem.requiresEmail ||
         rel.requiresEmail ||
         qItem.isNameYourPrice ||
@@ -728,13 +1009,13 @@ export default function App() {
       if (downloadPageUrl && isEmailEligible && !downloadPageUrl.includes('from=email') && !downloadPageUrl.includes('payment_id=')) {
         downloadPageUrl = undefined;
       }
-      const isPreorder = Boolean(
+      const isPreorder = !isNoDigital && Boolean(
         qItem.isPreorder ||
         rel.isPreorder ||
         qItem.badgeType === 'preorder' ||
         rel.badgeType === 'preorder'
       );
-      const isPaidOnly = isPreorder || (!isEmailEligible && !isOwned && Boolean(
+      const isPaidOnly = isPreorder || isNoDigital || (!isEmailEligible && !isOwned && Boolean(
         (qItem.badgeType === 'paid' || rel.badgeType === 'paid') ||
         (!downloadPageUrl && ((qItem.minPrice || 0) > 0 || (rel.minPrice || 0) > 0) && !qItem.isFree && !rel.isFree)
       ));
@@ -745,6 +1026,7 @@ export default function App() {
         rel,
         downloadPageUrl,
         isOwned,
+        isNoDigital,
         isEmailEligible,
         isPreorder,
         isPaidOnly,
@@ -754,20 +1036,78 @@ export default function App() {
       };
     };
 
+    const extractUrlNumericId = (rawUrl?: string): string => {
+      if (!rawUrl || typeof rawUrl !== 'string') return '';
+      try {
+        const u = new URL(rawUrl.replace(/&amp;/g, '&').trim());
+        return (u.searchParams.get('id') || '').replace(/\D/g, '');
+      } catch {
+        const m = rawUrl.match(/[?&]id=(\d+)/);
+        return m ? m[1] : '';
+      }
+    };
+
+    const validateDownloadPageUrlForItem = (dlUrl: string, batchItem: QueueItem): boolean => {
+      const targetNumericId = batchItem.itemId ? String(batchItem.itemId).replace(/\D/g, '') : '';
+      if (!targetNumericId || targetNumericId === '0') return true;
+      const urlId = extractUrlNumericId(dlUrl);
+      if (urlId && urlId !== targetNumericId) {
+        debugLog(
+          'gas',
+          `Rejected mismatched GAS download URL for "${batchItem.title}" (expected id=${targetNumericId}, got id=${urlId}):`,
+          dlUrl
+        );
+        return false;
+      }
+      return true;
+    };
+
     const matchBatchResultForItem = (
       results: any[],
-      batchItem: QueueItem,
-      fallbackIdx: number
+      batchItem: QueueItem
     ) => {
-      const idStr = String(batchItem.id || '');
-      const numericId = String(batchItem.itemId || '').replace(/^(album|track)-/, '');
+      if (!Array.isArray(results) || results.length === 0) return undefined;
+      const idStr = String(batchItem.id || '').trim();
+      const numericId = batchItem.itemId && Number(batchItem.itemId) > 0
+        ? String(batchItem.itemId).replace(/\D/g, '')
+        : '';
+
+      // 1. Strict exact ID match (numeric Bandcamp itemId or exact string release id)
       const byId = results.find((res) => {
-        if (!res || res.id === undefined || res.id === null) return false;
-        const rId = String(res.id).replace(/^(album|track)-/, '');
-        return String(res.id) === idStr || (numericId && rId === numericId);
+        if (!res) return false;
+        const rRawId = res.id !== undefined && res.id !== null ? String(res.id).trim() : '';
+        const rNumId = rRawId.replace(/^(album|track)-/, '').replace(/\D/g, '');
+        const idMatches =
+          (rRawId && idStr && rRawId === idStr) ||
+          (numericId && rNumId && rNumId === numericId);
+        if (!idMatches) return false;
+        if (res.downloadPageUrl && !validateDownloadPageUrlForItem(res.downloadPageUrl, batchItem)) {
+          return false;
+        }
+        return true;
       });
       if (byId) return byId;
-      return results[fallbackIdx];
+
+      // 2. Secondary match by explicit ?id=<numericId> inside returned downloadPageUrl
+      if (numericId) {
+        const byUrlId = results.find((res) => {
+          if (!res || !res.downloadPageUrl) return false;
+          return extractUrlNumericId(res.downloadPageUrl) === numericId;
+        });
+        if (byUrlId) return byUrlId;
+      }
+
+      // 3. Title fallback ONLY when item lacks numeric ID (never fall back blindly by array index!)
+      if (!numericId && batchItem.title) {
+        const normTargetTitle = batchItem.title.toLowerCase().replace(/\s+/g, ' ').trim();
+        return results.find((res) => {
+          if (!res || !res.title) return false;
+          const normResTitle = String(res.title).toLowerCase().replace(/\s+/g, ' ').trim();
+          return normResTitle === normTargetTitle;
+        });
+      }
+
+      return undefined;
     };
 
     const finalizeItemOutcome = (params: {
@@ -775,6 +1115,7 @@ export default function App() {
       shouldDownloadAudio: boolean;
       shouldDownloadInfo: boolean;
       isPreorder: boolean;
+      isNoDigital?: boolean;
       isPaidOnly: boolean;
       audioSuccess: boolean;
       audioError?: string;
@@ -787,6 +1128,7 @@ export default function App() {
         shouldDownloadAudio,
         shouldDownloadInfo,
         isPreorder,
+        isNoDigital,
         isPaidOnly,
         audioSuccess,
         audioError,
@@ -799,7 +1141,12 @@ export default function App() {
       let finalStatusText = '';
 
       if (shouldDownloadAudio && shouldDownloadInfo) {
-        if (isPreorder) {
+        if (isNoDigital) {
+          finalStage = infoSuccess ? 'completed' : 'failed';
+          finalStatusText = infoSuccess
+            ? 'Packaging complete (No digital download available - companion info ZIP created)'
+            : `No digital download (Info ZIP failed: ${infoError || 'error'})`;
+        } else if (isPreorder) {
           finalStage = infoSuccess ? 'completed' : 'failed';
           finalStatusText = infoSuccess
             ? 'Packaging complete (Pre-order - companion info ZIP created)'
@@ -823,7 +1170,10 @@ export default function App() {
           finalStatusText = `Audio failed (${audioError || 'unknown'}) · Info failed (${infoError || 'unknown'})`;
         }
       } else if (shouldDownloadAudio && !shouldDownloadInfo) {
-        if (isPreorder) {
+        if (isNoDigital) {
+          finalStage = 'completed';
+          finalStatusText = 'No digital download available for this release.';
+        } else if (isPreorder) {
           finalStage = 'completed';
           finalStatusText = 'Pre-order: Audio master unavailable until official release date.';
         } else if (audioSuccess) {
@@ -915,12 +1265,15 @@ export default function App() {
             trackNum: rel.trackCount === 1 ? 1 : undefined,
             totalTracks: rel.trackCount || 1,
             date: rel.isoDate || rel.releaseDate,
-            year: rel.releaseDate?.slice(0, 4),
+            year: rel.isoDate?.slice(0, 4) || rel.releaseDate?.slice(-4),
             type: rel.itemType || 'album',
           },
           getCompanionInfoZipName(audioFilename)
         );
-        await apiClient.downloadBlob(companionResult.blob, companionName);
+        await apiClient.downloadBlob(companionResult.blob, companionName, {
+          itemId: qItem.itemId,
+          releaseId: qItem.id,
+        });
         logAndSyncForItem(
           qItem.id,
           'packaging_info',
@@ -960,6 +1313,7 @@ export default function App() {
           albumUrl: qItem.url,
           releaseId: qItem.id,
           itemId: qItem.itemId,
+          expectedItemId: qItem.itemId,
           itemType: qItem.itemType,
           format: selectedFormat,
           email: settings.fallbackEmail,
@@ -988,7 +1342,37 @@ export default function App() {
 
         if (resolveData?.success && resolveData?.downloadUrl) {
           debugLog('pipeline', 'Downloading resolved studio audio:', resolveData.downloadUrl, 'as', audioFilename);
-          await apiClient.downloadAudioFile(resolveData.downloadUrl, audioFilename);
+          let lastProgEmit = 0;
+          await apiClient.downloadAudioFile(resolveData.downloadUrl, audioFilename, {
+            itemId: qItem.itemId,
+            releaseId: qItem.id,
+            onProgress: (loadedBytes, totalBytes) => {
+              const now = Date.now();
+              if (now - lastProgEmit < 350 && (!totalBytes || loadedBytes < totalBytes)) return;
+              lastProgEmit = now;
+              const mbLoaded = (loadedBytes / (1024 * 1024)).toFixed(1);
+              if (totalBytes > 0) {
+                const pct = Math.min(100, Math.round((loadedBytes / totalBytes) * 100));
+                const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
+                const stageProg = 72 + Math.round((pct / 100) * 10);
+                logAndSyncForItem(
+                  qItem.id,
+                  'downloading_audio',
+                  `Downloading studio audio (${selectedFormat.toUpperCase()}): ${pct}% (${mbLoaded} / ${mbTotal} MB)`,
+                  undefined,
+                  stageProg
+                );
+              } else {
+                logAndSyncForItem(
+                  qItem.id,
+                  'downloading_audio',
+                  `Downloading studio audio (${selectedFormat.toUpperCase()}): ${mbLoaded} MB`,
+                  undefined,
+                  76
+                );
+              }
+            },
+          });
           successfulDownloadsCount++;
           logAndSyncForItem(qItem.id, 'downloading_audio', `Studio audio saved: ${audioFilename}`, undefined, 82);
           return { audioSuccess: true, resolveData };
@@ -1027,7 +1411,10 @@ export default function App() {
                 undefined,
                 70 + Math.round(((sIdx + 1) / streamsToDl.length) * 12)
               );
-              await apiClient.downloadAudioFile(streamUrl, streamName);
+              await apiClient.downloadAudioFile(streamUrl, streamName, {
+                itemId: qItem.itemId,
+                releaseId: qItem.id,
+              });
               await sleep(600);
             }
           }
@@ -1106,9 +1493,9 @@ export default function App() {
 
           const results = Array.isArray(preResp?.results) ? preResp.results : [];
           let foundCount = 0;
-          initialCandidates.forEach(({ qItem }, idx) => {
-            const hit = matchBatchResultForItem(results, qItem, idx);
-            if (hit && hit.found && hit.downloadPageUrl) {
+          initialCandidates.forEach(({ qItem }) => {
+            const hit = matchBatchResultForItem(results, qItem);
+            if (hit && hit.found && hit.downloadPageUrl && validateDownloadPageUrlForItem(hit.downloadPageUrl, qItem)) {
               foundCount++;
               resolvedMailLinks.set(qItem.id, hit.downloadPageUrl);
               logAndSyncForItem(
@@ -1257,9 +1644,9 @@ export default function App() {
         const results = Array.isArray(resp?.results) ? resp.results : [];
         const stillPending: PendingMailEntry[] = [];
 
-        snapshot.forEach((entry, idx) => {
-          const hit = matchBatchResultForItem(results, entry.qItem, idx);
-          if (hit && hit.found && hit.downloadPageUrl) {
+        snapshot.forEach((entry) => {
+          const hit = matchBatchResultForItem(results, entry.qItem);
+          if (hit && hit.found && hit.downloadPageUrl && validateDownloadPageUrlForItem(hit.downloadPageUrl, entry.qItem)) {
             resolvedMailLinks.set(entry.qItem.id, hit.downloadPageUrl);
             logAndSyncForItem(
               entry.qItem.id,
@@ -1316,6 +1703,7 @@ export default function App() {
         let downloadPageUrl = desc.downloadPageUrl;
         const {
           isOwned,
+          isNoDigital,
           isEmailEligible,
           isPreorder,
           isPaidOnly,
@@ -1383,7 +1771,15 @@ export default function App() {
 
         // --- SECTION 1: Audio Dispatch (Async Email vs Synchronous Direct Download) ---
         if (shouldDownloadAudio) {
-          if (isPreorder) {
+          if (isNoDigital) {
+            logAndSyncForItem(
+              qItem.id,
+              'downloading_audio',
+              'No digital download available — audio skipped. Packaging companion info ZIP.',
+              undefined,
+              78
+            );
+          } else if (isPreorder) {
             logAndSyncForItem(
               qItem.id,
               'downloading_audio',
@@ -1506,6 +1902,7 @@ export default function App() {
             shouldDownloadAudio,
             shouldDownloadInfo,
             isPreorder,
+            isNoDigital,
             isPaidOnly,
             audioSuccess,
             audioError,
@@ -1607,6 +2004,8 @@ export default function App() {
   const handleStartBulkDownload = async () => {
     if (selectedReleases.length === 0) return;
     debugLog('pipeline', `handleStartBulkDownload: ${selectedReleases.length} release(s) selected.`);
+    await apiClient.prepareSaveDirectoryForRun();
+    refreshSaveDirInfo();
 
     // Ensure session is initialized
     let sess = currentSession;
@@ -1666,6 +2065,8 @@ export default function App() {
   // Resume Download (unfinished items only: pending + failed + incomplete for scope)
   const handleResumeBulkDownload = async () => {
     debugLog('pipeline', 'handleResumeBulkDownload clicked.');
+    await apiClient.prepareSaveDirectoryForRun();
+    refreshSaveDirInfo();
     const refreshed = syncSessionFromStorage(currentHostname) || currentSession;
     const allQueueItems = buildQueueItemsForReleases(selectedReleases, refreshed);
     const itemsToResume = allQueueItems.filter((item) => {
@@ -1819,6 +2220,8 @@ export default function App() {
   // Download Single Release
   const handleDownloadSingle = async (release: ScannedRelease) => {
     debugLog('pipeline', `handleDownloadSingle clicked for "${release.title}".`);
+    await apiClient.prepareSaveDirectoryForRun();
+    refreshSaveDirInfo();
     let sess = currentSession;
     if (!sess) {
       sess = initSiteSession(
@@ -2016,6 +2419,10 @@ export default function App() {
               onToggleGroupSelect={handleToggleGroupSelect}
               onToggleDisplayed={handleToggleDisplayed}
               onOpenScanList={() => setIsScanListOpen(true)}
+              isScanning={isScanning}
+              scanProgressText={scanProgressText}
+              scanCurrentCount={scanProgressCounts.current}
+              scanTotalCount={scanProgressCounts.total}
             />
           </div>
         )}
@@ -2039,6 +2446,10 @@ export default function App() {
               setSelectedFormat(newSettings.preferredFormat);
               setSkipTrackSubpages(!!newSettings.skipAlbumTrackSubpages);
             }}
+            saveDirSupported={saveDirInfo.supported}
+            saveDirName={saveDirInfo.hasHandle ? saveDirInfo.name : ''}
+            onPickSaveDir={handlePickSaveDir}
+            onClearSaveDir={handleClearSaveDir}
           />
         )}
       </main>
@@ -2086,6 +2497,11 @@ export default function App() {
               ...updates,
             }))
           }
+          saveDirSupported={saveDirInfo.supported}
+          saveDirName={saveDirInfo.hasHandle ? saveDirInfo.name : ''}
+          saveDirGranted={saveDirInfo.granted}
+          onPickSaveDir={handlePickSaveDir}
+          onClearSaveDir={handleClearSaveDir}
         />
       )}
 

@@ -23,6 +23,7 @@ import {
   Mail,
   Shield,
   AlertTriangle,
+  FolderOpen,
 } from 'lucide-react';
 
 interface DownloadManagerProps {
@@ -59,6 +60,11 @@ interface DownloadManagerProps {
     gasSearchOffsetHours?: number;
     gasSearchStartDate?: string;
   }) => void;
+  saveDirSupported?: boolean;
+  saveDirName?: string;
+  saveDirGranted?: boolean;
+  onPickSaveDir?: () => void;
+  onClearSaveDir?: () => void;
 }
 
 export const DownloadManager: React.FC<DownloadManagerProps> = ({
@@ -89,6 +95,11 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
   mailOffsetHours,
   mailStartDate,
   onMailOffsetChange,
+  saveDirSupported = false,
+  saveDirName = '',
+  saveDirGranted = false,
+  onPickSaveDir,
+  onClearSaveDir,
 }) => {
   const [showQueueModal, setShowQueueModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -98,7 +109,10 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
   const currentFormatObj = AUDIO_FORMATS.find((f) => f.id === selectedFormat) || AUDIO_FORMATS[0];
   const requiresEmailCount = selectedReleases.filter((r) => r.requiresEmail).length;
 
-  const totalTracks = selectedReleases.reduce((acc, r) => acc + (r.trackCount || 1), 0);
+  const totalTracks = selectedReleases.reduce(
+    (acc, r) => acc + (r.isNoDigital || r.badgeType === 'no_digital' ? 0 : (r.trackCount || 0)),
+    0
+  );
   const estimatedSizeMb = Math.round(totalTracks * currentFormatObj.approxMbPerTrack);
 
   const generateExportText = () => {
@@ -377,8 +391,40 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
             )}
             </div>
 
-            {/* Mail offset & Target selector for selected - placed in sticky lower footer */}
+            {/* Save folder, Mail offset & Target selector for selected - placed in sticky lower footer */}
             <div className="flex flex-wrap items-center justify-end gap-3 mt-0.5">
+              {/* Direct Save Folder Control */}
+              {saveDirSupported && onPickSaveDir && (
+                <div className="flex items-center gap-1 bg-[#111827] border border-slate-700 rounded-lg px-2.5 py-1 text-xs">
+                  <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${saveDirName ? 'text-emerald-400' : 'text-slate-400'}`} />
+                  <button
+                    type="button"
+                    onClick={onPickSaveDir}
+                    className="flex items-center gap-1 text-left hover:text-white transition"
+                    title={
+                      saveDirName
+                        ? `Saving directly to folder "${saveDirName}" (bypasses Chrome Download Manager). Click to change folder.`
+                        : 'Optional: Pick a folder to write audio and info ZIPs directly to disk (bypasses Chrome Download Manager completely).'
+                    }
+                  >
+                    <span className="text-slate-400 font-medium">Folder:</span>
+                    <span className={`font-semibold max-w-[140px] truncate ${saveDirName ? (saveDirGranted ? 'text-emerald-300' : 'text-amber-300') : 'text-slate-300'}`}>
+                      {saveDirName || 'Chrome Downloads'}
+                    </span>
+                  </button>
+                  {saveDirName && onClearSaveDir && (
+                    <button
+                      type="button"
+                      onClick={onClearSaveDir}
+                      className="ml-1 text-slate-500 hover:text-red-400 transition"
+                      title="Reset to Chrome default Downloads folder"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Mail Offset Selector */}
               <div className="flex items-center gap-1.5 bg-[#111827] border border-slate-700 rounded-lg px-2.5 py-1 text-xs">
                 <Mail className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -573,7 +619,18 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({
                       className="p-3 bg-[#0d131f] border border-slate-800 rounded-xl space-y-2"
                     >
                       <div className="flex items-center justify-between gap-2 text-xs">
-                        <div className="flex items-center gap-2 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {task.artUrl ? (
+                            <img
+                              src={task.artUrl}
+                              alt={task.releaseTitle}
+                              loading="lazy"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display = 'none';
+                              }}
+                              className="w-8 h-8 rounded object-cover border border-slate-700/80 bg-slate-900 shrink-0"
+                            />
+                          ) : null}
                           {task.status === 'completed' ? (
                             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                           ) : task.status === 'error' ? (

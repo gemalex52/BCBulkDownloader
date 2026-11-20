@@ -26,16 +26,26 @@ import {
   Sliders,
   AlertTriangle,
   Terminal,
+  FolderOpen,
+  X,
 } from 'lucide-react';
 
 interface SettingsViewProps {
   settings: AppSettings;
   onUpdateSettings: (newSettings: AppSettings) => void;
+  saveDirSupported?: boolean;
+  saveDirName?: string;
+  onPickSaveDir?: () => void;
+  onClearSaveDir?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onUpdateSettings,
+  saveDirSupported = false,
+  saveDirName = '',
+  onPickSaveDir,
+  onClearSaveDir,
 }) => {
   const [formState, setFormState] = useState<AppSettings>({
     ...DEFAULT_APP_SETTINGS,
@@ -178,6 +188,47 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </label>
           </div>
+
+          {/* Download Destination Folder */}
+          {saveDirSupported && onPickSaveDir && (
+            <div className="p-4 bg-[#0b0f17] border border-slate-700 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <div className="text-sm font-semibold text-white flex items-center gap-2">
+                  <FolderOpen className={`w-4 h-4 ${saveDirName ? 'text-emerald-400' : 'text-cyan-400'}`} />
+                  <span>
+                    Save Destination:{' '}
+                    <span className={saveDirName ? 'text-emerald-300 font-mono' : 'text-cyan-300'}>
+                      {saveDirName || 'Chrome Default Downloads'}
+                    </span>
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  {saveDirName
+                    ? 'Writing audio and companion (info).zip archives directly to your chosen folder on disk (completely isolated from Chrome Download Manager).'
+                    : 'Default saves via Chrome Downloads without filename conflicts. Optionally choose a target folder for direct disk streaming.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={onPickSaveDir}
+                  className="px-3 py-1.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 rounded-lg text-xs font-bold transition"
+                >
+                  {saveDirName ? 'Change Folder' : 'Choose Folder'}
+                </button>
+                {saveDirName && onClearSaveDir && (
+                  <button
+                    type="button"
+                    onClick={onClearSaveDir}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 transition"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Default</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Default Download Target Scope */}
           <div className="space-y-2">

@@ -127,10 +127,20 @@ async function inspectReleaseSubpage(
   globalArtistBioPicUrl?: string
 ): Promise<ScannedRelease> {
   try {
-    const subRes = await fetch(item.url, {
-      headers: BANDCAMP_FETCH_HEADERS,
-    });
-    if (!subRes.ok) throw new Error(`HTTP ${subRes.status}`);
+    let subRes: globalThis.Response | null = null;
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      subRes = await fetch(item.url, {
+        headers: BANDCAMP_FETCH_HEADERS,
+      });
+      if ((subRes.status === 429 || subRes.status === 502 || subRes.status === 503 || subRes.status === 504) && attempt < 3) {
+        const retryAfter = parseInt(subRes.headers.get('retry-after') || '0', 10);
+        const delayMs = retryAfter > 0 ? Math.min(retryAfter * 1000, 10000) : 1500 * (attempt + 1);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      break;
+    }
+    if (!subRes || !subRes.ok) throw new Error(`HTTP ${subRes?.status || 'fetch'}`);
 
     const subHtml = await subRes.text();
     const tralbum = extractBandcampTralbum(subHtml);
@@ -149,6 +159,7 @@ async function inspectReleaseSubpage(
       extraImages: parsed.allImages,
       extraPhotos: parsed.extraPhotos,
       isPreorder: parsed.isPreorder,
+      isNoDigital: parsed.isNoDigital,
       releaseDate: parsed.humanDate,
       isoDate: parsed.dotDate,
       isFree: parsed.isFree,
@@ -170,7 +181,7 @@ async function inspectReleaseSubpage(
       tags: parsed.tagsMatches,
       audioQuality: parsed.audioQuality,
       isHiRes: parsed.isHiRes,
-      selected: parsed.badgeType !== 'paid' && parsed.badgeType !== 'preorder',
+      selected: parsed.badgeType !== 'paid' && parsed.badgeType !== 'preorder' && parsed.badgeType !== 'no_digital',
     };
   } catch (e: any) {
     console.warn(`Error inspecting subpage ${item.url}:`, e.message);
@@ -374,8 +385,9 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
       effectiveDownloadPageUrl = undefined;
     }
 
+    const expectedItemId = req.body.expectedItemId || req.body.itemId || cachedRelease?.itemId;
     if (effectiveDownloadPageUrl) {
-      let resolved = await resolveBandcampDownload(effectiveDownloadPageUrl, formatInfo.id);
+      let resolved = await resolveBandcampDownload(effectiveDownloadPageUrl, formatInfo.id, expectedItemId);
       if ((!resolved.success || !resolved.downloadUrl) && !isEmailRelease && albumUrl) {
         try {
           const freshRes = await fetch(albumUrl, { headers: BANDCAMP_FETCH_HEADERS });
@@ -383,7 +395,7 @@ app.post('/api/bandcamp/resolve-download', async (req: Request, res: Response) =
             const freshHtml = await freshRes.text();
             const freshTralbum = extractBandcampTralbum(freshHtml);
             if (freshTralbum?.freeDownloadPage && freshTralbum.freeDownloadPage !== effectiveDownloadPageUrl) {
-              resolved = await resolveBandcampDownload(freshTralbum.freeDownloadPage, formatInfo.id);
+              resolved = await resolveBandcampDownload(freshTralbum.freeDownloadPage, formatInfo.id, expectedItemId);
             }
           }
         } catch (freshErr) {}
@@ -741,7 +753,7 @@ app.post('/api/bandcamp/test-gas-webhook', async (req: Request, res: Response) =
         'Content-Type': 'text/plain;charset=utf-8',
         'Accept': 'application/json, text/plain, */*'
       },
-      body: JSON.stringify({ secret: String(secret), test: true }),
+      body: JSON.stringify({ secret: String(secret), test: 'true' }),
       signal: AbortSignal.timeout(12000),
     });
 

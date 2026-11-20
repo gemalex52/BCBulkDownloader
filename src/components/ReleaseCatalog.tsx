@@ -36,6 +36,10 @@ interface ReleaseCatalogProps {
   onToggleGroupSelect?: (group: 'both' | 'audio' | 'info' | 'failed' | 'none') => void;
   onToggleDisplayed?: (displayedIds: string[]) => void;
   onOpenScanList?: () => void;
+  isScanning?: boolean;
+  scanProgressText?: string;
+  scanCurrentCount?: number;
+  scanTotalCount?: number;
 }
 
 export function getReleaseBadgeInfo(r: ScannedRelease) {
@@ -45,6 +49,15 @@ export function getReleaseBadgeInfo(r: ScannedRelease) {
       label: 'Own',
       badgeClass: 'bg-purple-950/90 text-purple-300 border-purple-500/40',
       textClass: 'text-purple-400 font-semibold',
+    };
+  }
+
+  if (r.badgeType === 'no_digital' || r.isNoDigital) {
+    return {
+      type: 'no_digital' as const,
+      label: 'No Digital',
+      badgeClass: 'bg-red-950/90 text-red-300 border-red-500/40',
+      textClass: 'text-red-400 font-semibold',
     };
   }
 
@@ -164,8 +177,12 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   onToggleGroupSelect,
   onToggleDisplayed,
   onOpenScanList,
+  isScanning,
+  scanProgressText,
+  scanCurrentCount = 0,
+  scanTotalCount = 0,
 }) => {
-  const [filterType, setFilterType] = useState<'all' | 'selected' | 'free' | 'email' | 'paid' | 'preorder' | 'own'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'selected' | 'free' | 'email' | 'paid' | 'preorder' | 'no_digital' | 'own'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [expandedTracklists, setExpandedTracklists] = useState<Record<string, boolean>>({});
@@ -196,6 +213,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
     if (filterType === 'email') return badge.type === 'email';
     if (filterType === 'paid') return badge.type === 'paid';
     if (filterType === 'preorder') return badge.type === 'preorder';
+    if (filterType === 'no_digital') return badge.type === 'no_digital';
     if (filterType === 'own') return badge.type === 'own';
     return true;
   });
@@ -206,6 +224,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
   const totalCount = releases.length;
   const ownCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'own').length;
   const preorderCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'preorder').length;
+  const noDigitalCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'no_digital').length;
   const freeCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'free').length;
   const emailCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'email').length;
   const paidCount = releases.filter((r) => getReleaseBadgeInfo(r).type === 'paid').length;
@@ -213,7 +232,10 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
 
   const allEligibleSelected =
     releases.length > 0 &&
-    releases.filter((r) => getReleaseBadgeInfo(r).type !== 'paid').every((r) => r.selected);
+    releases.filter((r) => {
+      const t = getReleaseBadgeInfo(r).type;
+      return t !== 'paid' && t !== 'no_digital';
+    }).every((r) => r.selected);
 
   // Group status computation for selection toggles
   const bothDownloadedReleases = releases.filter((r) => {
@@ -328,10 +350,53 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
     }
   };
 
+  const scanPercent =
+    scanTotalCount > 0
+      ? Math.min(100, Math.max(2, Math.round((scanCurrentCount / scanTotalCount) * 100)))
+      : isScanning
+      ? 15
+      : 0;
+
   return (
     <div className="space-y-4">
       {/* Sticky Metrics and Controls Toolbar */}
       <div className="sticky top-16 z-30 bg-[#111827]/95 backdrop-blur-md border border-slate-800 rounded-xl p-4 shadow-lg shadow-black/40">
+        {/* Initial Scan Progress Bar in Upper Sticky Panel */}
+        {isScanning && (
+          <div className="mb-3.5 pb-3.5 border-b border-slate-800/90">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2 text-xs">
+              <div className="flex items-center gap-2 text-cyan-300 font-mono min-w-0">
+                <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" />
+                <span className="truncate">{scanProgressText || 'Scanning discography...'}</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 font-mono text-[11px]">
+                {scanTotalCount > 0 ? (
+                  <>
+                    <span className="text-slate-300 font-semibold">
+                      {scanCurrentCount} / {scanTotalCount}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-cyan-950/90 border border-cyan-500/40 text-cyan-300 font-semibold">
+                      {scanPercent}%
+                    </span>
+                  </>
+                ) : (
+                  <span className="px-1.5 py-0.5 rounded bg-cyan-950/90 border border-cyan-500/40 text-cyan-300">
+                    Discovering...
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="w-full h-2 bg-slate-900/90 border border-slate-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full bg-gradient-to-r from-cyan-500 via-sky-400 to-emerald-400 transition-all duration-200 ${
+                  scanTotalCount === 0 ? 'animate-pulse w-1/4' : ''
+                }`}
+                style={scanTotalCount > 0 ? { width: `${scanPercent}%` } : undefined}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           {/* Quick Selection Buttons */}
           <div className="flex flex-wrap items-center gap-2">
@@ -571,6 +636,18 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                 Pre-order ({preorderCount})
               </button>
             )}
+            {noDigitalCount > 0 && (
+              <button
+                onClick={() => setFilterType('no_digital')}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  filterType === 'no_digital'
+                    ? 'bg-red-950/70 border border-red-500/50 text-red-300 font-semibold'
+                    : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                No Digital ({noDigitalCount})
+              </button>
+            )}
             {ownCount > 0 && (
               <button
                 onClick={() => setFilterType('own')}
@@ -707,7 +784,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                           <span>{release.releaseDate.split(',')[1] || release.releaseDate}</span>
                         </>
                       )}
-                      {release.trackCount ? (
+                      {!release.isNoDigital && release.badgeType !== 'no_digital' && (release.trackCount || 0) > 0 ? (
                         <>
                           <span aria-hidden="true" className="text-slate-600">·</span>
                           <span className="font-mono tabular-nums">{release.trackCount} trk</span>
@@ -1094,7 +1171,7 @@ export const ReleaseCatalog: React.FC<ReleaseCatalogProps> = ({
                         )}
                       </td>
                       <td className="p-3 text-right font-mono tabular-nums text-slate-300">
-                        {release.trackCount || 1}
+                        {!release.isNoDigital && release.badgeType !== 'no_digital' && (release.trackCount || 0) > 0 ? release.trackCount : '—'}
                       </td>
                       <td className="p-3 text-slate-400 whitespace-nowrap">
                         {release.releaseDate || '—'}
